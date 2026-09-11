@@ -19,7 +19,7 @@ jobs:
     name: Ruff (lint + format)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -32,7 +32,7 @@ jobs:
     name: mypy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -56,7 +56,7 @@ jobs:
             python-version: "3.13"
             mpl-args: ""
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -67,14 +67,14 @@ jobs:
           --junitxml=junit.xml -o junit_family=legacy ${{ matrix.mpl-args }}
       - name: Upload image comparison report (baseline / result / diff)
         if: failure() && matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mpl-results-py${{ matrix.python-version }}
           path: mpl-results/
           if-no-files-found: ignore
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.xml
           flags: py${{ matrix.python-version }}
@@ -92,7 +92,7 @@ jobs:
     name: Build distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
@@ -110,7 +110,7 @@ jobs:
           uv build --wheel
           uv sync --group dev
           uv run pytest --collect-only -q tests
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -121,7 +121,7 @@ jobs:
     permissions:
       contents: write  # gh-deploy pushes the gh-pages branch
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
