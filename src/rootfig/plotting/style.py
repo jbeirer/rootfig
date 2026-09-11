@@ -16,7 +16,10 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 from cycler import cycler
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from matplotlib.offsetbox import AnchoredText
+from matplotlib.text import Text
+from matplotlib.transforms import ScaledTranslation
 
 from rootfig.model.style import EXPERIMENT_STYLES, Style, StyleLike, as_style
 
@@ -24,7 +27,10 @@ __all__ = [
     "DEFAULT_COLORS",
     "ROOTFIG_STYLE",
     "add_experiment_label",
+    "align_experiment_label",
     "color_cycle",
+    "finalize_figure",
+    "pin_fonts",
     "resolve_rc",
     "style_context",
     "use_style",
@@ -59,8 +65,6 @@ ROOTFIG_STYLE: Mapping[str, Any] = {
     "figure.figsize": (7.0, 5.6),
     "figure.dpi": 100,
     "savefig.dpi": 200,
-    "savefig.bbox": "tight",
-    "savefig.pad_inches": 0.05,
     "figure.subplot.left": 0.13,
     "figure.subplot.right": 0.97,
     "figure.subplot.top": 0.95,
@@ -209,6 +213,8 @@ def add_experiment_label(ax: Axes, style: Style, *, has_data: bool) -> None:
             "ax": ax,
             # mplhep defaults to 13 TeV when com is left out; pass None to omit the energy
             "com": None if com is None else f"{com[0]} {com[1]}".strip(),
+            # the offset-text dodge is redone in align_experiment_label once the axes are final
+            "scilocator_adjust": False,
         }
         if lumi is not None:
             if lumi[1] == "fb^{-1}":
@@ -223,10 +229,10 @@ def add_experiment_label(ax: Axes, style: Style, *, has_data: bool) -> None:
         if callable(label_fn):
             # mplhep's per-experiment helpers apply that experiment's conventions.
             kwargs.pop("exp", None)
-            texts = label_fn(**kwargs)
+            label_fn(**kwargs)
         else:
-            texts = hep.label.exp_label(**kwargs)
-        _separate_label_words(ax, texts)
+            hep.label.exp_label(**kwargs)
+        align_experiment_label(ax)
         return
     # No experiment: draw status/lumi/energy/text as a plain block of text.
     lines: list[str] = []
@@ -271,34 +277,107 @@ def _lumi_line(lumi: tuple[str, str], com: tuple[str, str] | None, *, atlas_styl
     return f"{lumi_text} ({' '.join(part for part in com if part)})"
 
 
-LABEL_WORD_GAP_EM = 0.3
-"""Extra horizontal gap, in units of the font size, inserted between the experiment
-name and the status text (mplhep places them nearly touching)."""
+def _generic_font_lists() -> dict[str, list[str]]:
+    """Return the concrete font list behind each generic family in the current rcParams."""
+    return {
+        "sans-serif": list(mpl.rcParams["font.sans-serif"]),
+        "serif": list(mpl.rcParams["font.serif"]),
+        "monospace": list(mpl.rcParams["font.monospace"]),
+        "cursive": list(mpl.rcParams["font.cursive"]),
+        "fantasy": list(mpl.rcParams["font.fantasy"]),
+    }
 
 
-def _separate_label_words(ax: Axes, texts: Any) -> None:
-    """Nudge the status text right when mplhep put it on the same line as the experiment."""
-    try:
-        exp_txt, suffix = texts[0], texts[1]
-    except (TypeError, IndexError):  # pragma: no cover - defensive against mplhep changes
-        return
-    if exp_txt is None or suffix is None or not suffix.get_text():
+def pin_fonts(fig: Figure) -> None:
+    """Replace generic font families on every text of ``fig`` by the style's font list.
+
+    A generic family such as ``"sans-serif"`` is resolved from rcParams each time
+    a text is drawn, and matplotlib caches text metrics by the generic name. A
+    figure rendered after its style context has ended (saving, inline display)
+    would therefore be painted in different fonts from those its layout and
+    label positions were computed with: labels shift and get clipped. Call this
+    inside the style context once drawing is complete.
+    """
+    resolved = _generic_font_lists()
+
+    def concrete(families: Any) -> list[str]:
+        names = [families] if isinstance(families, str) else list(families)
+        out: list[str] = []
+        for family in names:
+            out.extend(resolved.get(family, [family]))
+        return list(dict.fromkeys(out))
+
+    for text in fig.findobj(Text):
+        text.set_fontfamily(concrete(text.get_fontfamily()))
+    tick_family = concrete(mpl.rcParams["font.family"])
+    for axes in fig.axes:
+        # tick labels are re-created on every draw; give them the family explicitly
+        axes.tick_params(axis="both", which="both", labelfontfamily=tick_family)
+
+
+def finalize_figure(fig: Figure, ax: Axes) -> None:
+    """Make ``fig`` render identically inside and outside its style context.
+
+    Call as the last drawing step: pins the fonts (see :func:`pin_fonts`) and then
+    anchors the experiment label (see :func:`align_experiment_label`), whose
+    point-based offset needs the final text metrics.
+    """
+    pin_fonts(fig)
+    align_experiment_label(ax)
+
+
+LABEL_WORD_GAP_EM = 0.5
+"""Horizontal gap, in units of the status text's font size, between the experiment
+name and the status word (mplhep places them nearly touching)."""
+
+
+def align_experiment_label(ax: Axes) -> None:
+    """Anchor mplhep's experiment label to the finished figure.
+
+    mplhep positions the status word ("Simulation", "Internal", ...) as an axes
+    fraction computed when the label is drawn, and shifts a label above the axes
+    right by the width of the y axis' scientific-notation offset text measured at
+    that moment. Both go stale once the axes are resized (constrained layout) or
+    the y scale changes (a log axis has no offset text). Call this after all
+    drawing: it puts a label above the axes flush with the frame unless an offset
+    text is really shown, and places the status word a fixed gap after the
+    experiment name with a point-based offset, so it stays put at any axes size.
+    Does nothing when ``ax`` carries no mplhep label.
+    """
+    exp_txt = next((t for t in ax.texts if isinstance(t, hep.label.ExpLabel)), None)
+    if exp_txt is None:
         return
     fig = ax.get_figure(root=True)
     if fig is None:  # pragma: no cover
         return
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
+    x_exp, y_exp = exp_txt.get_position()
+    above = y_exp >= 1.0 and exp_txt.get_horizontalalignment() == "left"  # mplhep loc 0/3
+    if above:
+        x_exp = 0.0
+        offset_text = ax.yaxis.offsetText
+        if offset_text.get_visible() and offset_text.get_text():
+            width = offset_text.get_window_extent(renderer).width
+            x_exp = 1.1 * width / ax.get_window_extent(renderer).width
+        exp_txt.set_position((x_exp, y_exp))
+    suffix = next((t for t in ax.texts if isinstance(t, hep.label.ExpText)), None)
+    if suffix is None or not suffix.get_text():
+        return
     exp_box = exp_txt.get_window_extent(renderer)
     suffix_box = suffix.get_window_extent(renderer)
     same_line = suffix_box.y0 < exp_box.y1 and suffix_box.y1 > exp_box.y0
-    if not same_line or suffix_box.x0 < exp_box.x0:
+    if not same_line:
         return
-    shift_px = LABEL_WORD_GAP_EM * suffix.get_fontsize() / 72.0 * fig.dpi
-    x, y = suffix.get_position()
-    x_display, _ = suffix.get_transform().transform((x, y))
-    new_x, _ = suffix.get_transform().inverted().transform((x_display + shift_px, 0.0))
-    suffix.set_position((new_x, y))
+    em_pt = suffix.get_fontproperties().get_size_in_points()
+    offset_pt = exp_box.width / fig.dpi * 72.0 + LABEL_WORD_GAP_EM * em_pt
+    _, y_suffix = suffix.get_position()
+    suffix.set_position((x_exp, y_suffix))
+    # ScaledTranslation is evaluated at draw time, so the offset is right at any dpi
+    # (offset_copy would freeze it in pixels of the current dpi).
+    suffix.set_transform(
+        ax.transAxes + ScaledTranslation(offset_pt / 72.0, 0.0, fig.dpi_scale_trans)
+    )
 
 
 def legend_location(style: Style) -> str | None:

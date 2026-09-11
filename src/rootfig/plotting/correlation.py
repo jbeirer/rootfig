@@ -56,7 +56,10 @@ def draw_correlation(
     shown = matrix * 100.0 if percent else matrix
     fmt = fmt if fmt is not None else (".0f" if percent else ".2f")
     limit = 100.0 if percent else 1.0
-    image = ax.imshow(shown, cmap=cmap, vmin=-limit, vmax=limit, origin="upper", aspect="equal")
+    # "auto" rather than "equal": a fixed aspect makes constrained layout re-centre the axes
+    # after the margins are set, which pushes the widest y tick label off the canvas. The
+    # figure size from ``api.correlation`` keeps the cells close to square.
+    image = ax.imshow(shown, cmap=cmap, vmin=-limit, vmax=limit, origin="upper", aspect="auto")
     n = matrix.shape[0]
     ax.set_xticks(range(n), labels=list(labels), rotation=45, ha="right", rotation_mode="anchor")
     ax.set_yticks(range(n), labels=list(labels))

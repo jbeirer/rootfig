@@ -40,7 +40,7 @@ def load_gallery() -> ModuleType:
 
 gallery = load_gallery()
 EXAMPLES = list(gallery.EXAMPLES)
-SAVEFIG = {"dpi": 150, "bbox_inches": "tight", "pad_inches": 0.04}  # as Plot.save
+SAVEFIG = {"dpi": 150}  # as Plot.save: constrained layout, no cropping
 
 
 @pytest.fixture(scope="module")

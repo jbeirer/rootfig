@@ -12,6 +12,8 @@ import numpy as np
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.font_manager import FontProperties
+from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.offsetbox import AnchoredOffsetbox
 from matplotlib.ticker import MaxNLocator
 
@@ -34,6 +36,7 @@ RATIO_HEIGHT_FRACTION = 0.3
 """Height of the ratio panel relative to the main panel."""
 
 BREAK_GAP = 0.04
+LAYOUT_PAD = 0.04  # inches between the canvas edge and the outermost artist
 """Horizontal gap between the two segments of a broken x axis (figure width fraction)."""
 
 
@@ -125,7 +128,10 @@ def make_figure(
     if size is None:
         width, height = plt.rcParams["figure.figsize"]
         size = (width, height * (1 + RATIO_HEIGHT_FRACTION * 0.85)) if ratio else (width, height)
-    fig = plt.figure(figsize=size)
+    # Constrained layout fits labels, legends and colour bars into the canvas, so a saved
+    # figure has exactly the requested size and every plot type shares one shape.
+    engine = ConstrainedLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
+    fig = plt.figure(figsize=size, layout=engine)
     rows = 2 if ratio else 1
     columns = 2 if break_widths is not None else 1
     grid = fig.add_gridspec(
@@ -138,18 +144,37 @@ def make_figure(
     )
     main = fig.add_subplot(grid[0, 0])
     layout = Layout(fig, main)
+    _pin_tick_label_size(main)
     if columns == 2:
         layout.main_right = fig.add_subplot(grid[0, 1], sharey=main)
+        _pin_tick_label_size(layout.main_right)
     if ratio:
         layout.ratio = fig.add_subplot(grid[1, 0], sharex=main)
+        _pin_tick_label_size(layout.ratio)
         main.tick_params(axis="x", labelbottom=False)
         if columns == 2:
             assert layout.main_right is not None
             layout.ratio_right = fig.add_subplot(
                 grid[1, 1], sharex=layout.main_right, sharey=layout.ratio
             )
+            _pin_tick_label_size(layout.ratio_right)
             layout.main_right.tick_params(axis="x", labelbottom=False)
     return layout
+
+
+def _pin_tick_label_size(ax: Axes) -> None:
+    """Store the style's tick label size on the axes.
+
+    Matplotlib's automatic tick locator estimates how many labels fit from the
+    label size, which it reads from rcParams at draw time unless the axes carry
+    an explicit ``labelsize``. Figures are drawn and saved after the style
+    context has ended, so without this the locator assumes the default 10 pt
+    labels and crowds the axis whenever the style uses a larger font.
+    """
+    x_size = FontProperties(size=plt.rcParams["xtick.labelsize"]).get_size_in_points()
+    y_size = FontProperties(size=plt.rcParams["ytick.labelsize"]).get_size_in_points()
+    ax.tick_params(axis="x", which="both", labelsize=x_size)
+    ax.tick_params(axis="y", which="both", labelsize=y_size)
 
 
 def _figure_of(ax: Axes) -> Figure:

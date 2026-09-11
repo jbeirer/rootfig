@@ -75,6 +75,7 @@ from rootfig.plotting import (
     draw_ratio_panel,
     draw_significance_panel,
     envelope,
+    finalize_figure,
     finish_axes,
     fold_flow_bins,
     label_flow_bins,
@@ -643,6 +644,7 @@ def plot_histograms(
             if layout.ratio is not None and layout.ratio_right is not None:
                 apply_xbreak(layout.ratio, layout.ratio_right, *segments)
 
+        finalize_figure(layout.fig, layout.main)  # last: fonts and label anchoring
     result = Plot(
         fig=layout.fig,
         ax=layout.main,
@@ -729,6 +731,7 @@ def plot2d(
         if title:
             main_ax.set_title(title)
         add_experiment_label(main_ax, st, has_data=sample.is_data)
+        finalize_figure(fig, main_ax)  # last: fonts and label anchoring
     result = Plot(fig=fig, ax=main_ax, histograms=[histogram_], variable=var_x)
     if save:
         result.save(save)
@@ -865,6 +868,7 @@ def correlation(
             matrix, tick_labels, main_ax, cmap=cmap, annotate=annotate, percent=percent
         )
         main_ax.set_title(title if title is not None else f"{sample.label}: correlation")
+        finalize_figure(fig, main_ax)
     result = Plot(fig=fig, ax=main_ax, matrix=matrix)
     if save:
         result.save(save)
@@ -1010,6 +1014,7 @@ def efficiency(
                 logy=False,
                 floating=[legend_artist] if floating and legend_artist is not None else [],
             )
+        finalize_figure(layout.fig, layout.main)  # last: fonts and label anchoring
     result = Plot(
         fig=layout.fig,
         ax=layout.main,
@@ -1139,6 +1144,7 @@ def profile(
                 logy=logy,
                 floating=[legend_artist] if floating and legend_artist is not None else [],
             )
+        finalize_figure(layout.fig, layout.main)  # last: fonts and label anchoring
     result = Plot(fig=layout.fig, ax=layout.main, variable=var_x, profiles=profiles)
     if save:
         result.save(save)

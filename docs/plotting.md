@@ -113,6 +113,12 @@ computed values are returned in `Plot.ratios` as
   `(main, ratio)` for ratio plots), so several rootfig plots can share a figure.
 - `save="file.pdf"` saves immediately; `Plot.save(path)` accepts a directory
   (file named after the variable) and `formats=["pdf", "png"]`.
+- Figures use matplotlib's constrained layout, so labels, legends and colour
+  bars fit inside the canvas and a saved file has exactly the `figsize`
+  dimensions: 1D, 2D and ratio plots of one size share one shape. Figures
+  drawn into your own `ax` are saved with a tight bounding box instead.
+- Fonts are fixed on the figure when it is made, so saving or displaying it
+  later renders exactly the layout that was computed, in the style's fonts.
 - `Plot.fig`, `Plot.ax`, `Plot.ratio_ax` are plain matplotlib objects;
   `Plot.histograms` wrap the `hist.Hist` objects with labels and statistics.
 

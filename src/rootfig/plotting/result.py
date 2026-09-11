@@ -99,12 +99,14 @@ class Plot:
             Optional list of formats (``["pdf", "png"]``) to write instead of
             (or in addition to) the suffix of ``path``. Each replaces the suffix.
         **kwargs
-            Forwarded to :meth:`matplotlib.figure.Figure.savefig`. Unless given,
-            ``bbox_inches="tight"`` and a small ``pad_inches`` are used so the
-            file has no surplus margins and nothing is cut off.
+            Forwarded to :meth:`matplotlib.figure.Figure.savefig`. Figures made
+            by rootfig use constrained layout and are saved at exactly their
+            ``figsize``. For figures drawn into user axes without a layout
+            engine, ``bbox_inches="tight"`` is used unless given.
         """
-        kwargs.setdefault("bbox_inches", "tight")
-        kwargs.setdefault("pad_inches", 0.04)
+        if self.fig.get_layout_engine() is None:
+            kwargs.setdefault("bbox_inches", "tight")
+            kwargs.setdefault("pad_inches", 0.04)
         target = Path(path)
         if str(path).endswith(("/", os.sep)) or target.is_dir():
             stem = self.variable.safe_name if self.variable is not None else "plot"

@@ -598,6 +598,114 @@ class TestPlot2D:
         np.testing.assert_allclose(p3.fig.get_size_inches(), (4, 5))
 
 
+class TestFigureShape:
+    """Every plot type fits its canvas and is saved at exactly ``figsize`` (no cropping)."""
+
+    @staticmethod
+    def _content_within_canvas(fig: Any) -> None:
+        fig.canvas.draw()
+        width, height = fig.get_size_inches()
+        box = fig.get_tightbbox(fig.canvas.get_renderer())
+        tolerance = 0.01  # inches
+        assert box.x0 >= -tolerance
+        assert box.y0 >= -tolerance
+        assert box.x1 <= width + tolerance
+        assert box.y1 <= height + tolerance
+
+    def test_content_fits(self, signal_file: Path, background_file: Path) -> None:
+        plots = [
+            rf.plot(signal_file, "MET", tree="events", text=["a line", "another"]),
+            rf.plot([signal_file, background_file], "MET", tree="events", ratio=True),
+            rf.plot(
+                [signal_file, background_file],
+                "MET",
+                tree="events",
+                ratio=True,
+                xbreak=(40, 60),
+                style=rf.Style(experiment="ATLAS", status="Internal", lumi="140 fb^-1"),
+            ),
+            rf.plot2d(signal_file, "MET", "nMuon", tree="events", zlabel="Events / bin"),
+            rf.correlation(signal_file, ["MET", "nMuon", "event"], tree="events", percent=True),
+        ]
+        for p in plots:
+            assert p.fig.get_layout_engine() is not None
+            self._content_within_canvas(p.fig)
+
+    def test_saved_size_is_figsize(self, signal_file: Path, tmp_path: Path) -> None:
+        from PIL import Image
+
+        for maker, name in [(rf.plot, "one"), (lambda *a, **k: rf.plot2d(*a, "nMuon", **k), "two")]:
+            p = maker(signal_file, "MET", tree="events", figsize=(6, 4))
+            [path] = p.save(tmp_path / f"{name}.png", dpi=50)
+            assert Image.open(path).size == (300, 200)
+
+    def test_experiment_label_anchored_after_layout(
+        self, signal_file: Path, background_file: Path
+    ) -> None:
+        # Above-axes label on a log axis: mplhep's dodge for the (transient) offset text
+        # must be undone, and the status word must follow the name at a fixed gap.
+        fcc = rf.Style(experiment="FCC-ee", status="Simulation", com="240 GeV")
+        p = rf.plot([signal_file, background_file], "MET", tree="events", logy=True, style=fcc)
+        self._check_label(p, flush=True)
+        # Inside label (ATLAS style), with a ratio panel that changes the layout afterwards.
+        atlas = rf.Style(experiment="ATLAS", status="Internal")
+        p = rf.plot([signal_file, background_file], "MET", tree="events", ratio=True, style=atlas)
+        self._check_label(p, flush=False)
+
+    @staticmethod
+    def _check_label(p: rf.Plot, *, flush: bool) -> None:
+        import mplhep as hep
+
+        from rootfig.plotting.style import LABEL_WORD_GAP_EM
+
+        [name] = [t for t in p.ax.texts if isinstance(t, hep.label.ExpLabel)]
+        [status] = [t for t in p.ax.texts if isinstance(t, hep.label.ExpText)]
+        assert status.get_text()
+        width, height = p.fig.get_size_inches()
+        # The gap is set in points, so it must depend neither on the dpi nor on the axes size.
+        for dpi, size in (
+            (100, (width, height)),
+            (250, (width, height)),
+            (100, (1.6 * width, 0.8 * height)),
+        ):
+            p.fig.set_dpi(dpi)
+            p.fig.set_size_inches(*size)
+            p.fig.canvas.draw()
+            renderer = p.fig.canvas.get_renderer()  # type: ignore[attr-defined]
+            exp_box = name.get_window_extent(renderer)
+            status_box = status.get_window_extent(renderer)
+            if flush:
+                axes_left = p.ax.get_window_extent(renderer).x0
+                assert exp_box.x0 == pytest.approx(axes_left, abs=1.0)
+            em = status.get_fontproperties().get_size_in_points() / 72 * dpi
+            assert (status_box.x0 - exp_box.x1) / em == pytest.approx(LABEL_WORD_GAP_EM, abs=0.1)
+
+    def test_fonts_are_pinned(self, signal_file: Path, background_file: Path) -> None:
+        # Text must render in the style's font after the style context has ended, or the
+        # layout computed inside it no longer matches what is painted (clipped labels).
+        atlas = rf.Style(experiment="ATLAS", status="Internal")
+        p = rf.plot([signal_file, background_file], "MET", tree="events", ratio=True, style=atlas)
+        p.fig.canvas.draw()
+        assert "sans-serif" not in p.ax.yaxis.label.get_fontfamily()
+        assert p.ax.yaxis.label.get_fontname() != "DejaVu Sans"
+        tick = (
+            p.ax.get_xticklabels()[0] if p.ax.get_xticklabels() else p.ax.yaxis.get_ticklabels()[0]
+        )
+        assert tick.get_fontname() == p.ax.yaxis.label.get_fontname()
+        legend = p.ax.get_legend()
+        assert legend is not None
+        assert legend.get_texts()[0].get_fontname() == p.ax.yaxis.label.get_fontname()
+
+    def test_user_axes_are_cropped_tight(self, signal_file: Path, tmp_path: Path) -> None:
+        # A figure the user made has no layout engine; keep the tight bounding box there.
+        _, ax = plt.subplots(figsize=(6, 4))
+        p = rf.plot(signal_file, "MET", tree="events", ax=ax)
+        [path] = p.save(tmp_path / "user.png", dpi=50)
+        from PIL import Image
+
+        assert Image.open(path).size != (300, 200)
+
+
 class TestSummaryAndCorrelation:
     def test_summarize(
         self, signal_file: Path, background_file: Path, signal_columns: dict[str, Any]
