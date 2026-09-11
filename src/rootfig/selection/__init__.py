@@ -1,0 +1,23 @@
+"""Selection semantics: combine variable, cut and weight arrays into flat columns."""
+
+from rootfig.selection.columns import (
+    Columns,
+    NonFinitePolicy,
+    boolean_mask,
+    depth_of,
+    event_mask,
+    event_weights,
+    prepare,
+    same_structure,
+)
+
+__all__ = [
+    "Columns",
+    "NonFinitePolicy",
+    "boolean_mask",
+    "depth_of",
+    "event_mask",
+    "event_weights",
+    "prepare",
+    "same_structure",
+]

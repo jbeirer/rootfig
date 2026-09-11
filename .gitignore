@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+site/
+*.root
+!tests/data/*.root
+.ipynb_checkpoints/
+.DS_Store
+
+# generated example output and pytest-mpl results
+examples/out/
+mpl-results/

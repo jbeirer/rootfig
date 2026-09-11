@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MPLBACKEND: Agg
+  FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: Ruff (lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --group dev
+      - run: uv run ruff check --output-format=github .
+      - run: uv run ruff format --check .
+
+  typecheck:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --group dev
+      - run: uv run mypy
+
+  test:
+    name: pytest (py${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.12", "3.13", "3.14"]
+        # Gallery figures are compared pixel-wise against docs/images/gallery/ on Linux only;
+        # other platforms render fonts differently, so there the gallery just has to run.
+        mpl-args: ["--mpl --mpl-results-path=mpl-results --mpl-generate-summary=html"]
+        include:
+          - os: macos-latest
+            python-version: "3.13"
+            mpl-args: ""
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --group dev
+      - run: uv run pytest --cov --cov-report=xml --cov-report=term ${{ matrix.mpl-args }}
+      - name: Upload image comparison report (baseline / result / diff)
+        if: failure() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpl-results-py${{ matrix.python-version }}
+          path: mpl-results/
+          if-no-files-found: ignore
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: py${{ matrix.python-version }}
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: uv build
+      - run: uvx twine check --strict dist/*
+      - name: Install wheel in a clean environment and import it
+        run: |
+          uv venv /tmp/wheel-env
+          uv pip install --python /tmp/wheel-env/bin/python dist/*.whl
+          /tmp/wheel-env/bin/python -c "import rootfig; print(rootfig.__version__)"
+      - name: The source archive can build a wheel and collect its own tests
+        run: |
+          mkdir /tmp/sdist && tar -xzf dist/*.tar.gz -C /tmp/sdist --strip-components=1
+          cd /tmp/sdist
+          uv build --wheel
+          uv sync --group dev
+          uv run pytest --collect-only -q tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  docs:
+    name: Build docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # gh-deploy pushes the gh-pages branch
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --group docs
+      - run: uv run mkdocs build --strict
+      - name: Publish to GitHub Pages (main only; set Pages to the gh-pages branch once)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          uv run mkdocs gh-deploy --force --no-history

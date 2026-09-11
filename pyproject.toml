@@ -1,0 +1,151 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rootfig"
+dynamic = ["version"]
+description = "Publication-quality figures straight from ROOT trees, without ROOT: uproot + Awkward + hist + mplhep with a TTree::Draw-like API."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Joshua Falco Beirer", email = "jbeirer@cern.ch" }]
+keywords = ["ROOT", "HEP", "histogram", "uproot", "awkward", "mplhep", "matplotlib", "plotting", "TTree", "RNTuple"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Scientific/Engineering :: Visualization",
+  "Typing :: Typed",
+]
+dependencies = [
+  "uproot>=5.3",
+  "awkward>=2.6",
+  "numpy>=1.26",
+  "hist>=2.7",
+  "mplhep>=0.3.50",
+  "matplotlib>=3.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/jbeirer/rootfig"
+Documentation = "https://github.com/jbeirer/rootfig#readme"
+Repository = "https://github.com/jbeirer/rootfig"
+Issues = "https://github.com/jbeirer/rootfig/issues"
+Changelog = "https://github.com/jbeirer/rootfig/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "pytest-mpl>=0.17",
+]
+docs = [
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.27",
+]
+
+[tool.hatch.version]
+path = "src/rootfig/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/rootfig", "tests", "docs", "examples", "mkdocs.yml",
+  "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rootfig"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",     # pycodestyle
+  "F",          # pyflakes
+  "I",          # isort
+  "UP",         # pyupgrade
+  "B",          # bugbear
+  "SIM",        # simplify
+  "C4",         # comprehensions
+  "PT",         # pytest style
+  "RUF",        # ruff-specific
+  "N",          # naming
+  "D",          # docstrings
+  "ARG",        # unused arguments
+  "PIE",
+  "RET",
+  "PL",         # pylint subset
+  "NPY",
+]
+ignore = [
+  "D105", "D107",       # magic methods and __init__ docstrings
+  "D203", "D213",       # conflict with D211/D212
+  "PLR0913",            # many arguments: plot() is intentionally keyword-rich
+  "PLR2004",            # magic values in comparisons
+  "PLR0912", "PLR0915", # branches/statements: handled by review, not a linter
+  "RUF012",
+  "UP040",              # keep explicit TypeAlias: aliases are also used at runtime
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "PLR", "ARG", "N806", "S101", "PLC0415", "RUF059"]
+"docs/**" = ["D"]
+"examples/**" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+disallow_untyped_calls = false  # uproot, awkward, hist and mplhep are largely untyped
+files = ["src/rootfig"]
+warn_unreachable = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = ["uproot", "uproot.*", "awkward", "awkward.*", "mplhep", "mplhep.*", "hist", "hist.*", "boost_histogram", "boost_histogram.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true
+implicit_reexport = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = [
+  "error::DeprecationWarning:rootfig",
+]
+markers = [
+  "root_tutorials: tests that need the local ROOT tutorials directory (skipped when absent)",
+]
+xfail_strict = true
+# pytest-mpl (tests/test_gallery.py): compare figures only with --mpl; baselines are the docs images
+mpl-default-style = "default"
+mpl-use-full-test-name = false
+
+[tool.coverage.run]
+source = ["rootfig"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_also = ["if TYPE_CHECKING:", "@overload", "\\.\\.\\."]

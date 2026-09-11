@@ -1,0 +1,775 @@
+"""Tests for histogram filling, normalisation, ratios, statistics and the pipeline."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import awkward as ak
+import hist
+import numpy as np
+import pytest
+
+from rootfig.errors import BinningError, RootfigWarning, SelectionError
+from rootfig.histograms import (
+    Histogram,
+    Summary,
+    build_histograms,
+    build_histograms_2d,
+    combined_selection,
+    combined_weight,
+    compatible_binning,
+    correlation_matrix,
+    describe_table,
+    fill,
+    load_columns,
+    normalization_label,
+    normalize,
+    normalize_hist,
+    ratio,
+    summarize,
+)
+from rootfig.model import Cut, Sample, Variable
+from rootfig.selection import Columns, prepare
+
+
+def columns(values: list[float], weights: list[float] | None = None) -> Columns:
+    return Columns(
+        arrays=(np.asarray(values, dtype=float),),
+        weights=None if weights is None else np.asarray(weights, dtype=float),
+        n_events=len(values),
+        n_selected_events=len(values),
+    )
+
+
+class TestFill:
+    def test_unweighted(self) -> None:
+        h = fill([hist.axis.Regular(4, 0, 4)], columns([0.5, 0.5, 1.5, 9.0, -1.0]))
+        assert h.values().tolist() == [2, 1, 0, 0]
+        assert h.variances().tolist() == [2, 1, 0, 0]
+        assert h.values(flow=True)[0] == 1  # underflow
+        assert h.values(flow=True)[-1] == 1  # overflow
+
+    def test_weighted(self) -> None:
+        h = fill([hist.axis.Regular(2, 0, 2)], columns([0.5, 0.5, 1.5], [1.0, 2.0, 3.0]))
+        assert h.values().tolist() == [3.0, 3.0]
+        assert h.variances().tolist() == [5.0, 9.0]
+
+    def test_empty(self) -> None:
+        h = fill([hist.axis.Regular(2, 0, 2)], columns([]))
+        assert h.values().tolist() == [0.0, 0.0]
+
+    def test_axis_count_mismatch(self) -> None:
+        with pytest.raises(ValueError, match="axes"):
+            fill([hist.axis.Regular(2, 0, 2), hist.axis.Regular(2, 0, 2)], columns([1.0]))
+
+
+class TestHistogram:
+    @pytest.fixture
+    def histogram(self) -> Histogram:
+        cols = columns([0.5, 0.5, 1.5, 2.5, 9.0], [1.0, 1.0, 2.0, 1.0, 1.0])
+        return Histogram(fill([hist.axis.Regular(3, 0, 3)], cols), label="h", stats=summarize(cols))
+
+    def test_accessors(self, histogram: Histogram) -> None:
+        assert histogram.ndim == 1
+        assert histogram.edges.tolist() == [0, 1, 2, 3]
+        assert histogram.centers.tolist() == [0.5, 1.5, 2.5]
+        assert histogram.widths.tolist() == [1, 1, 1]
+        assert histogram.values().tolist() == [2.0, 2.0, 1.0]
+        assert histogram.errors().tolist() == pytest.approx([np.sqrt(2), 2.0, 1.0])
+        assert histogram.integral == 5.0
+        assert histogram.overflow == 1.0
+        assert histogram.underflow == 0.0
+        assert histogram.entries == 5
+
+    def test_scaled_and_with(self, histogram: Histogram) -> None:
+        scaled = histogram.scaled(2.0)
+        assert scaled.values().tolist() == [4.0, 4.0, 2.0]
+        assert scaled.variances().tolist() == [8.0, 16.0, 4.0]
+        assert histogram.with_(label="x").label == "x"
+
+    def test_entries_without_stats(self) -> None:
+        h = Histogram(fill([hist.axis.Regular(3, 0, 3)], columns([0.5, 0.5])), label="h")
+        assert h.entries == 2
+
+
+class TestNormalize:
+    @pytest.fixture
+    def h(self) -> hist.Hist:
+        return fill(
+            [hist.axis.Variable([0, 1, 3, 4])], columns([0.5, 0.5, 2.0, 3.5, 10.0], [1, 1, 2, 4, 1])
+        )
+
+    def test_none(self, h: hist.Hist) -> None:
+        out = normalize_hist(h, False)
+        assert out is not h
+        assert out.values().tolist() == h.values().tolist()
+        assert normalization_label(None) is None
+
+    @pytest.mark.parametrize("spec", [True, "unity"])
+    def test_unity(self, h: hist.Hist, spec: Any) -> None:
+        out = normalize_hist(h, spec)
+        assert out.values().sum() == pytest.approx(1.0)
+        assert out.values().tolist() == pytest.approx([0.25, 0.25, 0.5])
+        # variance scales with the square of the factor: factor = 1/8
+        assert out.variances().tolist() == pytest.approx([2 / 64, 4 / 64, 16 / 64])
+        # overflow bin scaled too
+        assert out.values(flow=True)[-1] == pytest.approx(1 / 8)
+        assert normalization_label(spec) == "Normalised to unity"
+
+    def test_number(self, h: hist.Hist) -> None:
+        out = normalize_hist(h, 100)
+        assert out.values().sum() == pytest.approx(100.0)
+        assert normalization_label(100) == "Normalised to 100"
+
+    def test_density(self, h: hist.Hist) -> None:
+        out = normalize_hist(h, "density")
+        widths = np.array([1.0, 2.0, 1.0])
+        assert (out.values() * widths).sum() == pytest.approx(1.0)
+        assert out.values().tolist() == pytest.approx([2 / 8, 2 / 8 / 2, 4 / 8])
+        assert normalization_label("density") == "Density"
+
+    def test_width(self, h: hist.Hist) -> None:
+        out = normalize_hist(h, "width")
+        assert out.values().tolist() == pytest.approx([2.0, 1.0, 4.0])
+        assert out.variances().tolist() == pytest.approx([2.0, 4.0 / 4, 16.0])
+        assert normalization_label("width") == "Events / unit"
+
+    def test_empty_warns(self) -> None:
+        h = fill([hist.axis.Regular(2, 0, 2)], columns([]))
+        with pytest.warns(RootfigWarning, match="no entries"):
+            normalize_hist(h, True)
+        with pytest.warns(RootfigWarning, match="no entries"):
+            normalize_hist(h, "density")
+
+    @pytest.mark.parametrize("bad", ["nope", -1, 0, np.nan])
+    def test_invalid(self, h: hist.Hist, bad: Any) -> None:
+        with pytest.raises(BinningError):
+            normalize_hist(h, bad)
+
+    def test_histogram_wrapper(self, h: hist.Hist) -> None:
+        wrapped = Histogram(h, label="h")
+        out = normalize(wrapped, True)
+        assert out.normalization == "Normalised to unity"
+        assert out.integral == pytest.approx(1.0)
+        assert normalize(wrapped, None) is wrapped
+
+    def test_2d_density(self) -> None:
+        cols = Columns(
+            arrays=(np.array([0.5, 1.5, 1.5]), np.array([0.5, 0.5, 2.5])),
+            weights=None,
+            n_events=3,
+            n_selected_events=3,
+        )
+        h = fill([hist.axis.Regular(2, 0, 2), hist.axis.Variable([0, 1, 3])], cols)
+        out = normalize_hist(h, "density")
+        areas = np.outer([1.0, 1.0], [1.0, 2.0])
+        assert (out.values() * areas).sum() == pytest.approx(1.0)
+
+
+class TestRatio:
+    def test_propagate(self) -> None:
+        num = fill([hist.axis.Regular(3, 0, 3)], columns([0.5, 0.5, 1.5, 1.5], [1, 1, 2, 2]))
+        den = fill([hist.axis.Regular(3, 0, 3)], columns([0.5, 1.5, 2.5]))
+        r = ratio(num, den)
+        assert r.values.tolist() == pytest.approx([2.0, 4.0, 0.0])
+        # bin 0: n=2, vn=2, d=1, vd=1 -> sqrt(2/1 + 4*1/1) = sqrt(6)
+        assert r.errors[0] == pytest.approx(np.sqrt(6))
+        # bin 2: n=0, vn=0, d=1 -> 0
+        assert r.errors[2] == pytest.approx(0.0)
+        assert r.band.tolist() == pytest.approx([1.0, 1.0, 1.0])
+        assert r.centers.tolist() == [0.5, 1.5, 2.5]
+        assert r.half_widths.tolist() == [0.5, 0.5, 0.5]
+
+    def test_numerator_only(self) -> None:
+        num = fill([hist.axis.Regular(2, 0, 2)], columns([0.5, 0.5, 0.5, 0.5]))
+        den = fill([hist.axis.Regular(2, 0, 2)], columns([0.5, 0.5, 1.5], [2.0, 2.0, 1.0]))
+        r = ratio(num, den, uncertainty="numerator")
+        assert r.values.tolist() == pytest.approx([1.0, 0.0])
+        assert r.errors.tolist() == pytest.approx([2 / 4, 0.0])
+        assert r.band.tolist() == pytest.approx([np.sqrt(8) / 4, 1.0])
+
+    def test_zero_denominator_is_nan(self) -> None:
+        num = fill([hist.axis.Regular(2, 0, 2)], columns([0.5]))
+        den = fill([hist.axis.Regular(2, 0, 2)], columns([1.5]))
+        r = ratio(num, den)
+        assert np.isnan(r.values[0])
+        assert np.isnan(r.errors[0])
+        assert np.isnan(r.band[0])
+        assert r.values[1] == 0.0
+
+    def test_incompatible(self) -> None:
+        a = fill([hist.axis.Regular(2, 0, 2)], columns([0.5]))
+        b = fill([hist.axis.Regular(3, 0, 2)], columns([0.5]))
+        assert not compatible_binning(a, b)
+        with pytest.raises(BinningError, match="identical bin edges"):
+            ratio(a, b)
+        with pytest.raises(BinningError, match="uncertainty"):
+            ratio(a, a, uncertainty="bogus")  # type: ignore[arg-type]
+
+
+class TestStats:
+    def test_unweighted(self) -> None:
+        s = summarize(columns([1.0, 2.0, 3.0, 4.0]))
+        assert isinstance(s, Summary)
+        assert s.entries == 4
+        assert s.sum_weights == 4.0
+        assert s.mean == 2.5
+        assert s.std == pytest.approx(np.std([1, 2, 3, 4]))
+        assert s.sem == pytest.approx(np.std([1, 2, 3, 4]) / 2)
+        assert s.skewness == pytest.approx(0.0)
+        assert s.rms == s.std
+        assert s.effective_entries == pytest.approx(4.0)
+        assert (s.minimum, s.maximum) == (1.0, 4.0)
+
+    def test_weighted_equals_repeated(self) -> None:
+        weighted = summarize(columns([1.0, 2.0, 5.0], [2.0, 1.0, 1.0]))
+        repeated = summarize(columns([1.0, 1.0, 2.0, 5.0]))
+        assert weighted.mean == pytest.approx(repeated.mean)
+        assert weighted.std == pytest.approx(repeated.std)
+        assert weighted.skewness == pytest.approx(repeated.skewness)
+        assert weighted.skewness > 0
+
+    def test_empty(self) -> None:
+        s = summarize(columns([]))
+        assert s.entries == 0
+        assert np.isnan(s.mean)
+        assert np.isnan(s.std)
+        assert s.effective_entries == 0.0
+
+    def test_format(self) -> None:
+        s = summarize(columns([1.0, 2.0, 3.0]))
+        text = s.format(precision=3)
+        assert "N = 3" in text
+        assert "$\\mu$ = 2" in text
+        assert "$\\sigma$ = 0.816" in text
+        assert "N =" not in s.format(include_entries=False)
+        assert "e" in Summary(1, 1, 1.5e-9, 0, 0, 0, 0, 0).format()
+        assert "nan" in summarize(columns([])).format()
+
+    def test_table(self) -> None:
+        table = describe_table(
+            [("a", summarize(columns([1.0, 2.0]))), ("bb", summarize(columns([3.0])))]
+        )
+        lines = table.splitlines()
+        assert lines[0].split()[:3] == ["entries", "mean", "std"]
+        assert lines[1].startswith("a ")
+        assert lines[2].startswith("bb")
+
+    def test_correlation(self) -> None:
+        x = np.array([1.0, 2.0, 3.0, 4.0])
+        cols = Columns(arrays=(x, 2 * x, -x + 1), weights=None, n_events=4, n_selected_events=4)
+        m = correlation_matrix(cols)
+        assert m.shape == (3, 3)
+        np.testing.assert_allclose(m, [[1, 1, -1], [1, 1, -1], [-1, -1, 1]])
+
+    def test_correlation_weighted_and_constant(self) -> None:
+        x = np.array([1.0, 2.0, 3.0, 4.0])
+        cols = Columns(
+            arrays=(x, x**2),
+            weights=np.array([1.0, 2.0, 1.0, 2.0]),
+            n_events=4,
+            n_selected_events=4,
+        )
+        m = correlation_matrix(cols)
+        assert 0.9 < m[0, 1] < 1.0
+        const = Columns(arrays=(x, np.ones(4)), weights=None, n_events=4, n_selected_events=4)
+        m = correlation_matrix(const)
+        assert np.isnan(m[0, 1])
+        assert np.isnan(m[1, 1])
+
+    def test_correlation_errors(self) -> None:
+        x = np.array([1.0, 2.0])
+        with pytest.raises(SelectionError, match="two variables"):
+            correlation_matrix(Columns(arrays=(x,), weights=None, n_events=2, n_selected_events=2))
+        with pytest.raises(SelectionError, match="two entries"):
+            correlation_matrix(
+                Columns(arrays=(x[:1], x[:1]), weights=None, n_events=1, n_selected_events=1)
+            )
+        with pytest.raises(SelectionError, match="negative"):
+            correlation_matrix(
+                Columns(
+                    arrays=(x, x), weights=np.array([1.0, -1.0]), n_events=2, n_selected_events=2
+                )
+            )
+
+
+class TestPipeline:
+    def test_combined_selection_and_weight(self) -> None:
+        sample = Sample({"x": [1]}, selection="x > 0", weight="w")
+        assert combined_selection(sample, None) == Cut("x > 0")
+        assert combined_selection(sample, "x < 5").expression == "(x > 0) & (x < 5)"  # type: ignore[union-attr]
+        assert combined_selection(Sample({"x": [1]}), "x < 5") == Cut("x < 5")
+        assert combined_selection(Sample({"x": [1]}), None) is None
+        assert combined_weight(sample, None) == "w"
+        assert combined_weight(sample, "v") == "(w) * (v)"
+        assert combined_weight(sample, "  ") == "w"
+        assert combined_weight(Sample({"x": [1]}), "v") == "v"
+
+    def test_load_columns_reads_only_needed_branches(self, signal_file: Path) -> None:
+        sample = Sample(signal_file, tree="events", selection="nMuon > 0", weight="weight")
+        cols = load_columns(sample, ["Muon_pt"], selection="abs(Muon_eta) < 2.5", weight="2")
+        assert cols.n_entries > 0
+        assert cols.weights is not None
+        assert cols.n_events == 2000
+        # weights are event weights broadcast to muons, times the constant 2
+        assert np.all(cols.weights > 0)
+
+    def test_build_histograms_shared_binning(
+        self, signal_file: Path, background_file: Path
+    ) -> None:
+        samples = [
+            Sample(signal_file, tree="events"),
+            Sample(background_file, tree="events", is_data=True),
+        ]
+        hists = build_histograms(samples, Variable("MET", bins=20), selection="nMuon >= 1")
+        assert len(hists) == 2
+        assert hists[0].edges.tolist() == hists[1].edges.tolist()
+        assert hists[0].label == "signal"
+        assert hists[1].is_data
+        assert hists[0].stats is not None
+        assert hists[0].stats.entries == hists[0].hist.sum(flow=True).value
+        assert hists[0].axis.name == "MET"
+
+    def test_build_histograms_contents_match_numpy(
+        self, signal_arrays: dict[str, ak.Array]
+    ) -> None:
+        sample = Sample(signal_arrays, label="mem")
+        [h] = build_histograms(
+            [sample],
+            Variable("Muon_pt", bins=(10, 0, 200)),
+            selection="Muon_pt > 20",
+            weight="weight",
+        )
+        pt = signal_arrays["Muon_pt"]
+        w = ak.broadcast_arrays(signal_arrays["weight"], pt)[0]
+        mask = pt > 20
+        expected, _ = np.histogram(
+            ak.flatten(pt[mask]), bins=10, range=(0, 200), weights=ak.flatten(w[mask])
+        )
+        assert h.values().tolist() == pytest.approx(expected.tolist())
+
+    def test_build_histograms_2d(self, signal_arrays: dict[str, ak.Array]) -> None:
+        sample = Sample(signal_arrays)
+        [h] = build_histograms_2d(
+            [sample], Variable("Muon_pt", bins=(5, 0, 100)), Variable("Muon_eta", bins=5)
+        )
+        assert h.ndim == 2
+        assert h.hist.axes[0].name == "Muon_pt"
+        assert h.hist.axes[1].name == "Muon_eta"
+        assert h.hist.sum(flow=True).value == pytest.approx(ak.count(signal_arrays["Muon_pt"]))
+
+    def test_build_histograms_2d_same_variable(self, signal_arrays: dict[str, ak.Array]) -> None:
+        [h] = build_histograms_2d([Sample(signal_arrays)], "MET", "MET")
+        assert h.hist.axes[1].name == "MET_y"
+
+    def test_prepare_then_fill_roundtrip(self, signal_arrays: dict[str, ak.Array]) -> None:
+        cols = prepare(signal_arrays, "nMuon")
+        h = fill([hist.axis.Regular(10, -0.5, 9.5)], cols)
+        assert h.sum(flow=True).value == 2000
+        assert (
+            h.values().tolist() == np.bincount(signal_arrays["nMuon"], minlength=10)[:10].tolist()
+        )
+
+
+def _hist(values: list[float], weights: list[float] | None = None) -> hist.Hist:
+    h = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
+    h.fill(values, weight=weights)
+    return h
+
+
+class TestSignificance:
+    def test_s_over_sqrt_b(self) -> None:
+        from rootfig.histograms import significance
+
+        signal = _hist([0.5, 0.5, 1.5])  # s = [2, 1, 0]
+        background = _hist([0.5] * 4 + [1.5] * 1)  # b = [4, 1, 0]
+        result = significance(signal, background)
+        np.testing.assert_allclose(result.values[:2], [2 / 2, 1 / 1])
+        assert np.isnan(result.values[2])
+        # var = vs/b + s^2 vb/(4 b^3): bin 0 -> 2/4 + 4*4/(4*64) = 0.5 + 0.0625
+        assert result.errors[0] == pytest.approx(np.sqrt(0.5625))
+        assert np.isnan(result.band).all()
+        np.testing.assert_allclose(result.edges, [0, 1, 2, 3])
+
+    def test_s_over_sqrt_s_plus_b(self) -> None:
+        from rootfig.histograms import significance
+
+        signal = _hist([0.5, 0.5])
+        background = _hist([0.5, 0.5, 1.5])
+        result = significance(signal, background, kind="s/sqrt(s+b)")
+        assert result.values[0] == pytest.approx(2 / np.sqrt(4))
+        assert result.values[1] == pytest.approx(0.0)
+        assert np.isnan(result.values[2])
+        assert np.isfinite(result.errors[0])
+        with pytest.raises(BinningError):
+            significance(
+                signal, hist.Hist(hist.axis.Regular(4, 0, 4), storage=hist.storage.Weight())
+            )
+
+
+class TestEfficiency:
+    def test_wilson_interval(self) -> None:
+        from rootfig.histograms import efficiency
+
+        total = _hist([0.5] * 10 + [1.5] * 4)
+        passed = _hist([0.5] * 5 + [1.5] * 4)
+        eff = efficiency(passed, total, label="tight")
+        assert eff.label == "tight"
+        assert eff.values[0] == pytest.approx(0.5)
+        assert eff.values[1] == pytest.approx(1.0)
+        assert np.isnan(eff.values[2])
+        # Wilson, z = 1, p = 0.5, n = 10: centre 0.5, half-width (1/1.1) sqrt(0.025 + 0.0025)
+        half = np.sqrt(0.0275) / 1.1
+        assert eff.lower[0] == pytest.approx(0.5 - half)
+        assert eff.upper[0] == pytest.approx(0.5 + half)
+        assert eff.upper[1] == 1.0  # clipped
+        assert eff.lower[1] < 1.0
+        low_err, up_err = eff.errors
+        assert low_err[0] == pytest.approx(half)
+        assert up_err[0] == pytest.approx(half)
+        np.testing.assert_allclose(eff.centers, [0.5, 1.5, 2.5])
+        np.testing.assert_allclose(eff.half_widths, [0.5, 0.5, 0.5])
+
+    def test_weights_use_effective_entries(self) -> None:
+        from rootfig.histograms import efficiency
+
+        unweighted = efficiency(_hist([0.5] * 5), _hist([0.5] * 10))
+        weighted = efficiency(_hist([0.5] * 5, [2.0] * 5), _hist([0.5] * 10, [2.0] * 10))
+        assert weighted.values[0] == pytest.approx(unweighted.values[0])
+        assert weighted.lower[0] == pytest.approx(unweighted.lower[0])  # same n_eff = 10
+        with pytest.raises(BinningError):
+            efficiency(
+                _hist([0.5]), hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+            )
+
+
+class TestProfile:
+    def test_mean_and_std(self) -> None:
+        from rootfig.histograms import profile
+
+        x = np.array([0.5, 0.5, 0.5, 1.5, 1.5, 2.5, 5.0])  # last is outside
+        y = np.array([1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 99.0])
+        edges = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        mean = profile(x, y, edges)
+        np.testing.assert_allclose(mean.values, [2.0, 5.0, 7.0, np.nan])
+        np.testing.assert_allclose(mean.counts, [3, 2, 1, 0])
+        assert mean.errors[0] == pytest.approx(np.sqrt(2 / 3) / np.sqrt(3))
+        assert mean.errors[2] == 0.0
+        std = profile(x, y, edges, statistic="std", label="res")
+        assert std.label == "res"
+        assert std.values[0] == pytest.approx(np.sqrt(2 / 3))
+        assert std.errors[0] == pytest.approx(np.sqrt(2 / 3) / np.sqrt(6))
+        np.testing.assert_allclose(std.centers, [0.5, 1.5, 2.5, 3.5])
+        np.testing.assert_allclose(std.half_widths, 0.5)
+
+    def test_weights_and_errors(self) -> None:
+        from rootfig.histograms import profile
+
+        x = np.array([0.5, 0.5])
+        y = np.array([1.0, 3.0])
+        weighted = profile(x, y, np.array([0.0, 1.0]), weights=np.array([3.0, 1.0]))
+        assert weighted.values[0] == pytest.approx(1.5)
+        with pytest.raises(BinningError, match="same length"):
+            profile(x, y[:1], np.array([0.0, 1.0]))
+        with pytest.raises(BinningError, match="statistic"):
+            profile(x, y, np.array([0.0, 1.0]), statistic="median")  # type: ignore[arg-type]
+
+
+class TestCutflow:
+    @staticmethod
+    def _sample(**kwargs: Any) -> Sample:
+        arrays = {
+            "n": np.array([0, 1, 2, 3, 4]),
+            "w": np.array([1.0, 2.0, 3.0, 4.0, 5.0]),
+            "Jet_pt": ak.Array([[], [10.0], [10.0, 40.0], [50.0], [5.0, 5.0, 60.0]]),
+        }
+        return Sample(arrays, label="toy", **kwargs)
+
+    def test_steps_and_efficiencies(self) -> None:
+        from rootfig.histograms import cutflow
+
+        flow = cutflow(self._sample(), ["n >= 1", Cut("Jet_pt > 30", label="hard jet"), "n >= 4"])
+        assert flow.labels == ["All", "n >= 1", "hard jet", "n >= 4"]
+        assert flow.events.tolist() == [5, 4, 3, 1]  # per-object cut: any jet above 30
+        assert flow.yields.tolist() == [5, 4, 3, 1]  # unit weights
+        np.testing.assert_allclose(flow.efficiencies, [1, 0.8, 0.75, 1 / 3])
+        np.testing.assert_allclose(flow.absolute_efficiencies, [1, 0.8, 0.6, 0.2])
+        assert flow.steps[1].expression == "n >= 1"
+
+    def test_weights_selection_and_scale(self) -> None:
+        from rootfig.histograms import cutflow
+
+        sample = self._sample(weight="w", selection=Cut("n >= 1", label="baseline"), scale=2.0)
+        flow = cutflow(sample, ["n >= 3"], weight="2")
+        assert flow.labels == ["baseline", "n >= 3"]
+        assert flow.events.tolist() == [4, 2]
+        # weights w * 2 (plot) * 2 (scale): (2+3+4+5)*4 = 56 and (4+5)*4 = 36
+        np.testing.assert_allclose(flow.yields, [56, 36])
+        assert flow.steps[1].error == pytest.approx(np.sqrt(16**2 + 20**2))
+
+    def test_table(self) -> None:
+        from rootfig.histograms import CutflowTable, cutflow
+
+        table = CutflowTable(
+            (cutflow(self._sample(), ["n >= 1"]), cutflow(self._sample(weight="w"), ["n >= 1"]))
+        )
+        text = str(table)
+        assert "toy" in text
+        assert "n >= 1" in text
+        assert "80.0%" in text
+        assert table.samples == ["toy", "toy"]
+        assert table.labels == ["All", "n >= 1"]
+        assert table.get("toy").events.tolist() == [5, 4]
+        with pytest.raises(KeyError):
+            table.get("other")
+        assert str(CutflowTable(())) == ""
+        assert cutflow(self._sample(), []).events.tolist() == [5]
+
+    def test_errors(self) -> None:
+        from rootfig.errors import IncompatibleWeightError
+        from rootfig.histograms import cutflow
+
+        with pytest.raises(IncompatibleWeightError, match="per-object"):
+            cutflow(self._sample(), ["n >= 1"], weight="Jet_pt")
+        with pytest.raises(SelectionError, match="depth"):
+            cutflow(Sample({"a": ak.Array([[[1.0]], [[2.0]]])}), ["a > 1"])
+
+
+class TestSignedWeights:
+    def test_summary_with_negative_variance_is_nan_not_an_error(self) -> None:
+        s = summarize(columns([0.0, 1.0], [1.0, -0.5]))
+        assert s.mean == -1.0
+        assert np.isnan(s.std)
+        assert np.isnan(s.sem)
+        assert np.isnan(s.skewness)
+        assert "nan" in s.format()
+
+    def test_histogram_fill_does_not_depend_on_statistics(self) -> None:
+        sample = Sample({"x": np.array([0.0, 1.0]), "w": np.array([1.0, -0.5])})
+        [h] = build_histograms([sample], Variable("x", bins=(2, 0, 2)), weight="w")
+        np.testing.assert_allclose(h.values(), [1.0, -0.5])
+        np.testing.assert_allclose(h.variances(), [1.0, 0.25])
+        assert h.stats is not None
+        assert np.isnan(h.stats.std)
+
+
+class TestEfficiencyDomain:
+    @staticmethod
+    def _hists(passed: int, total: int, *, weights: list[float] | None = None) -> tuple[Any, Any]:
+        axis = hist.axis.Regular(1, 0, 1)
+        pass_h = hist.Hist(axis, storage=hist.storage.Weight())
+        total_h = hist.Hist(axis, storage=hist.storage.Weight())
+        total_h.fill(np.full(total, 0.5), weight=weights)
+        pass_h.fill(np.full(passed, 0.5), weight=None if weights is None else weights[:passed])
+        return pass_h, total_h
+
+    @pytest.mark.parametrize("n", [1, 3, 6, 50])
+    def test_all_pass_and_all_fail_have_nonnegative_errors(self, n: int) -> None:
+        from rootfig.histograms import efficiency
+
+        full = efficiency(*self._hists(n, n))
+        assert full.values[0] == 1.0
+        assert full.upper[0] == 1.0
+        assert 0.0 < full.lower[0] < 1.0
+        none = efficiency(*self._hists(0, n))
+        assert none.values[0] == 0.0
+        assert none.lower[0] == 0.0
+        assert 0.0 < none.upper[0] < 1.0
+        for eff in (full, none):
+            low, high = eff.errors
+            assert (low >= 0).all()
+            assert (high >= 0).all()
+
+    def test_weighted_endpoints(self) -> None:
+        from rootfig.histograms import efficiency
+
+        eff = efficiency(*self._hists(4, 4, weights=[0.5, 1.5, 2.0, 0.25]))
+        assert eff.values[0] == 1.0
+        assert eff.upper[0] == 1.0
+        assert all((e >= 0).all() for e in eff.errors)
+
+    def test_outside_unit_interval_is_undefined_with_warning(self) -> None:
+        from rootfig.histograms import efficiency
+
+        axis = hist.axis.Regular(1, 0, 1)
+        pass_h = hist.Hist(axis, storage=hist.storage.Weight()).fill([0.5, 0.5], weight=[1.0, 1.0])
+        total_h = hist.Hist(axis, storage=hist.storage.Weight()).fill(
+            [0.5, 0.5, 0.5], weight=[1.0, 1.0, -0.5]
+        )
+        with pytest.warns(RootfigWarning, match="outside"):
+            eff = efficiency(pass_h, total_h, label="nlo")
+        assert eff.values[0] == pytest.approx(2 / 1.5)
+        assert np.isnan(eff.lower[0])
+        assert np.isnan(eff.upper[0])
+
+    @pytest.mark.parametrize("z", [0.0, -1.0, np.inf, np.nan])
+    def test_z_is_validated(self, z: float) -> None:
+        from rootfig.histograms import efficiency
+
+        with pytest.raises(BinningError, match="z must be"):
+            efficiency(*self._hists(1, 2), z=z)
+
+
+class TestProfileNumerics:
+    def test_variance_is_translation_invariant(self) -> None:
+        from rootfig.histograms import profile
+
+        x = np.array([0.5, 0.5])
+        edges = np.array([0.0, 1.0])
+        near = profile(x, np.array([0.0, 1.0]), edges, statistic="std")
+        far = profile(x, np.array([1e9, 1e9 + 1.0]), edges, statistic="std")
+        np.testing.assert_allclose(near.values, [0.5])
+        np.testing.assert_allclose(far.values, [0.5])
+        np.testing.assert_allclose(far.errors, near.errors)
+        weighted = profile(x, np.array([1e9, 1e9 + 1.0]), edges, weights=np.array([3.0, 1.0]))
+        np.testing.assert_allclose(weighted.values, [1e9 + 0.25])
+
+    def test_negative_weighted_variance_is_nan(self) -> None:
+        from rootfig.histograms import profile
+
+        result = profile(
+            np.array([0.5, 0.5]),
+            np.array([0.0, 1.0]),
+            np.array([0.0, 1.0]),
+            weights=np.array([1.0, -0.5]),
+        )
+        np.testing.assert_allclose(result.values, [-1.0])
+        assert np.isnan(result.errors[0])
+        as_std = profile(
+            np.array([0.5, 0.5]),
+            np.array([0.0, 1.0]),
+            np.array([0.0, 1.0]),
+            weights=np.array([1.0, -0.5]),
+            statistic="std",
+        )
+        assert np.isnan(as_std.values[0])
+
+
+class TestFlowNormalisation:
+    @staticmethod
+    def _flow_hist() -> Any:
+        h = hist.Hist(hist.axis.Variable([0.0, 2.0, 6.0]), storage=hist.storage.Weight())
+        h.fill([-1.0, 1.0, 3.0, 7.0], weight=[8.0, 10.0, 12.0, 16.0])
+        return h
+
+    def test_width_divides_flow_bins_by_neighbouring_width(self) -> None:
+        result = normalize_hist(self._flow_hist(), "width")
+        np.testing.assert_allclose(result.values(flow=True), [4.0, 5.0, 3.0, 4.0])
+        np.testing.assert_allclose(result.variances(flow=True), [16.0, 25.0, 9.0, 16.0])
+        density = normalize_hist(self._flow_hist(), "density")
+        np.testing.assert_allclose(density.values(flow=True), np.array([4.0, 5.0, 3.0, 4.0]) / 22)
+        np.testing.assert_allclose((density.values() * np.array([2.0, 4.0])).sum(), 1.0)
+
+    def test_2d_flow_cells(self) -> None:
+        h = hist.Hist(
+            hist.axis.Variable([0.0, 2.0, 6.0]),
+            hist.axis.Variable([0.0, 1.0, 3.0]),
+            storage=hist.storage.Weight(),
+        )
+        h.fill([-1.0, 1.0, 7.0], [-1.0, 0.5, 5.0])
+        values = normalize_hist(h, "width").values(flow=True)
+        assert values[0, 0] == pytest.approx(1 / (2 * 1))  # both underflows
+        assert values[1, 1] == pytest.approx(1 / (2 * 1))
+        assert values[-1, -1] == pytest.approx(1 / (4 * 2))  # both overflows
+
+    def test_axes_without_flow_bins(self) -> None:
+        axis = hist.axis.Regular(2, 0, 4, underflow=False, overflow=False)
+        h = hist.Hist(axis, storage=hist.storage.Weight()).fill([1.0, 3.0])
+        np.testing.assert_allclose(normalize_hist(h, "width").values(flow=True), [0.5, 0.5])
+
+
+class TestWeightStorage:
+    def test_plain_storages_are_converted(self) -> None:
+        from rootfig.histograms import as_weight_storage
+
+        double = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0, 3.0, 3.0])
+        converted = as_weight_storage(double)
+        assert converted.storage_type is hist.storage.Weight
+        np.testing.assert_allclose(converted.values(), [1.0, 2.0])
+        np.testing.assert_allclose(converted.variances(), [1.0, 2.0])
+        np.testing.assert_allclose(double.values(), [1.0, 2.0])  # original untouched
+        integer = hist.Hist(hist.axis.Regular(2, 0, 4), storage=hist.storage.Int64()).fill([1.0])
+        np.testing.assert_allclose(as_weight_storage(integer).variances(), [1.0, 0.0])
+        weighted = hist.Hist(hist.axis.Regular(2, 0, 4), storage=hist.storage.Weight()).fill([1.0])
+        assert as_weight_storage(weighted) is weighted
+        np.testing.assert_allclose(normalize_hist(double, "width").values(), [0.5, 1.0])
+
+    def test_unsupported_storage(self) -> None:
+        from rootfig.histograms import as_weight_storage
+
+        mean = hist.Hist(hist.axis.Regular(2, 0, 4), storage=hist.storage.Mean())
+        mean.fill([1.0], sample=[2.0])
+        with pytest.raises(TypeError, match="Mean storage"):
+            as_weight_storage(mean)
+
+
+class TestBinningTolerance:
+    @staticmethod
+    def _hist(edges: list[float], value: float) -> Any:
+        return hist.Hist(hist.axis.Variable(edges), storage=hist.storage.Weight()).fill([value])
+
+    def test_whole_bin_shift_at_large_coordinates_is_rejected(self) -> None:
+        a = self._hist([1e6, 1e6 + 1, 1e6 + 2], 1e6 + 0.5)
+        b = self._hist([1e6 + 1, 1e6 + 2, 1e6 + 3], 1e6 + 1.5)
+        assert not compatible_binning(a, b)
+        with pytest.raises(BinningError):
+            ratio(a, b)
+
+    def test_tiny_coordinates_and_round_off(self) -> None:
+        a = self._hist([1e-9, 2e-9, 3e-9], 1.5e-9)
+        b = self._hist([2e-9, 3e-9, 4e-9], 2.5e-9)
+        assert not compatible_binning(a, b)
+        regular = hist.Hist(hist.axis.Regular(7, 0, 1), storage=hist.storage.Weight())
+        variable = hist.Hist(
+            hist.axis.Variable(np.linspace(0, 1, 8) * (1 + 1e-13)), storage=hist.storage.Weight()
+        )
+        assert compatible_binning(regular, variable)
+
+
+class TestCutflowPolicy:
+    def test_nonfinite_weights_follow_the_policy(self) -> None:
+        from rootfig.histograms import cutflow
+
+        sample = Sample({"x": np.arange(3.0), "w": np.array([1.0, np.inf, 1.0])})
+        with pytest.raises(SelectionError, match="non-finite weight"):
+            cutflow(sample, ["x > 0"], weight="w", nonfinite="error")
+        with pytest.warns(RootfigWarning, match="1 event"):
+            flow = cutflow(sample, ["x > 0"], weight="w")
+        np.testing.assert_allclose(flow.yields, [2.0, 1.0])
+        assert flow.events.tolist() == [2, 1]
+
+    def test_constant_cuts_and_weights_know_the_event_count(self) -> None:
+        from rootfig.histograms import cutflow
+
+        sample = Sample({"x": np.arange(3.0)})
+        np.testing.assert_allclose(cutflow(sample, [], weight="2").yields, [6.0])
+        np.testing.assert_allclose(cutflow(sample, ["True"], weight="2").yields, [6.0, 6.0])
+        assert cutflow(sample, ["x > 0"], weight="2").events.tolist() == [3, 2]
+
+
+class TestConstantExpressions:
+    def test_constant_variable_has_one_entry_per_event(self) -> None:
+        sample = Sample({"x": np.arange(3.0)})
+        [h] = build_histograms([sample], Variable("1", bins=(1, 0, 2)))
+        assert h.values().tolist() == [3.0]
+        cols = load_columns(sample, ["1"], weight="2", selection="True")
+        assert cols.n_events == 3
+        assert cols.sum_weights == 6.0
+
+    def test_custom_source_without_num_entries(self) -> None:
+        from rootfig.histograms import source_length
+
+        class Custom:
+            def branches(self) -> list[str]:
+                return ["x"]
+
+            def arrays(self, branches: Any) -> dict[str, ak.Array]:
+                return {b: ak.Array([1.0, 2.0]) for b in branches}
+
+            def describe(self) -> str:
+                return "custom"
+
+        assert source_length(Custom()) == 2
+        [h] = build_histograms([Sample(Custom())], Variable("1", bins=(1, 0, 2)))
+        assert h.values().tolist() == [2.0]
