@@ -62,7 +62,9 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
       - run: uv sync --group dev
-      - run: uv run pytest --cov --cov-report=xml --cov-report=term ${{ matrix.mpl-args }}
+      - run: >
+          uv run pytest --cov --cov-report=xml --cov-report=term
+          --junitxml=junit.xml -o junit_family=legacy ${{ matrix.mpl-args }}
       - name: Upload image comparison report (baseline / result / diff)
         if: failure() && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
@@ -75,6 +77,13 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
+          flags: py${{ matrix.python-version }}
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        uses: codecov/test-results-action@v1
+        with:
           flags: py${{ matrix.python-version }}
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}

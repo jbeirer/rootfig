@@ -9,6 +9,7 @@ build/
 .ruff_cache/
 .coverage
 coverage.xml
+junit.xml
 htmlcov/
 site/
 *.root
