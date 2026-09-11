@@ -65,7 +65,7 @@ jobs:
       - run: uv run pytest --cov --cov-report=xml --cov-report=term ${{ matrix.mpl-args }}
       - name: Upload image comparison report (baseline / result / diff)
         if: failure() && matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mpl-results-py${{ matrix.python-version }}
           path: mpl-results/
@@ -101,7 +101,7 @@ jobs:
           uv build --wheel
           uv sync --group dev
           uv run pytest --collect-only -q tests
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
