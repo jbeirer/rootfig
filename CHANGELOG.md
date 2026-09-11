@@ -7,6 +7,12 @@ change in minor releases, with deprecation warnings where practical.
 
 ## [Unreleased]
 
+### Fixed
+
+- `rf.plot2d` figures have the same canvas as 1D plots: the colour bar takes its
+  space from the axes instead of widening the figure twice (rootfig's 15 % plus
+  mplhep's `cbarextend`). A user `figsize` now takes precedence over the style's.
+
 ## [0.1.0] - 2026-09-11
 
 First release.

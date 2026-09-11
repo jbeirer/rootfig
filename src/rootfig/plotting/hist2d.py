@@ -49,6 +49,9 @@ def draw_hist2d(
         populated = (values != 0) | (histogram.variances() > 0)
         if populated.any() and not populated.all():
             kwargs["mask"] = populated
+    # mplhep would otherwise widen a single-axes figure to fit the colour bar, so a 2D
+    # plot would not have the same canvas as a 1D one; take the space from the axes.
+    kwargs.setdefault("cbarextend", False)
     artists = hep.hist2dplot(histogram.hist, ax=ax, cmap=cmap, cbar=colorbar, flow=flow, **kwargs)
     if colorbar and zlabel is not None:
         cbar = getattr(artists, "cbar", None)

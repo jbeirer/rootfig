@@ -585,6 +585,18 @@ class TestPlot2D:
         with pytest.raises(SelectionError, match="different structures"):
             rf.plot2d(signal_file, "MET", "Muon_pt", tree="events")
 
+    def test_same_canvas_as_1d(self, signal_file: Path) -> None:
+        # The colour bar must not widen the figure (rootfig's factor or mplhep's cbarextend).
+        p1 = rf.plot(signal_file, "MET", tree="events")
+        p2 = rf.plot2d(signal_file, "MET", "nMuon", tree="events")
+        np.testing.assert_allclose(p2.fig.get_size_inches(), p1.fig.get_size_inches())
+        p2.fig.canvas.draw()  # the colour bar's space is only taken from the axes when drawn
+        assert p2.ax.get_position().width < p1.ax.get_position().width
+        # figsize wins over the style's size
+        wide = rf.Style(figsize=(9, 3))
+        p3 = rf.plot2d(signal_file, "MET", "nMuon", tree="events", style=wide, figsize=(4, 5))
+        np.testing.assert_allclose(p3.fig.get_size_inches(), (4, 5))
+
 
 class TestSummaryAndCorrelation:
     def test_summarize(

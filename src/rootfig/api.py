@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import awkward as ak
-import matplotlib.pyplot as plt
 import numpy as np
 
 from rootfig._typing import FloatArray, Hist
@@ -711,11 +710,9 @@ def plot2d(
         histogram_ = _normalize_for_plot(histogram_, normalize)
     resolved_style = _style_for(style, text, lumi)
     with style_context(resolved_style) as st:
-        default_size = st.figsize or figsize
-        if default_size is None:
-            width, height = plt.rcParams["figure.figsize"]
-            default_size = (width * 1.15, height)
-        layout = make_figure(st, ratio=False, ax=ax, figsize=default_size)
+        # Same canvas as a 1D plot; the colour bar takes its space from the main axes
+        # (draw_hist2d stops mplhep from widening the figure).
+        layout = make_figure(st, ratio=False, ax=ax, figsize=figsize or st.figsize)
         fig, main_ax = layout.fig, layout.main
         draw_hist2d(
             histogram_,

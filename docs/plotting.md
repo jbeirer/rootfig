@@ -126,6 +126,8 @@ rf.correlation(sample, ["MET", "nJet", "HT"], selection="nJet >= 2", percent=Tru
 `rf.plot2d` options: `logz`, `logx`, `logy`, `cmap` (any matplotlib colour
 map, default `viridis`), `colorbar=False`, `zlabel` (default `Events` or the
 normalisation), `normalize`, `title`, `text`, `style`, `figsize`, `ax`, `save`.
+The figure has the same size as a 1D plot; the colour bar takes its space from
+the axes.
 
 `rf.correlation` options: `labels` (tick labels, default the variable labels),
 `percent=True` (integer percentages instead of two-decimal coefficients),
