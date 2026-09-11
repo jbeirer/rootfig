@@ -1,0 +1,59 @@
+# How rootfig relates to uproot, Awkward, hist, mplhep and matplotlib
+
+rootfig is a thin, opinionated layer over the Scientific Python HEP stack. It
+owns no file format, array type, histogram type or drawing primitive of its
+own; every object you get back belongs to one of the libraries below.
+
+## uproot
+
+[uproot](https://uproot.readthedocs.io) reads and writes ROOT files in pure
+Python. rootfig uses it for all I/O: opening files, detecting the tree,
+listing branches, and reading the branches an expression needs from one or
+many files (`TTree` and `RNTuple`). uproot also has its own expression
+language for `TTree.arrays(expressions, cut=...)`; rootfig implements a
+similar one so that it can validate names before reading, give precise
+errors, support in-memory data, and define the per-object/per-event rules
+that `arrays(cut=...)` leaves to the caller.
+
+## Awkward Array
+
+[Awkward Array](https://awkward-array.org) is the array library for jagged
+data. Everything rootfig computes is an Awkward array; the selection layer is
+a small set of rules (broadcast, mask, flatten) expressed with `ak.num`,
+`ak.broadcast_arrays`, boolean indexing and `ak.flatten`. `rf.load` returns
+an Awkward record array, and `rf.evaluate` runs one expression on arrays you
+already have.
+
+## hist and boost-histogram
+
+[hist](https://hist.readthedocs.io) provides the histogram objects. rootfig
+fills `hist.Hist` with `Weight` storage (sum of weights and sum of squared
+weights per bin), including under/overflow bins, and returns them unchanged:
+`rf.histogram` gives you the `hist.Hist`, `Plot.hists` lists them. Rebinning,
+projecting, slicing, saving to ROOT files with uproot: all of that is hist
+functionality and works directly on the returned objects.
+
+## mplhep
+
+[mplhep](https://mplhep.readthedocs.io) draws histograms with matplotlib and
+ships the style sheets and label helpers of the LHC experiments. rootfig
+draws every histogram through `mplhep.histplot`/`hist2dplot` and uses
+mplhep's per-experiment label functions when a `Style(experiment=...)` is
+given. The experiment-neutral default style and the ratio panel are
+rootfig's.
+
+## matplotlib
+
+Every figure is a plain `matplotlib.figure.Figure` with plain `Axes`. rootfig
+applies its style only inside a `plt.style.context` while drawing, so it does
+not change global rcParams (unless you call `rf.use_style`). Anything you
+would do to a matplotlib figure, you can do to `Plot.fig` and `Plot.ax`.
+
+## When to use something else
+
+- You already have flat NumPy columns or `boost-histogram` objects and want
+  rich comparison panels: [plothist](https://plothist.readthedocs.io).
+- You need a full columnar analysis framework with lazy, distributed
+  processing: [coffea](https://coffeateam.github.io/coffea/).
+- You want to build fit templates and workspaces: [cabinetry](https://cabinetry.readthedocs.io).
+- You want a quick terminal look at a branch: [histoprint](https://github.com/scikit-hep/histoprint).

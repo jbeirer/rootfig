@@ -1,0 +1,95 @@
+"""The :class:`Variable` description of what to histogram."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, replace
+from typing import Any
+
+from rootfig.expressions import Expression, parse
+from rootfig.model.binning import Bins, RangeSpec, validate_bins
+
+__all__ = ["Variable", "as_variable"]
+
+# --------------------------------------------------------------------------------------
+
+_SAFE_NAME_RE = re.compile(r"[^0-9A-Za-z_]+")
+
+
+@dataclass(frozen=True)
+class Variable:
+    """What to histogram and how to present it.
+
+    Parameters
+    ----------
+    expression
+        A rootfig expression (a branch name or a formula, see
+        :mod:`rootfig.expressions`).
+    bins
+        Binning specification, see :data:`Bins`. Default 50 bins with an
+        automatic range.
+    range
+        Range used when ``bins`` is an integer, see :data:`RangeSpec`.
+    label
+        Axis label; may contain matplotlib math text. Defaults to the
+        expression.
+    unit
+        Physical unit appended to the axis label as ``[unit]`` and used in the
+        automatic y-axis label (``Events / 2 GeV``).
+    log
+        Draw the x axis with a logarithmic scale.
+    name
+        Short identifier used for file names (:meth:`Plot.save` with a
+        directory). Defaults to a sanitised version of the expression.
+    """
+
+    expression: str
+    bins: Bins = 50
+    range: RangeSpec = "auto"
+    label: str | None = None
+    unit: str | None = None
+    log: bool = False
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        parse(self.expression)
+        validate_bins(self.bins, self.range)
+
+    def __str__(self) -> str:
+        return self.expression
+
+    def parsed(self) -> Expression:
+        """Return the parsed :class:`~rootfig.expressions.Expression`."""
+        return parse(self.expression)
+
+    @property
+    def safe_name(self) -> str:
+        """A file-system friendly identifier for this variable."""
+        if self.name:
+            return self.name
+        return _SAFE_NAME_RE.sub("_", self.expression).strip("_") or "variable"
+
+    @property
+    def axis_label(self) -> str:
+        """The x-axis label including the unit, e.g. ``'$p_T$ [GeV]'``."""
+        base = self.label if self.label is not None else self.expression
+        return f"{base} [{self.unit}]" if self.unit else base
+
+    def with_(self, **changes: Any) -> Variable:
+        """Return a copy with the given fields replaced (``dataclasses.replace``)."""
+        return replace(self, **changes)
+
+
+def as_variable(variable: str | Variable, **overrides: Any) -> Variable:
+    """Coerce a string or ``Variable`` to a ``Variable``, applying explicit overrides.
+
+    Overrides whose value is ``None`` are ignored so callers can forward
+    keyword arguments straight from a ``plot(...)`` signature.
+    """
+    effective = {k: v for k, v in overrides.items() if v is not None}
+    if isinstance(variable, Variable):
+        return replace(variable, **effective) if effective else variable
+    if isinstance(variable, str):
+        return Variable(variable, **effective)
+    msg = f"variable must be a string or Variable, got {type(variable).__name__}"  # type: ignore[unreachable]
+    raise TypeError(msg)

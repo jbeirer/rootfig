@@ -1,0 +1,70 @@
+site_name: rootfig
+site_description: Publication-quality figures straight from ROOT trees, without ROOT.
+site_url: https://jbeirer.github.io/rootfig/
+repo_url: https://github.com/jbeirer/rootfig
+repo_name: jbeirer/rootfig
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Quick start: quickstart.md
+  - Gallery: gallery.md
+  - Expressions and selections: expressions.md
+  - Samples, variables, cuts and styles: composable.md
+  - Plotting options: plotting.md
+  - Ecosystem: ecosystem.md
+  - API reference: api.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - attr_list
+
+exclude_docs: |
+  hooks/
+
+hooks:
+  - docs/hooks/gallery.py
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy
+            show_source: false
+            show_root_heading: true
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            merge_init_into_class: true
+
+validation:
+  links:
+    absolute_links: relative_to_docs
+    unrecognized_links: warn
