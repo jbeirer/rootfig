@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -88,9 +89,44 @@ class TestHistogram:
         assert scaled.variances().tolist() == [8.0, 16.0, 4.0]
         assert histogram.with_(label="x").label == "x"
 
+    def test_scaled_keeps_statistics_consistent(self, histogram: Histogram) -> None:
+        assert histogram.stats is not None
+        scaled = histogram.scaled(2.0)
+        assert scaled.stats is not None
+        assert scaled.stats.sum_weights == 12.0
+        assert scaled.sum_weights == pytest.approx(scaled.stats.sum_weights)
+        assert scaled.stats.effective_entries == pytest.approx(histogram.stats.effective_entries)
+        assert scaled.stats.mean == histogram.stats.mean
+        assert scaled.stats.std == histogram.stats.std
+        assert scaled.stats.entries == scaled.entries == 5
+        assert Histogram(histogram.hist, label="h").scaled(2.0).stats is None
+
     def test_entries_without_stats(self) -> None:
         h = Histogram(fill([hist.axis.Regular(3, 0, 3)], columns([0.5, 0.5])), label="h")
-        assert h.entries == 2
+        assert h.entries is None  # a sum of weights is not an entry count
+        assert h.sum_weights == 2.0
+        weighted = Histogram(
+            fill([hist.axis.Regular(3, 0, 3)], columns([0.5, 0.5, 1.5], [0.1, 0.2, 0.3])),
+            label="w",
+        )
+        assert weighted.entries is None
+        assert weighted.sum_weights == pytest.approx(0.6)
+
+    def test_sum_weights_includes_flow_and_normalisation(self, histogram: Histogram) -> None:
+        assert histogram.sum_weights == 6.0  # 5 visible + 1 overflow
+        unity = normalize(histogram, True)
+        assert unity.sum_weights == pytest.approx(1.2)
+        assert unity.entries == 5  # the statistics are kept
+
+    def test_plain_storage_is_converted_on_construction(self) -> None:
+        plain = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0, 3.0, 3.0])
+        h = Histogram(plain, label="h")
+        assert h.hist.storage_type is hist.storage.Weight
+        np.testing.assert_allclose(h.variances(), [1.0, 2.0])
+        mean = hist.Hist(hist.axis.Regular(2, 0, 4), storage=hist.storage.Mean())
+        mean.fill([1.0], sample=[2.0])
+        with pytest.raises(TypeError, match="Mean storage"):
+            Histogram(mean, label="m")
 
 
 class TestNormalize:
@@ -153,6 +189,41 @@ class TestNormalize:
         assert out.normalization == "Normalised to unity"
         assert out.integral == pytest.approx(1.0)
         assert normalize(wrapped, None) is wrapped
+
+    def test_negative_total_divides_by_signed_total(self) -> None:
+        h = fill([hist.axis.Regular(2, 0, 2)], columns([0.5, 1.5], [1.0, -3.0]))
+        with pytest.warns(RootfigWarning, match="negative total"):
+            out = normalize_hist(h, True)
+        np.testing.assert_allclose(out.values(), [-0.5, 1.5])
+        assert out.values().sum() == pytest.approx(1.0)
+        np.testing.assert_allclose(out.variances(), [0.25, 2.25])
+        with pytest.warns(RootfigWarning, match="negative total"):
+            assert normalize_hist(h, 100).values().sum() == pytest.approx(100.0)
+        with pytest.warns(RootfigWarning, match="negative total"):
+            assert normalize_hist(h, "density").values().sum() == pytest.approx(1.0)
+        with pytest.warns(RootfigWarning, match="negative total"):
+            assert normalize(Histogram(h, label="h"), True).normalization == "Normalised to unity"
+
+    def test_cancelling_weights_skip_with_distinct_warning(self) -> None:
+        h = fill([hist.axis.Regular(2, 0, 2)], columns([0.5, 1.5], [1.0, -1.0]))
+        with pytest.warns(RootfigWarning, match="sum to zero"):
+            out = normalize_hist(h, True)
+        np.testing.assert_allclose(out.values(), [1.0, -1.0])
+        with pytest.warns(RootfigWarning, match="sum to zero"):
+            assert normalize(Histogram(h, label="h"), "density").normalization is None
+
+    def test_skipped_normalisation_leaves_label_unset(self) -> None:
+        empty = fill([hist.axis.Regular(2, 0, 2)], columns([]))
+        wrapped = Histogram(empty, label="h")
+        with pytest.warns(RootfigWarning, match="no entries"):
+            out = normalize(wrapped, True)
+        assert out.normalization is None
+        assert out.values().tolist() == [0.0, 0.0]
+        with pytest.warns(RootfigWarning, match="no entries"):
+            assert normalize(wrapped, "density").normalization is None
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert normalize(wrapped, "width").normalization == "Events / unit"
 
     def test_2d_density(self) -> None:
         cols = Columns(
@@ -292,6 +363,21 @@ class TestStats:
                     arrays=(x, x), weights=np.array([1.0, -1.0]), n_events=2, n_selected_events=2
                 )
             )
+
+    def test_correlation_degenerate_weights(self) -> None:
+        x = np.array([1.0, 2.0, 3.0])
+
+        def cols(weights: np.ndarray) -> Columns:
+            return Columns(arrays=(x, 2 * x), weights=weights, n_events=3, n_selected_events=3)
+
+        with pytest.raises(SelectionError, match="non-zero weight"):
+            correlation_matrix(cols(np.zeros(3)))  # numpy would raise ZeroDivisionError
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # numpy would emit RuntimeWarnings
+            with pytest.raises(SelectionError, match="non-zero weight"):
+                correlation_matrix(cols(np.array([1.0, 0.0, 0.0])))
+        m = correlation_matrix(cols(np.array([1.0, 1.0, 0.0])))
+        assert m[0, 1] == pytest.approx(1.0)
 
 
 class TestPipeline:
@@ -508,6 +594,14 @@ class TestCutflow:
         np.testing.assert_allclose(flow.yields, [56, 36])
         assert flow.steps[1].error == pytest.approx(np.sqrt(16**2 + 20**2))
 
+    def test_unlabelled_sample_selection_names_first_step(self) -> None:
+        from rootfig.histograms import cutflow
+
+        flow = cutflow(self._sample(selection="n >= 1"), ["n >= 3"])
+        assert flow.labels == ["n >= 1", "n >= 3"]  # not "All": 4 of 5 events pass it
+        assert flow.steps[0].expression == "n >= 1"
+        assert flow.events.tolist() == [4, 2]
+
     def test_table(self) -> None:
         from rootfig.histograms import CutflowTable, cutflow
 
@@ -603,6 +697,52 @@ class TestEfficiencyDomain:
         assert np.isnan(eff.lower[0])
         assert np.isnan(eff.upper[0])
 
+    @staticmethod
+    def _weighted(passed: list[float], total: list[float]) -> tuple[Any, Any]:
+        axis = hist.axis.Regular(1, 0, 1)
+        pass_h = hist.Hist(axis, storage=hist.storage.Weight()).fill(
+            np.full(len(passed), 0.5), weight=passed
+        )
+        total_h = hist.Hist(axis, storage=hist.storage.Weight()).fill(
+            np.full(len(total), 0.5), weight=total
+        )
+        return pass_h, total_h
+
+    def test_negative_total_weight_keeps_value_without_interval(self) -> None:
+        from rootfig.histograms import efficiency
+
+        # total = 1 - 2 = -1: the ratio is defined, a binomial interval is not
+        with pytest.warns(RootfigWarning, match="negative total weight"):
+            eff = efficiency(*self._weighted([-0.5], [1.0, -2.0]))
+        assert eff.values[0] == pytest.approx(0.5)
+        assert np.isnan(eff.lower[0])
+        assert np.isnan(eff.upper[0])
+        with pytest.warns(RootfigWarning, match="negative total weight"):
+            eff = efficiency(*self._weighted([-2.0], [1.0, -2.0]))
+        assert eff.values[0] == pytest.approx(2.0)
+        assert np.isnan(eff.lower[0])
+
+    def test_cancelling_total_weight_is_empty(self) -> None:
+        from rootfig.histograms import efficiency
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            eff = efficiency(*self._weighted([1.0], [1.0, -1.0]))
+        assert np.isnan(eff.values[0])
+        assert np.isnan(eff.lower[0])
+        assert np.isnan(eff.upper[0])
+
+    def test_positive_total_with_negative_weights_keeps_interval(self) -> None:
+        from rootfig.histograms import efficiency
+
+        # total = 1.5 with sum w^2 = 2.25, so n_eff = 1; p = 2/3 with a Wilson band
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            eff = efficiency(*self._weighted([1.0], [1.0, 1.0, -0.5]))
+        assert eff.values[0] == pytest.approx(2 / 3)
+        assert eff.lower[0] == pytest.approx(0.2397411978652, rel=1e-6)
+        assert eff.upper[0] == pytest.approx(0.9269254688015, rel=1e-6)
+
     @pytest.mark.parametrize("z", [0.0, -1.0, np.inf, np.nan])
     def test_z_is_validated(self, z: float) -> None:
         from rootfig.histograms import efficiency
@@ -644,6 +784,26 @@ class TestProfileNumerics:
             statistic="std",
         )
         assert np.isnan(as_std.values[0])
+
+    def test_negative_total_weight_keeps_mean_without_error(self) -> None:
+        from rootfig.histograms import profile
+
+        x, y, edges = np.array([0.5, 0.5]), np.array([0.0, 1.0]), np.array([0.0, 1.0])
+        result = profile(x, y, edges, weights=np.array([0.5, -1.0]))
+        np.testing.assert_allclose(result.values, [2.0])  # (0*0.5 + 1*-1) / -0.5
+        assert np.isnan(result.errors[0])
+        np.testing.assert_allclose(result.counts, [-0.5])
+        as_std = profile(x, y, edges, weights=np.array([0.5, -1.0]), statistic="std")
+        assert np.isnan(as_std.values[0])
+
+    def test_cancelling_weights_are_empty(self) -> None:
+        from rootfig.histograms import profile
+
+        x, y, edges = np.array([0.5, 0.5]), np.array([0.0, 1.0]), np.array([0.0, 1.0])
+        result = profile(x, y, edges, weights=np.array([1.0, -1.0]))
+        assert np.isnan(result.values[0])
+        assert np.isnan(result.errors[0])
+        assert result.counts[0] == 0.0
 
 
 class TestFlowNormalisation:
@@ -694,6 +854,32 @@ class TestWeightStorage:
         weighted = hist.Hist(hist.axis.Regular(2, 0, 4), storage=hist.storage.Weight()).fill([1.0])
         assert as_weight_storage(weighted) is weighted
         np.testing.assert_allclose(normalize_hist(double, "width").values(), [0.5, 1.0])
+
+    def test_weighted_plain_storage_warns(self) -> None:
+        from rootfig.histograms import as_weight_storage
+
+        # a count storage forgets the sum of squared weights: hist reports no variances
+        double = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0, 3.0], weight=[2.0, 1.0])
+        assert double.variances() is None
+        with pytest.warns(RootfigWarning, match="no variances"):
+            converted = as_weight_storage(double)
+        np.testing.assert_allclose(converted.values(), [2.0, 1.0])
+        np.testing.assert_allclose(converted.variances(), [2.0, 1.0])  # Poisson guess
+        rescaled = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0]) * 2
+        with pytest.warns(RootfigWarning, match="no variances"):
+            np.testing.assert_allclose(as_weight_storage(rescaled).variances(), [2.0, 0.0])
+
+    def test_unweighted_plain_storage_is_silent(self) -> None:
+        from rootfig.histograms import as_weight_storage
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            double = as_weight_storage(hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0, 3.0, 3.0]))
+            integer = as_weight_storage(
+                hist.Hist(hist.axis.Regular(2, 0, 4), storage=hist.storage.Int64()).fill([1.0])
+            )
+        np.testing.assert_allclose(double.variances(), [1.0, 2.0])
+        np.testing.assert_allclose(integer.variances(), [1.0, 0.0])
 
     def test_unsupported_storage(self) -> None:
         from rootfig.histograms import as_weight_storage

@@ -182,6 +182,20 @@ class TestAsSource:
         existing = ArraySource({"x": [1]})
         assert as_source(existing) is existing
 
+    def test_existing_source_rejects_overrides(self, signal_file: Path) -> None:
+        source = FileSource(signal_file, tree="events")
+        assert as_source(source, tree="events") is source  # the same tree is no override
+        with pytest.raises(SourceError, match="entry_stop=100 cannot be applied"):
+            as_source(source, entry_stop=100)
+        with pytest.raises(SourceError, match="tree='other'"):
+            as_source(source, tree="other")
+        detected = FileSource(signal_file)  # tree auto-detected: compared after detection
+        assert as_source(detected, tree="events") is detected
+        arrays = ArraySource({"x": [1, 2]})
+        with pytest.raises(SourceError, match="entry_start=1"):
+            as_source(arrays, entry_start=1)
+        assert as_source(arrays, tree="events") is arrays  # tree only applies to files
+
     def test_custom_source_object(self) -> None:
         class Custom:
             def branches(self) -> list[str]:

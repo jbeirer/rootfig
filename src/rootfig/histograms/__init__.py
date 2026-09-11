@@ -15,6 +15,7 @@ from rootfig.histograms.pipeline import (
     combined_selection,
     combined_weight,
     load_columns,
+    load_columns_each,
     read_arrays,
     source_length,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "efficiency",
     "fill",
     "load_columns",
+    "load_columns_each",
     "normalization_label",
     "normalize",
     "normalize_hist",

@@ -198,6 +198,13 @@ def _flatten_to_numpy(array: ak.Array, fill: float) -> tuple[np.ndarray, np.ndar
     return np.asarray(result), np.asarray(ak.to_numpy(missing), dtype=bool)
 
 
+def _check_nonfinite_policy(nonfinite: str) -> None:
+    """Reject unsupported ``nonfinite`` policies instead of silently dropping values."""
+    if nonfinite not in ("drop", "error"):
+        msg = f"nonfinite must be 'drop' or 'error', got {nonfinite!r}"
+        raise SelectionError(msg)
+
+
 def _to_float(values: np.ndarray, what: str) -> np.ndarray:
     if values.dtype.kind in "biuf":
         return values.astype(np.float64, copy=False)
@@ -250,6 +257,7 @@ def prepare(
     Columns
         Flat aligned values and weights.
     """
+    _check_nonfinite_policy(nonfinite)
     items = [variables] if isinstance(variables, str | Expression) else list(variables)
     exprs = [parse(v) for v in items]
     if not exprs:
@@ -337,9 +345,6 @@ def prepare(
         values, weights = columns[: len(values)], (columns[-1] if weights is not None else None)
         lead = values[0]
 
-    # -- selected event count -----------------------------------------------------------
-    n_selected = int(ak.count(lead)) if depth == 1 else int(ak.sum(ak.num(lead, axis=1) > 0))
-
     # -- flatten, drop missing and non-finite -------------------------------------------
     flat_values: list[np.ndarray] = []
     missing = np.zeros(0, dtype=bool)
@@ -361,6 +366,17 @@ def prepare(
         keep &= np.isfinite(column)
     if flat_weights is not None:
         keep &= np.isfinite(flat_weights)
+
+    # -- selected event count: events with at least one entry that survives ---------------
+    if depth == 1:
+        n_selected = int(np.count_nonzero(keep))
+    else:
+        # After _drop_missing_lists only leaf-level None remain; they were flattened to nan
+        # above and are excluded by ``keep``, so the leaf counts add up to the flat size.
+        counts = np.asarray(ak.to_numpy(_leaf_counts(lead, 0)), dtype=np.int64)
+        event_index = np.repeat(np.arange(len(lead)), counts)
+        n_selected = int(np.unique(event_index[keep]).size)
+
     n_missing += int(np.count_nonzero(missing))
     n_nonfinite = int(np.count_nonzero(~keep & ~missing))
     if n_nonfinite:
@@ -457,6 +473,7 @@ def event_weights(
     ``nonfinite`` (a :class:`~rootfig.errors.RootfigWarning`, or a
     :class:`~rootfig.errors.SelectionError` for ``"error"``).
     """
+    _check_nonfinite_policy(nonfinite)
     if weight is None:
         return np.ones(n_events, dtype=float)
     expr = parse(weight)

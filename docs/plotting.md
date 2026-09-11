@@ -43,19 +43,30 @@ dataset scaled to the full one, for instance).
 Variances are scaled consistently. Flow bins scale with the same factor; for
 `"width"` and `"density"` they are divided by the width of the neighbouring
 visible bin. Plain `hist.Hist` objects with a count storage passed to
-`plot_histograms` are converted to `Weight` storage first.
+`plot_histograms` are converted to `Weight` storage first (with a warning if
+they were filled with weights, since their sum of squared weights is lost and
+the bin contents have to stand in as variances).
+
+The rescaling modes divide by the signed sum of the visible bins: a histogram
+dominated by negative weights still sums to the target, its shape flips sign,
+and a warning says so. An empty histogram, or one whose positive and negative
+weights cancel exactly, is left unchanged with a warning and keeps the plain
+`Events` label (`Histogram.normalization` stays `None`).
 
 ## Ratio panel
 
 `ratio=True` adds a lower panel sharing the x axis:
 
 - with a stack: data / total MC, error bars from the data, grey band for the
-  MC statistical uncertainty (`ratio_uncertainty="numerator"`);
-- with data and overlaid samples: data / first sample;
-- otherwise: every sample / the first sample, uncertainties of both
+  MC statistical uncertainty (`ratio_uncertainty="numerator"`); a stacked
+  ratio needs an `observed=` sample;
+- with data and overlaid samples: data / the first non-data sample (only the
+  data appears in the panel);
+- otherwise: every further sample / the first sample, uncertainties of both
   propagated in quadrature (`ratio_uncertainty="propagate"`).
 
-`ratio="Background"` picks the reference by label.
+`ratio="Background"` picks the reference by label; all other histograms, data
+included, are divided by it.
 
 `ratio="significance"` (or `"s/sqrt(b)"`, `"s/sqrt(s+b)"`) draws a
 **significance panel** instead: per bin, the signal over the square root of
@@ -176,7 +187,9 @@ Negative weights (NLO samples) can make a weighted variance negative or an
 efficiency leave `[0, 1]`. rootfig then reports `nan` for the standard
 deviation, the profile error or the confidence interval (with a warning for
 efficiencies) rather than a made-up uncertainty; means, yields and histogram
-contents are unaffected.
+contents are unaffected. Bins whose total weight is negative keep their mean
+or efficiency (the plain ratio) but get no uncertainty; bins whose weights
+cancel to exactly zero count as empty (`nan`).
 
 ## Cut flows
 

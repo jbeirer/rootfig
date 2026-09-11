@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, replace
 from typing import Any
@@ -40,7 +41,9 @@ class Variable:
         Draw the x axis with a logarithmic scale.
     name
         Short identifier used for file names (:meth:`Plot.save` with a
-        directory). Defaults to a sanitised version of the expression.
+        directory). Defaults to a sanitised version of the expression. An
+        explicit name must be a plain file stem: it cannot contain path
+        separators or be ``"."``/``".."``.
     """
 
     expression: str
@@ -54,6 +57,16 @@ class Variable:
     def __post_init__(self) -> None:
         parse(self.expression)
         validate_bins(self.bins, self.range)
+        if self.name is not None and (
+            self.name in (".", "..") or any(sep in self.name for sep in {"/", "\\", os.sep})
+        ):
+            suggestion = _SAFE_NAME_RE.sub("_", self.name).strip("_") or "variable"
+            msg = (
+                f"Variable name {self.name!r} must be a plain file stem (it names the file "
+                "written by Plot.save(directory)) and cannot contain path separators or be "
+                f"'.' or '..'; use e.g. name={suggestion!r}"
+            )
+            raise ValueError(msg)
 
     def __str__(self) -> str:
         return self.expression

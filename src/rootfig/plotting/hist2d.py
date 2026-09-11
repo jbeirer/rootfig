@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import mplhep as hep
 from matplotlib.axes import Axes
 from matplotlib.colors import LogNorm, Normalize
 
+from rootfig.errors import RootfigWarning
 from rootfig.histograms.build import Histogram
 
 __all__ = ["draw_hist2d"]
@@ -39,6 +41,12 @@ def draw_hist2d(
     norm: Normalize | None = None
     if logz:
         if positive.size == 0:
+            warnings.warn(
+                "logz=True but the histogram has no positive bins; drawing a linear colour "
+                "scale instead",
+                RootfigWarning,
+                stacklevel=2,
+            )
             logz = False
         else:
             norm = LogNorm(vmin=float(positive.min()), vmax=float(positive.max()))

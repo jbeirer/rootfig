@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import rootfig as rf
+from rootfig.api import _split_bins
 from rootfig.errors import (
     BinningError,
     IncompatibleWeightError,
@@ -431,6 +432,28 @@ class TestPlot:
         assert p.ax.get_ylim()[1] > 0
 
 
+class TestRatioReference:
+    def test_overlaid_data_divides_by_first_non_data_sample(self) -> None:
+        # documented: with data and overlaid samples the ratio is data / first non-data sample
+        axis = hist.axis.Regular(2, 0, 2, name="x", label="x")
+
+        def make(value: float, label: str, *, is_data: bool = False) -> rf.Histogram:
+            h = hist.Hist(axis, storage=hist.storage.Weight())
+            h.fill([0.5, 1.5], weight=[value, value])
+            return rf.Histogram(h, label=label, is_data=is_data)
+
+        data = make(20.0, "Data", is_data=True)
+        p = rf.plot_histograms([data, make(10.0, "A"), make(30.0, "B")], ratio=True)
+        assert len(p.ratios) == 1  # only the data appears in the panel
+        np.testing.assert_allclose(p.ratios[0].values, [2.0, 2.0])  # data / A, not data / total
+        assert p.ratio_ax is not None
+        assert p.ratio_ax.get_ylabel() == "Data / A"
+        stacked = rf.plot_histograms(
+            [data, make(10.0, "A"), make(30.0, "B")], ratio=True, stack=True
+        )
+        np.testing.assert_allclose(stacked.ratios[0].values, [0.5, 0.5])  # data / total
+
+
 class TestBrokenAxis:
     def test_two_segments(self, signal_file: Path, background_file: Path) -> None:
         p = rf.plot(
@@ -499,6 +522,19 @@ class TestBrokenAxis:
 
 
 class TestPlotHistograms:
+    def test_skipped_normalisation_keeps_events_label(self) -> None:
+        empty = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+        with pytest.warns(RootfigWarning, match="no entries"):
+            p = rf.plot_histograms([empty], normalize=True)
+        assert p.ax.get_ylabel() == "Events"  # the label does not claim a normalisation
+        assert p.histograms[0].normalization is None
+        cancelling = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+        cancelling.fill([0.5, 1.5], weight=[2.0, -2.0])
+        with pytest.warns(RootfigWarning, match="sum to zero"):
+            p = rf.plot_histograms([cancelling], normalize="density")
+        assert p.ax.get_ylabel() == "Events"
+        np.testing.assert_allclose(p.histograms[0].values(), [2.0, -2.0])
+
     def test_raw_hists(self) -> None:
         h1 = hist.Hist(
             hist.axis.Regular(5, 0, 5, name="x", label="x"), storage=hist.storage.Weight()
@@ -537,6 +573,36 @@ class TestPlotHistograms:
 
 
 class TestPlot2D:
+    @pytest.mark.parametrize(
+        ("bins", "expected"),
+        [
+            (20, (20, 20)),
+            ((20, 0, 100), ((20, 0, 100), (20, 0, 100))),
+            ([0, 1, 2], ([0, 1, 2], [0, 1, 2])),
+            ((20, 30), (20, 30)),  # two integers are two bin counts
+            (((20, 0, 100), (30, -3, 3)), ((20, 0, 100), (30, -3, 3))),
+            (None, (None, None)),
+        ],
+    )
+    def test_split_bins_forms(self, bins: Any, expected: Any) -> None:
+        assert _split_bins(bins) == expected
+
+    def test_split_bins_arrays(self) -> None:
+        x, y = np.array([0.0, 1.0]), np.array([0.0, 1.0, 2.0])
+        split_x, split_y = _split_bins((x, y))
+        assert split_x is x
+        assert split_y is y
+        both = _split_bins(x)
+        assert both[0] is x
+        assert both[1] is x
+
+    @pytest.mark.parametrize("bins", [(0.0, 1.0), (np.float64(0), 1.0), (0, 1.5)])
+    def test_split_bins_rejects_range_pair(self, bins: Any) -> None:
+        with pytest.raises(BinningError, match=r"\(x_bins, y_bins\)"):
+            _split_bins(bins)
+        with pytest.raises(BinningError, match="x_bins"):
+            rf.plot2d({"x": [0.5], "y": [0.5]}, "x", "y", bins=bins)
+
     def test_basic(self, signal_file: Path, signal_columns: dict[str, Any]) -> None:
         p = rf.plot2d(
             signal_file,
@@ -707,6 +773,33 @@ class TestFigureShape:
 
 
 class TestSummaryAndCorrelation:
+    def test_summarize_reads_each_sample_once(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from rootfig.histograms import load_columns
+        from rootfig.io import FileSource
+
+        calls: list[list[str]] = []
+        original = FileSource.arrays
+
+        def counting(self: FileSource, branches: Any) -> Any:
+            calls.append(list(branches))
+            return original(self, branches)
+
+        monkeypatch.setattr(FileSource, "arrays", counting)
+        variables = ["MET", "Muon_pt", "nMuon * 2"]
+        table = rf.summarize(signal_file, variables, tree="events", selection="nMuon > 0")
+        assert len(calls) == 1  # one read for all variables, the selection and the weight
+        assert set(calls[0]) == {"MET", "Muon_pt", "nMuon"}
+        # identical to reading each variable on its own
+        sample = rf.Sample(signal_file, tree="events")
+        for var in variables:
+            single = load_columns(sample, [var], selection="nMuon > 0")
+            row = table.get(var)
+            assert row.entries == single.n_entries
+            assert row.n_selected_events == single.n_selected_events
+            assert row.mean == pytest.approx(float(np.mean(single.values)))
+
     def test_summarize(
         self, signal_file: Path, background_file: Path, signal_columns: dict[str, Any]
     ) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,7 @@ import hist
 import numpy as np
 
 from rootfig._typing import FloatArray, Hist
+from rootfig.errors import RootfigWarning
 from rootfig.histograms.stats import Summary
 
 if TYPE_CHECKING:
@@ -44,9 +46,10 @@ def as_weight_storage(histogram: Hist) -> Hist:
     Plain count storages (``Double``, ``Int64``, ...) carry no sum of squared
     weights; their variances are taken as ``hist`` reports them, i.e. the
     counts (Poisson) for unweighted fills. If a storage reports no variances at
-    all (a ``Double`` histogram filled with weights) the contents are used as
-    variances, the best available guess, and the caller is not told otherwise
-    because ``hist`` itself makes the same assumption when drawing.
+    all (``hist`` does so after any weighted fill or arithmetic on a count
+    storage) the contents are used as variances, a Poisson guess, and a
+    :class:`~rootfig.errors.RootfigWarning` says so: the true sum of squared
+    weights is lost and cannot be reconstructed.
     """
     if histogram.storage_type is hist.storage.Weight:
         return histogram
@@ -63,7 +66,17 @@ def as_weight_storage(histogram: Hist) -> Hist:
         raise TypeError(msg)
     values = np.asarray(histogram.values(flow=True), dtype=float)
     reported = histogram.variances(flow=True)
-    variances = values if reported is None else np.asarray(reported, dtype=float)
+    if reported is None:
+        warnings.warn(
+            f"histogram with {histogram.storage_type.__name__} storage was filled with weights "
+            "or rescaled, so hist reports no variances; using the bin contents as variances "
+            "(Poisson guess). Fill with hist.storage.Weight() to keep the sum of squared weights",
+            RootfigWarning,
+            stacklevel=3,
+        )
+        variances = values
+    else:
+        variances = np.asarray(reported, dtype=float)
     result = hist.Hist(*histogram.axes, storage=hist.storage.Weight())
     view: Any = result.view(flow=True)
     view.value = values
@@ -106,6 +119,11 @@ class Histogram:
     color: str | None = None
     histtype: HistType | None = None
     normalization: str | None = None
+
+    def __post_init__(self) -> None:
+        # Keep the documented invariant for histograms built by users from plain hist.Hist
+        # objects; rootfig's own histograms already have Weight storage (no copy is made).
+        object.__setattr__(self, "hist", as_weight_storage(self.hist))
 
     # -- convenience accessors -----------------------------------------------------------
 
@@ -152,6 +170,11 @@ class Histogram:
         return float(self.values().sum())
 
     @property
+    def sum_weights(self) -> float:
+        """Sum of all bin contents including the flow bins."""
+        return float(np.sum(self.hist.values(flow=True)))
+
+    @property
     def underflow(self) -> float:
         """Content of the underflow bin (first axis, 1D only; ``0`` if the axis has none)."""
         return self._flow_cell("underflow", self.hist.values(flow=True))
@@ -180,18 +203,31 @@ class Histogram:
         return float(cells[0 if side == "underflow" else -1])
 
     @property
-    def entries(self) -> int:
-        """Number of filled entries, from the statistics if available."""
-        if self.stats is not None:
-            return self.stats.entries
-        if self.normalization is not None:
-            return 0
-        return int(np.rint(float(np.sum(self.hist.values(flow=True)))))
+    def entries(self) -> int | None:
+        """Number of filled entries from the unbinned statistics, or ``None`` if unknown.
+
+        A histogram that was not filled by rootfig carries no entry count: its
+        bin contents are sums of weights, which only equal the number of fills
+        for unweighted, unscaled histograms (see :attr:`sum_weights`).
+        """
+        return None if self.stats is None else self.stats.entries
 
     def with_(self, **changes: Any) -> Histogram:
         """Return a copy with the given fields replaced."""
         return replace(self, **changes)
 
     def scaled(self, factor: float) -> Histogram:
-        """Return a copy multiplied by ``factor`` (variances scale with ``factor**2``)."""
-        return replace(self, hist=self.hist * factor)
+        """Return a copy multiplied by ``factor``.
+
+        Variances scale with ``factor**2``. The statistics' sum of weights (and
+        sum of squared weights) scale along; the moments, entry count and
+        effective entries are unchanged by a uniform rescaling.
+        """
+        stats = self.stats
+        if stats is not None:
+            stats = replace(
+                stats,
+                sum_weights=stats.sum_weights * factor,
+                _sum_w2=stats._sum_w2 * factor**2,
+            )
+        return replace(self, hist=self.hist * factor, stats=stats)

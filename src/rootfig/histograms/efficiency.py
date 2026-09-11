@@ -26,13 +26,15 @@ class Efficiency:
     Attributes
     ----------
     values
-        The efficiency; ``nan`` where ``total`` is empty.
+        The efficiency ``passed / total``; ``nan`` where the total weight is zero
+        (an empty bin, or weights that cancel).
     lower, upper
         Bounds of the Wilson score interval (``z`` standard deviations; ``z = 1``
         is the usual 68 % band), computed with the effective number of entries
         so weighted samples get sensible intervals. The interval always contains
-        the value; it is ``nan`` where the value is outside ``[0, 1]`` (negative
-        weights), since a binomial interval is undefined there.
+        the value; it is ``nan`` where the total weight is negative or the value
+        is outside ``[0, 1]`` (negative weights), since a binomial interval is
+        undefined there while the ratio itself is still reported.
     edges
         Bin edges.
     label
@@ -91,22 +93,25 @@ def efficiency(passed: Hist, total: Hist, *, z: float = 1.0, label: str = "") ->
     n = np.asarray(total.values(), dtype=float)
     vn = np.asarray(total.variances(), dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
-        ok = n > 0
+        # The ratio is defined whenever the total is non-zero; the Wilson interval needs a
+        # positive total (a negative sum of weights is not a sample size) and p in [0, 1].
+        ok = n != 0
         p = np.where(ok, k / n, np.nan)
         n_eff = np.where(vn > 0, n**2 / vn, n)
         z2 = z * z
         denominator = 1.0 + z2 / n_eff
         centre = (p + z2 / (2.0 * n_eff)) / denominator
         half = (z / denominator) * np.sqrt(p * (1.0 - p) / n_eff + z2 / (4.0 * n_eff**2))
-        valid = ok & (p >= 0.0) & (p <= 1.0)
+        valid = (n > 0) & (p >= 0.0) & (p <= 1.0)
         # the Wilson interval contains p by construction; guard against round-off at 0 and 1
         lower = np.where(valid, np.minimum(np.clip(centre - half, 0.0, 1.0), p), np.nan)
         upper = np.where(valid, np.maximum(np.clip(centre + half, 0.0, 1.0), p), np.nan)
     undefined = int(np.count_nonzero(ok & ~valid))
     if undefined:
         warnings.warn(
-            f"{label + ': ' if label else ''}{undefined} bin(s) have an efficiency outside "
-            "[0, 1] (negative weights?); no confidence interval is drawn for them",
+            f"{label + ': ' if label else ''}{undefined} bin(s) have a negative total weight or "
+            "an efficiency outside [0, 1] (negative weights?); no confidence interval is drawn "
+            "for them",
             RootfigWarning,
             stacklevel=2,
         )
@@ -127,9 +132,10 @@ class Profile:
     ----------
     values
         The weighted mean (``statistic="mean"``) or standard deviation
-        (``"std"``) of ``y`` per bin; ``nan`` for empty bins, and ``nan`` for
-        the standard deviation where negative weights make the weighted
-        variance negative.
+        (``"std"``) of ``y`` per bin; ``nan`` for empty bins (zero total
+        weight). The standard deviation (and hence the error) is also ``nan``
+        where negative weights make the total weight negative or the weighted
+        variance negative; the mean is still reported there.
     errors
         Standard error: ``std / sqrt(n_eff)`` for the mean, ``std / sqrt(2 n_eff)``
         for the standard deviation, with the effective entries ``n_eff``.
@@ -192,11 +198,13 @@ def profile(
     sw2 = np.bincount(index, weights=w * w, minlength=n_bins)
     swy = np.bincount(index, weights=w * y, minlength=n_bins)
     with np.errstate(divide="ignore", invalid="ignore"):
-        ok = sw > 0
+        # The weighted mean is defined whenever the weights do not cancel; a weighted
+        # variance needs a positive total weight and a non-negative second moment.
+        ok = sw != 0
         mean = np.where(ok, swy / sw, np.nan)
         residual = y - np.where(ok, mean, 0.0)[index]
         swr2 = np.bincount(index, weights=w * residual * residual, minlength=n_bins)
-        variance = np.where(ok, swr2 / sw, np.nan)
+        variance = np.where(sw > 0, swr2 / sw, np.nan)
         variance = np.where(variance < 0, np.nan, variance)  # negative weights: undefined
         std = np.sqrt(variance)
         n_eff = np.where(sw2 > 0, sw**2 / sw2, 0.0)

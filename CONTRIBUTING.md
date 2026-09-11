@@ -26,8 +26,10 @@ uv build && uvx twine check dist/*     # packaging
 ```
 
 CI runs all of these on Python 3.12, 3.13 and 3.14 (Linux), plus macOS
-on 3.13. Tests that use ROOT's tutorial files run only when
-`root-config` is available locally and are skipped otherwise; do not add
+on 3.13, and once more with every direct dependency at the minimum version
+declared in `pyproject.toml` (`uv sync --resolution lowest-direct`). Tests
+that use ROOT's tutorial files run only when `root-config` is available
+locally and are skipped otherwise; do not add
 tests that require ROOT or network access.
 
 ## Layout
@@ -118,9 +120,10 @@ docstring; the test suite fails until its baseline image exists.
 
 1. Update the version in `src/rootfig/__init__.py`.
 2. Commit, tag `vX.Y.Z`, push the tag.
-3. The `release.yml` workflow builds the distribution and publishes it to
-   PyPI via Trusted Publishing (configure the publisher on PyPI first:
-   repository `jbeirer/rootfig`, workflow `release.yml`, environment `pypi`).
+3. The `release.yml` workflow builds the distribution, refuses a tag that does
+   not match `rootfig.__version__`, and publishes it to PyPI via Trusted
+   Publishing (configure the publisher on PyPI first: repository
+   `jbeirer/rootfig`, workflow `release.yml`, environment `pypi`).
 
 The documentation is published by the `docs` job of `ci.yml` on every push to
 `main` (`mkdocs gh-deploy` to the `gh-pages` branch). Once, in the repository

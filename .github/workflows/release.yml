@@ -9,6 +9,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,6 +22,16 @@ jobs:
           python-version: "3.12"
       - run: uv build
       - run: uvx twine check --strict dist/*
+      - name: Check that the tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          uv venv /tmp/wheel-env
+          uv pip install --python /tmp/wheel-env/bin/python dist/*.whl
+          version="$(/tmp/wheel-env/bin/python -c 'import rootfig; print(rootfig.__version__)')"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match rootfig.__version__ = ${version}"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: dist

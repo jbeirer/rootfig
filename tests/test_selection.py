@@ -232,6 +232,30 @@ class TestNonFinite:
         assert cols.n_nonfinite == 3
         assert cols.n_missing == 0
 
+    def test_selected_events_exclude_nonfinite(self, dirty: dict[str, ak.Array]) -> None:
+        # n_selected_events counts events that contribute an entry, so dropped values
+        # (and dropped weights) do not count
+        with pytest.warns(RootfigWarning):
+            assert prepare(dirty, "x").n_selected_events == 3
+        with pytest.warns(RootfigWarning):
+            assert prepare(dirty, "x", weight="w").n_selected_events == 2
+        with pytest.warns(RootfigWarning):
+            cols = prepare({"j": ak.Array([[1.0, np.nan], [np.nan], [], [2.0]])}, "j")
+        assert (cols.n_entries, cols.n_selected_events) == (2, 2)
+        with pytest.warns(RootfigWarning):
+            cols = prepare(
+                {"j": ak.Array([[1.0], [2.0]]), "w": ak.Array([1.0, np.nan])}, "j", weight="w"
+            )
+        assert cols.n_selected_events == 1
+
+    def test_policy_is_validated(self, dirty: dict[str, ak.Array]) -> None:
+        from rootfig.selection import event_weights
+
+        with pytest.raises(SelectionError, match="nonfinite must be"):
+            prepare(dirty, "x", nonfinite="raise")  # type: ignore[arg-type]
+        with pytest.raises(SelectionError, match="nonfinite must be"):
+            event_weights("w", dirty, 6, nonfinite="raise")  # type: ignore[arg-type]
+
     def test_nonfinite_weights_dropped(self, dirty: dict[str, ak.Array]) -> None:
         with pytest.warns(RootfigWarning, match="dropped 4 non-finite"):
             cols = prepare(dirty, "x", weight="w")

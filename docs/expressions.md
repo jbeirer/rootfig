@@ -16,9 +16,11 @@ syntax evaluated with NumPy/Awkward semantics over the branches of the tree.
 | Constants | `pi`, `e`, `inf`, `nan`, `True`, `False` |
 
 `and`, `or`, `not` and chained comparisons are rewritten to element-wise
-operations, so they work on arrays. Attribute access, lambdas,
-comprehensions, string literals and calls to anything but the functions
-below are rejected at parse time with an [`ExpressionError`][rootfig.ExpressionError].
+operations, so they work on arrays. Dotted names such as
+`ReconstructedParticles.momentum.x` are read as one branch name (see below);
+any other attribute access, lambdas, comprehensions, string literals and calls
+to anything but the functions below are rejected at parse time with an
+[`ExpressionError`][rootfig.ExpressionError].
 An unknown branch raises [`MissingBranchError`][rootfig.MissingBranchError]
 with close-match suggestions.
 

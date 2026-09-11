@@ -104,7 +104,7 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
         new_edges = np.r_[new_edges, edges[-1] + width]
     result: list[Histogram] = []
     for histogram in histograms:
-        axis = hist.axis.Variable(new_edges, label=histogram.axis.label)
+        axis = hist.axis.Variable(new_edges, name=histogram.axis.name, label=histogram.axis.label)
         new = hist.Hist(axis, storage=hist.storage.Weight())
         values, variances = histogram.values(), histogram.variances()
         if under:

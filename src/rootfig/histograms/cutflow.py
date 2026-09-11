@@ -23,7 +23,8 @@ class CutflowStep:
     Attributes
     ----------
     label
-        The cut's label (or expression), ``"All"`` for the first step.
+        The cut's label (or expression). For the first step: the label (or
+        expression) of the sample's own selection, ``"All"`` if it has none.
     expression
         The cut expression, empty for the first step.
     events
@@ -187,8 +188,9 @@ def cutflow(
             error=float(np.sqrt(np.sum(selected**2))),
         )
 
-    first_label = sample.selection.label or "All" if sample.selection is not None else "All"
-    result = [step(first_label, sample.selection.expression if sample.selection else "")]
+    base = sample.selection
+    first_label = (base.label or base.expression) if base is not None else "All"
+    result = [step(first_label, base.expression if base is not None else "")]
     for cut in steps:
         passing &= event_mask(cut.expression, arrays, length=n_events)
         result.append(step(cut.label or cut.expression, cut.expression))

@@ -135,7 +135,8 @@ def correlation_matrix(columns: Columns) -> FloatArray:
     Raises
     ------
     SelectionError
-        If fewer than two columns or fewer than two entries are available.
+        If fewer than two columns or fewer than two entries (with non-zero
+        weight) are available, or weights are negative.
     """
     if len(columns.arrays) < 2:
         msg = "a correlation matrix needs at least two variables"
@@ -145,9 +146,20 @@ def correlation_matrix(columns: Columns) -> FloatArray:
         raise SelectionError(msg)
     matrix = np.vstack(columns.arrays)
     weights = None if columns.weights is None else columns.weights
-    if weights is not None and np.any(weights < 0):
-        msg = "correlation matrices with negative weights are not supported"
-        raise SelectionError(msg)
+    if weights is not None:
+        if np.any(weights < 0):
+            msg = "correlation matrices with negative weights are not supported"
+            raise SelectionError(msg)
+        sum_w = float(weights.sum())
+        sum_w2 = float((weights**2).sum())
+        # numpy's weighted covariance divides by sum(w) * (1 - 1/n_eff): with the Kish
+        # effective sample size n_eff = sum(w)^2 / sum(w^2) at or below one it is undefined.
+        if sum_w <= 0 or sum_w**2 <= sum_w2:
+            msg = (
+                "a correlation matrix needs at least two entries with non-zero weight "
+                "after selection"
+            )
+            raise SelectionError(msg)
     covariance = np.atleast_2d(np.cov(matrix, aweights=weights))
     diagonal = np.sqrt(np.diag(covariance))
     with np.errstate(divide="ignore", invalid="ignore"):

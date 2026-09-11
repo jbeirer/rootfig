@@ -96,8 +96,8 @@ class Plot:
             separator), the file name is derived from the variable
             (``<dir>/<variable>.pdf``).
         formats
-            Optional list of formats (``["pdf", "png"]``) to write instead of
-            (or in addition to) the suffix of ``path``. Each replaces the suffix.
+            Optional list of formats (``["pdf", "png"]``). Each replaces the
+            suffix of ``path``; only the listed formats are written.
         **kwargs
             Forwarded to :meth:`matplotlib.figure.Figure.savefig`. Figures made
             by rootfig use constrained layout and are saved at exactly their

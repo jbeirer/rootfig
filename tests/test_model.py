@@ -10,7 +10,7 @@ import hist
 import numpy as np
 import pytest
 
-from rootfig.errors import BinningError, ExpressionError, SourceError
+from rootfig.errors import BinningError, ExpressionError, LuminosityError, SourceError
 from rootfig.io import ArraySource, FileSource
 from rootfig.model import (
     Cut,
@@ -100,6 +100,17 @@ class TestVariable:
         with pytest.raises(BinningError):
             Variable("x", bins=10, range=range_)
 
+    @pytest.mark.parametrize("name", ["/abs", "../x", "a/b", "a\\b", ".", ".."])
+    def test_name_must_be_a_file_stem(self, name: str) -> None:
+        with pytest.raises(ValueError, match="path separators"):
+            Variable("x", name=name)
+        with pytest.raises(ValueError, match="path separators"):
+            Variable("x").with_(name=name)
+
+    def test_name_keeps_plain_stems(self) -> None:
+        assert Variable("x", name="pt-lead.window").safe_name == "pt-lead.window"
+        assert Variable("Muon_pt / 1000").safe_name == "Muon_pt_1000"
+
     def test_as_variable(self) -> None:
         var = as_variable("x", bins=10, label=None)
         assert var == Variable("x", bins=10)
@@ -163,11 +174,23 @@ class TestBinning:
         axis = resolve_axis(Variable("x", bins=log_bins(2, 1, 100)))
         assert axis.edges.tolist() == pytest.approx([1, 10, 100])
 
-    def test_resolve_hist_axis(self) -> None:
-        given = hist.axis.Regular(3, 0, 1)
+    def test_resolve_hist_axis_is_copied(self) -> None:
+        given = hist.axis.Regular(3, 1, 1000, transform=hist.axis.transform.log)
         axis = resolve_axis(Variable("x", bins=given, label="lab"))
-        assert axis is given
+        assert axis is not given  # the caller's axis is never modified
         assert axis.label == "lab"
+        assert given.label == ""
+        np.testing.assert_allclose(axis.edges, given.edges)
+        assert axis.traits == given.traits
+        assert type(axis.transform) is type(given.transform)
+        # reusing one axis object for a second variable does not leak the first label
+        other = resolve_axis(Variable("y", bins=given, label="other"))
+        assert other.label == "other"
+        own = hist.axis.Variable([0, 1, 5], overflow=False, label="own")
+        copied = resolve_axis(Variable("x", bins=own, label="lab"))
+        assert copied is not own
+        assert copied.label == "own"
+        assert copied.traits.overflow is False
 
 
 class TestSample:
@@ -211,6 +234,31 @@ class TestSample:
         assert other.label == "new"
         assert other.selection == Cut("MET > 1")
         assert other.source is sample.source
+
+    def test_with_validates_like_init(self) -> None:
+        sample = Sample({"x": np.arange(2.0)})
+        with pytest.raises(ValueError, match="scale must be"):
+            sample.with_(scale=np.nan)
+        with pytest.raises(LuminosityError, match="finite"):
+            sample.with_(ngen=np.inf)
+        with pytest.raises(LuminosityError):
+            sample.with_(xsec="bad")
+        with pytest.raises(SourceError, match="cannot interpret"):
+            sample.with_(source=42)
+        with pytest.raises(TypeError, match="weight must be"):
+            sample.with_(weight=42)
+        with pytest.raises(TypeError, match="label must be"):
+            sample.with_(label=3)
+        assert sample.with_(weight="  ").weight is None
+        assert sample.with_(scale=2).scale == 2.0
+        assert sample.with_(source=sample.source).source is sample.source
+        assert sample.with_(xsec="1.2 fb").xsec == "1.2 fb"
+
+    def test_existing_source_rejects_entry_range(self, signal_file: Path) -> None:
+        source = FileSource(signal_file, tree="events")
+        assert Sample(source, tree="events").source is source
+        with pytest.raises(SourceError, match="entry_stop=100 cannot be applied"):
+            Sample(source, entry_stop=100)
 
     def test_invalid_data(self) -> None:
         with pytest.raises(SourceError):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
@@ -203,7 +204,8 @@ def resolve_axis(
         Flat arrays of values (one per sample) used to infer the range when
         ``bins`` is an integer and ``range`` is ``"auto"``/``"robust"``.
     name
-        Axis name stored in the histogram.
+        Axis name stored in the histogram. A ready-made ``hist`` axis keeps its
+        own name.
 
     Raises
     ------
@@ -213,7 +215,10 @@ def resolve_axis(
     bins = variable.bins
     label = variable.axis_label
     if isinstance(bins, hist.axis.Regular | hist.axis.Variable):
-        axis = bins
+        # Copy so the caller's axis (possibly shared between variables) is never modified;
+        # the copy keeps edges, transform and flow traits. A shallow copy shares the
+        # metadata dict on older boost-histogram releases, so copy deeply.
+        axis = copy.deepcopy(bins)
         if not axis.label:
             axis.label = label
         return axis

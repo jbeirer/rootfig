@@ -13,6 +13,7 @@ from matplotlib.axes import Axes
 from matplotlib.collections import PolyCollection
 from matplotlib.figure import Figure
 
+from rootfig.errors import RootfigWarning
 from rootfig.histograms import Histogram, fill, summarize
 from rootfig.model import Style
 from rootfig.plotting import (
@@ -552,7 +553,8 @@ class TestOtherDrawing:
             label="e",
         )
         fig, ax = plt.subplots()
-        draw_hist2d(empty, ax, logz=True)
+        with pytest.warns(RootfigWarning, match="no positive bins"):
+            draw_hist2d(empty, ax, logz=True)  # falls back to a linear colour scale
         with pytest.raises(ValueError, match="two-dimensional"):
             draw_hist2d(make_hist([1.0], label="1d"), ax)
 
@@ -624,6 +626,13 @@ class TestFlowBins:
         np.testing.assert_allclose(shown[1].values(), [1, 1, 1, 0, 0])
         assert shown[0].overflow == 0.0  # moved into the visible bin
         assert shown[0].label == with_over.label
+
+    def test_show_flow_bins_keeps_axis_name(self) -> None:
+        cols = Columns((np.array([-1.0, 5.0]),), None, 2, 2)
+        h = Histogram(fill([hist.axis.Regular(4, 0, 4, name="met", label="MET")], cols), label="A")
+        [shown], _ = show_flow_bins([h])
+        assert (shown.axis.name, shown.axis.label) == ("met", "MET")
+        assert shown.hist[{"met": slice(None)}].values().size == 6  # name-based indexing works
 
     def test_show_flow_bins_noop_and_underflow(self) -> None:
         plain = make_hist([0.5, 1.5], label="A")

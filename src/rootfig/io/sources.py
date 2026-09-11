@@ -468,9 +468,13 @@ def as_source(
 
     Strings, paths, and sequences of them become a :class:`FileSource`;
     mappings, Awkward record arrays and NumPy structured arrays become an
-    :class:`ArraySource`; existing sources are returned unchanged.
+    :class:`ArraySource`; existing sources are returned unchanged. An entry
+    range (or, for a :class:`FileSource`, a different ``tree``) cannot be
+    applied to an existing source afterwards and raises :class:`SourceError`;
+    give them to the source when constructing it.
     """
     if isinstance(data, FileSource | ArraySource):
+        _reject_overrides(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
         return data
     if isinstance(data, str | PathLike):
         return FileSource(data, tree, entry_start=entry_start, entry_stop=entry_stop)
@@ -479,9 +483,30 @@ def as_source(
     if isinstance(data, Sequence) and all(isinstance(f, str | PathLike) for f in data):
         return FileSource(data, tree, entry_start=entry_start, entry_stop=entry_stop)
     if isinstance(data, Source):
+        _reject_overrides(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
         return data
     msg = (
         f"cannot interpret {type(data).__name__} as a data source; expected file path(s), "
         "a mapping of arrays, an Awkward record array, or a rootfig Source"
     )
     raise SourceError(msg)
+
+
+def _reject_overrides(
+    source: Source, *, tree: str | None, entry_start: int | None, entry_stop: int | None
+) -> None:
+    """Refuse options that cannot be applied to an already constructed source."""
+    given = [
+        f"{name}={value!r}"
+        for name, value in (("entry_start", entry_start), ("entry_stop", entry_stop))
+        if value is not None
+    ]
+    if tree is not None and isinstance(source, FileSource) and tree != source.resolved_tree():
+        given.insert(0, f"tree={tree!r}")
+    if given:
+        msg = (
+            f"{', '.join(given)} cannot be applied to an existing {type(source).__name__}; "
+            "pass them when constructing it, e.g. "
+            "FileSource(files, tree=..., entry_start=..., entry_stop=...)"
+        )
+        raise SourceError(msg)

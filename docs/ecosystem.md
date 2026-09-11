@@ -54,6 +54,9 @@ would do to a matplotlib figure, you can do to `Plot.fig` and `Plot.ax`.
 - You already have flat NumPy columns or `boost-histogram` objects and want
   rich comparison panels: [plothist](https://plothist.readthedocs.io).
 - You need a full columnar analysis framework with lazy, distributed
-  processing: [coffea](https://coffeateam.github.io/coffea/).
+  processing: [coffea](https://coffeateam.github.io/coffea/). rootfig reads
+  every branch a plot needs from every file into memory at once (only the
+  required branches, optionally an entry range), which suits quick looks and
+  moderate ntuples, not multi-terabyte datasets.
 - You want to build fit templates and workspaces: [cabinetry](https://cabinetry.readthedocs.io).
 - You want a quick terminal look at a branch: [histoprint](https://github.com/scikit-hep/histoprint).

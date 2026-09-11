@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from os import PathLike
 from typing import Any, Literal, TypeAlias
@@ -16,7 +16,7 @@ from rootfig.io import FileSource, Source, as_source
 from rootfig.model.cuts import Cut, CutLike, as_cut
 from rootfig.model.units import cross_section_pb, luminosity_fb
 
-__all__ = ["HistType", "Sample", "SampleLike", "as_samples"]
+__all__ = ["HistType", "Sample", "as_samples"]
 
 HistType: TypeAlias = Literal["step", "fill", "errorbar", "band"]
 """How a histogram is drawn: outline, filled area, points with error bars, or a band."""
@@ -106,26 +106,16 @@ class Sample:
         source = as_source(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
         if label is None:
             label = getattr(source, "default_label", None) or source.describe()
-        if weight is not None and not weight.strip():
-            weight = None
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "label", label)
         object.__setattr__(self, "selection", as_cut(selection))
-        object.__setattr__(self, "weight", weight)
+        object.__setattr__(self, "weight", _normalise_weight(weight, label))
         object.__setattr__(self, "is_data", is_data)
         object.__setattr__(self, "color", color)
         object.__setattr__(self, "histtype", histtype)
-        if not math.isfinite(scale):
-            msg = f"sample {label!r}: scale must be a finite number, got {scale!r}"
-            raise ValueError(msg)
-        object.__setattr__(self, "scale", float(scale))
-        if xsec is not None:
-            cross_section_pb(xsec)  # validate early
-        if isinstance(ngen, int | float) and not math.isfinite(ngen):
-            msg = f"sample {label!r}: ngen must be a finite number, got {ngen!r}"
-            raise LuminosityError(msg)
-        object.__setattr__(self, "xsec", xsec)
-        object.__setattr__(self, "ngen", ngen)
+        object.__setattr__(self, "scale", _check_scale(scale, label))
+        object.__setattr__(self, "xsec", _check_xsec(xsec, label))
+        object.__setattr__(self, "ngen", _check_ngen(ngen, label))
 
     def __repr__(self) -> str:
         parts = [repr(self.source.describe()), f"label={self.label!r}"]
@@ -188,22 +178,75 @@ class Sample:
         return self.source.files if isinstance(self.source, FileSource) else ()
 
     def with_(self, **changes: Any) -> Sample:
-        """Return a copy with the given fields replaced, e.g. ``sample.with_(label="B")``."""
+        """Return a copy with the given fields replaced, e.g. ``sample.with_(label="B")``.
+
+        Replacement values are validated and normalised exactly as by the
+        constructor (``selection`` accepts a string, ``source`` anything
+        :func:`~rootfig.io.as_source` accepts, ``scale`` must be finite, ...).
+        """
         known = {f.name for f in fields(self)}
         unknown = set(changes) - known
         if unknown:
             msg = f"unknown Sample field(s) {sorted(unknown)}; valid fields: {sorted(known)}"
             raise TypeError(msg)
-        if "selection" in changes:
-            changes["selection"] = as_cut(changes["selection"])
+        label = changes.get("label", self.label)
+        if not isinstance(label, str):
+            msg = f"sample label must be a string, got {type(label).__name__}"
+            raise TypeError(msg)
         clone = copy.copy(self)
         for name, value in changes.items():
-            object.__setattr__(clone, name, value)
+            check = _FIELD_CHECKS.get(name)
+            object.__setattr__(clone, name, value if check is None else check(value, label))
         return clone
 
 
-SampleLike: TypeAlias = Sample | str | Sequence[Any] | Any
-"""A :class:`Sample`, file specification(s), or in-memory arrays."""
+# -- field validation shared by the constructor and with_() ---------------------------------
+
+
+def _normalise_weight(weight: str | None, label: str) -> str | None:
+    if weight is None:
+        return None
+    if not isinstance(weight, str):  # runtime guard for untyped callers
+        msg = (  # type: ignore[unreachable]
+            f"sample {label!r}: weight must be an expression string or None, "
+            f"got {type(weight).__name__}"
+        )
+        raise TypeError(msg)
+    return weight if weight.strip() else None
+
+
+def _check_scale(scale: float, label: str) -> float:
+    try:
+        finite = math.isfinite(scale)
+    except TypeError:
+        finite = False
+    if not finite:
+        msg = f"sample {label!r}: scale must be a finite number, got {scale!r}"
+        raise ValueError(msg)
+    return float(scale)
+
+
+def _check_xsec(xsec: float | str | None, _label: str) -> float | str | None:
+    if xsec is not None:
+        cross_section_pb(xsec)  # validate early; keep the user's spelling for labels
+    return xsec
+
+
+def _check_ngen(ngen: float | str | None, label: str) -> float | str | None:
+    if isinstance(ngen, int | float) and not math.isfinite(ngen):
+        msg = f"sample {label!r}: ngen must be a finite number, got {ngen!r}"
+        raise LuminosityError(msg)
+    return ngen
+
+
+_FIELD_CHECKS: dict[str, Callable[[Any, str], Any]] = {
+    "source": lambda value, _label: as_source(value),
+    "selection": lambda value, _label: as_cut(value),
+    "weight": _normalise_weight,
+    "scale": _check_scale,
+    "xsec": _check_xsec,
+    "ngen": _check_ngen,
+}
 
 
 def as_samples(

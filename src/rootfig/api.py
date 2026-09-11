@@ -17,7 +17,7 @@ import awkward as ak
 import numpy as np
 
 from rootfig._typing import FloatArray, Hist
-from rootfig.errors import RootfigWarning, SelectionError, SourceError
+from rootfig.errors import BinningError, RootfigWarning, SelectionError, SourceError
 from rootfig.expressions import parse
 from rootfig.histograms import (
     SIGNIFICANCE_KINDS,
@@ -35,6 +35,7 @@ from rootfig.histograms import (
     correlation_matrix,
     describe_table,
     load_columns,
+    load_columns_each,
     read_arrays,
     significance,
 )
@@ -345,9 +346,11 @@ def plot(
     stack
         Stack the non-data samples.
     ratio
-        ``True`` for a ratio panel (data / total for stacks or data plots,
-        otherwise each sample over the first), a sample label to use as the
-        reference, or a significance panel: ``"significance"`` (``S/sqrt(B)``),
+        ``True`` for a ratio panel: data / total MC for a stack (needs
+        ``observed=``), data / the first non-data sample when data is overlaid,
+        otherwise every further sample over the first; a sample label to use
+        as the reference (all other histograms, data included, are divided by
+        it); or a significance panel: ``"significance"`` (``S/sqrt(B)``),
         ``"s/sqrt(b)"`` or ``"s/sqrt(s+b)"``, where the signal is the last
         non-data sample (the top of a stack) and the background the sum of the
         others; ``("s/sqrt(b)", "Signal")`` names the signal sample.
@@ -694,10 +697,11 @@ def plot2d(
 
     ``x`` and ``y`` must have the same structure (both per-event, or both
     per-object from the same collection). ``bins`` applies to both axes unless
-    it is a pair of binning specifications, one per axis; per-axis ranges,
-    labels and logarithmic scales (``logx``/``logy`` default to the variables'
-    ``log`` flags) are best given through :class:`~rootfig.model.Variable`
-    objects.
+    it is a pair of binning specifications, one per axis (so ``(40, 20)`` is
+    two bin counts, never a range; a range needs ``(n, low, high)``); per-axis
+    ranges, labels and logarithmic scales (``logx``/``logy`` default to the
+    variables' ``log`` flags) are best given through
+    :class:`~rootfig.model.Variable` objects.
     """
     sample = _single_sample(data, tree=tree)
     x_bins, y_bins = _split_bins(bins)
@@ -812,10 +816,11 @@ def summarize(
     var_list = [variables] if isinstance(variables, str | Variable) else list(variables)
     rows: list[tuple[str, str, Summary]] = []
     for sample in samples:
-        for var in var_list:
-            columns = load_columns(
-                sample, [var], selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
-            )
+        # One read per sample: the branches of all variables are fetched together.
+        per_variable = load_columns_each(
+            sample, var_list, selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
+        )
+        for var, columns in zip(var_list, per_variable, strict=True):
             rows.append((sample.label, as_variable(var).expression, summarize_columns(columns)))
     return SummaryTable(tuple(rows))
 
@@ -1064,7 +1069,8 @@ def profile(
     e.g. ``"(reco_pt - true_pt) / true_pt"``). ``x`` and ``y`` must have the same
     structure (both per-event or both per-object of one collection). ``xlabel``
     and ``unit`` describe the x axis; ``logx``/``logy`` default to the
-    variables' ``log`` flags. With negative weights a bin whose weighted
+    variables' ``log`` flags. With negative weights a bin whose total weight
+    is negative keeps its mean but has no error, and a bin whose weighted
     variance is negative has no standard deviation (``nan``). The
     :class:`~rootfig.histograms.Profile` objects are returned in ``Plot.profiles``.
 
@@ -1292,9 +1298,27 @@ def _ratio_setup(
 
 
 def _split_bins(bins: Bins | tuple[Bins, Bins] | None) -> tuple[Any, Any]:
-    """Interpret ``bins`` for two axes: a pair of specifications, or one spec for both."""
+    """Interpret ``bins`` for two axes: a pair of specifications, or one spec for both.
+
+    Raises
+    ------
+    BinningError
+        If the pair consists of two numbers that are not both integers: that
+        reads like a ``(low, high)`` range, which a pair never is.
+    """
     if bins is None:
         return None, None
     if isinstance(bins, tuple) and len(bins) == 2:
+        numbers = all(
+            isinstance(b, int | float | np.number) and not isinstance(b, bool) for b in bins
+        )
+        if numbers and not all(isinstance(b, int | np.integer) for b in bins):
+            msg = (
+                f"bins={bins!r}: for plot2d a 2-tuple is (x_bins, y_bins), one specification "
+                "per axis, so two numbers are two bin counts, not a range. Give the range per "
+                f"axis, e.g. bins=((50, {bins[0]}, {bins[1]}), (50, {bins[0]}, {bins[1]})), or "
+                "use rf.Variable(x, bins=50, range=(low, high))"
+            )
+            raise BinningError(msg)
         return bins[0], bins[1]
     return bins, bins

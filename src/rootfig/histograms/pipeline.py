@@ -26,6 +26,7 @@ __all__ = [
     "combined_selection",
     "combined_weight",
     "load_columns",
+    "load_columns_each",
     "read_arrays",
 ]
 
@@ -101,14 +102,7 @@ def load_columns(
     var_exprs = [as_variable(v).expression for v in variables]
     cut = combined_selection(sample, selection)
     weight_expr = combined_weight(sample, weight)
-
-    expressions = [parse(v) for v in var_exprs]
-    if cut is not None:
-        expressions.append(cut.parsed())
-    if weight_expr is not None:
-        expressions.append(parse(weight_expr))
-
-    arrays, n_events = read_arrays(sample, expressions)
+    arrays, n_events = _read_for(sample, var_exprs, cut, weight_expr)
     return prepare(
         arrays,
         var_exprs,
@@ -119,6 +113,54 @@ def load_columns(
         context=sample.label,
         n_events=n_events,
     )
+
+
+def load_columns_each(
+    sample: Sample,
+    variables: Sequence[Variable | str],
+    *,
+    selection: CutLike | None = None,
+    weight: str | None = None,
+    lumi: float | str | None = None,
+    nonfinite: NonFinitePolicy = "drop",
+) -> list[Columns]:
+    """Like :func:`load_columns` once per variable, reading the source only once.
+
+    The union of the branches needed by all variables, the selection and the
+    weight is read in a single pass; each variable is then prepared on its own,
+    so variables of different structure (per-event and per-object) may be mixed
+    and each keeps the semantics it would have alone.
+    """
+    var_exprs = [as_variable(v).expression for v in variables]
+    cut = combined_selection(sample, selection)
+    weight_expr = combined_weight(sample, weight)
+    arrays, n_events = _read_for(sample, var_exprs, cut, weight_expr)
+    scale = sample.scale * sample.lumi_scale(lumi)
+    return [
+        prepare(
+            arrays,
+            [expression],
+            selection=None if cut is None else cut.expression,
+            weight=weight_expr,
+            scale=scale,
+            nonfinite=nonfinite,
+            context=sample.label,
+            n_events=n_events,
+        )
+        for expression in var_exprs
+    ]
+
+
+def _read_for(
+    sample: Sample, var_exprs: Sequence[str], cut: Cut | None, weight_expr: str | None
+) -> tuple[dict[str, Any], int]:
+    """Read the branches needed by the variables, the selection and the weight."""
+    expressions = [parse(v) for v in var_exprs]
+    if cut is not None:
+        expressions.append(cut.parsed())
+    if weight_expr is not None:
+        expressions.append(parse(weight_expr))
+    return read_arrays(sample, expressions)
 
 
 def build_histograms(

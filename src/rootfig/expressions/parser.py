@@ -349,7 +349,10 @@ def parse(expression: ExpressionLike) -> Expression:
     ------
     ExpressionError
         If the text is not a single Python expression or uses a disallowed
-        construct (attribute access, unknown functions, string literals, ...).
+        construct (unknown functions, string literals, lambdas, comprehensions,
+        conditional expressions, ...). Dotted names such as
+        ``Collection.field.sub`` are read as one branch name (podio/EDM4hep
+        files), not as attribute access; attributes of anything else are rejected.
     """
     if isinstance(expression, Expression):
         return expression

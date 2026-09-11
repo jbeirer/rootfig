@@ -44,8 +44,12 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
   ```
 
   Without a luminosity such samples raise a [`LuminosityError`][rootfig.LuminosityError].
-- `entry_start`/`entry_stop` restrict reading for quick looks at large files.
-- `sample.with_(label="...")` returns a modified copy.
+- `entry_start`/`entry_stop` restrict reading for quick looks at large files
+  (a plot reads every needed branch of every file into memory at once). For a
+  ready-made `FileSource`, give the range to the source itself; passing it to
+  `Sample` afterwards raises a [`SourceError`][rootfig.SourceError].
+- `sample.with_(label="...")` returns a modified copy; replacement values are
+  validated like constructor arguments.
 
 Passing a list of files to `plot()` creates one sample per file. To merge
 several files into *one* sample, use a glob or a `Sample`.
@@ -67,7 +71,8 @@ met = rf.Variable(
   `"robust"` (ignores far outliers such as `-999` sentinels).
 - `label` and `unit` form the axis label `label [unit]`; the unit also appears
   in the automatic y label (`Events / 4 GeV`).
-- `name` is used for file names by `Plot.save(directory)`.
+- `name` is used for file names by `Plot.save(directory)`; it must be a plain
+  file stem (no path separators).
 
 `bins`, `range`, `xlabel` and `unit` given to `plot()` override the variable.
 
