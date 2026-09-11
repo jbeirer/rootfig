@@ -386,10 +386,14 @@ class TestPlot:
             legend="upper left",
             colors=["red"],
         )
-        p = rf.plot(signal_file, "MET", tree="events", bins=10, style=style, figsize=(4, 3))
+        with warnings.catch_warnings():
+            # the wide status and luminosity texts must not make constrained layout collapse
+            warnings.simplefilter("error", UserWarning)
+            p = rf.plot(signal_file, "MET", tree="events", bins=10, style=style, figsize=(4, 3))
         assert tuple(p.fig.get_size_inches()) == (4, 3)
         assert p.histograms[0].hist is not None
         assert any("CMS" in t.get_text() for t in p.ax.texts)
+        assert p.ax.get_position().width > 0.5  # the axes still fills most of the figure
 
     def test_no_global_state_change(self, signal_file: Path) -> None:
         before = dict(plt.rcParams)
@@ -522,6 +526,14 @@ class TestBrokenAxis:
 
 
 class TestPlotHistograms:
+    def test_lost_variances_need_assume_poisson(self) -> None:
+        weighted = hist.Hist(hist.axis.Regular(2, 0, 2)).fill([0.5, 1.5], weight=[2.0, -1.0])
+        with pytest.raises(ValueError, match="assume_poisson=True"):
+            rf.plot_histograms([weighted])
+        with pytest.warns(RootfigWarning, match="Poisson guess"):
+            p = rf.plot_histograms([weighted], assume_poisson=True)
+        np.testing.assert_allclose(p.histograms[0].variances(), [2.0, 1.0])
+
     def test_skipped_normalisation_keeps_events_label(self) -> None:
         empty = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
         with pytest.warns(RootfigWarning, match="no entries"):

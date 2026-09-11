@@ -602,6 +602,21 @@ class TestCutflow:
         assert flow.steps[0].expression == "n >= 1"
         assert flow.events.tolist() == [4, 2]
 
+    def test_signed_yields_keep_efficiencies(self) -> None:
+        from rootfig.histograms import cutflow
+
+        # weights 1 - 3 = -2 for all events, then -3 after n >= 4: the ratios are defined
+        arrays = {"n": np.array([0, 4]), "w": np.array([1.0, -3.0])}
+        flow = cutflow(Sample(arrays, label="nlo", weight="w"), ["n >= 4", "n >= 9"])
+        np.testing.assert_allclose(flow.yields, [-2.0, -3.0, 0.0])
+        np.testing.assert_allclose(flow.efficiencies, [1.0, 1.5, 0.0])  # may leave [0, 1]
+        np.testing.assert_allclose(flow.absolute_efficiencies, [1.0, 1.5, 0.0])
+        cancelled = cutflow(
+            Sample({"n": np.array([0, 4]), "w": np.array([1.0, -1.0])}, weight="w"), ["n >= 4"]
+        )
+        assert np.isnan(cancelled.efficiencies[1])  # zero yield: undefined
+        assert np.isnan(cancelled.absolute_efficiencies).all()
+
     def test_table(self) -> None:
         from rootfig.histograms import CutflowTable, cutflow
 
@@ -855,19 +870,26 @@ class TestWeightStorage:
         assert as_weight_storage(weighted) is weighted
         np.testing.assert_allclose(normalize_hist(double, "width").values(), [0.5, 1.0])
 
-    def test_weighted_plain_storage_warns(self) -> None:
+    def test_weighted_plain_storage_needs_explicit_poisson_assumption(self) -> None:
         from rootfig.histograms import as_weight_storage
 
         # a count storage forgets the sum of squared weights: hist reports no variances
-        double = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0, 3.0], weight=[2.0, 1.0])
+        double = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0, 3.0], weight=[2.0, -3.0])
         assert double.variances() is None
-        with pytest.warns(RootfigWarning, match="no variances"):
-            converted = as_weight_storage(double)
-        np.testing.assert_allclose(converted.values(), [2.0, 1.0])
-        np.testing.assert_allclose(converted.variances(), [2.0, 1.0])  # Poisson guess
+        with pytest.raises(ValueError, match="assume_poisson=True"):
+            as_weight_storage(double)
+        with pytest.raises(ValueError, match="no variances"):
+            Histogram(double, label="h")
+        with pytest.warns(RootfigWarning, match="Poisson guess"):
+            converted = as_weight_storage(double, assume_poisson=True)
+        np.testing.assert_allclose(converted.values(), [2.0, -3.0])
+        np.testing.assert_allclose(converted.variances(), [2.0, 3.0])  # never negative
         rescaled = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0]) * 2
-        with pytest.warns(RootfigWarning, match="no variances"):
-            np.testing.assert_allclose(as_weight_storage(rescaled).variances(), [2.0, 0.0])
+        with pytest.raises(ValueError, match="rescaled"):
+            as_weight_storage(rescaled)
+        with pytest.warns(RootfigWarning, match="Poisson guess"):
+            converted = as_weight_storage(rescaled, assume_poisson=True)
+        np.testing.assert_allclose(converted.variances(), [2.0, 0.0])
 
     def test_unweighted_plain_storage_is_silent(self) -> None:
         from rootfig.histograms import as_weight_storage

@@ -43,9 +43,11 @@ dataset scaled to the full one, for instance).
 Variances are scaled consistently. Flow bins scale with the same factor; for
 `"width"` and `"density"` they are divided by the width of the neighbouring
 visible bin. Plain `hist.Hist` objects with a count storage passed to
-`plot_histograms` are converted to `Weight` storage first (with a warning if
-they were filled with weights, since their sum of squared weights is lost and
-the bin contents have to stand in as variances).
+`plot_histograms` are converted to `Weight` storage first. If such a histogram
+was filled with weights (or rescaled) its sum of squared weights is lost, and
+rootfig refuses it with a `ValueError` rather than invent uncertainties; pass
+`assume_poisson=True` to use the absolute bin contents as variances (with a
+warning), or fill with `hist.storage.Weight()` in the first place.
 
 The rescaling modes divide by the signed sum of the visible bins: a histogram
 dominated by negative weights still sums to the target, its shape flips sign,
@@ -203,6 +205,10 @@ print(table)  # yields ± error (raw events) and step efficiencies
 table.get("ZH").efficiencies  # relative to the previous step
 table.get("ZH").absolute_efficiencies
 ```
+
+Step efficiencies are plain ratios of weighted yields (`nan` after a zero
+yield). With signed (NLO) weights a yield can be negative and a ratio can lie
+outside `[0, 1]`; it is reported as is.
 
 Cuts apply cumulatively; a sample's own selection is the first row. Per-object
 cuts pass an event when any object passes. `weight`, `lumi` and `nonfinite`

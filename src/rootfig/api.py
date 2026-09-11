@@ -465,6 +465,7 @@ def plot_histograms(
     style: StyleLike = None,
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
+    assume_poisson: bool = False,
     save: str | None = None,
 ) -> Plot:
     """Draw already-filled histograms (``hist.Hist`` or :class:`~rootfig.histograms.Histogram`).
@@ -475,10 +476,16 @@ def plot_histograms(
     :class:`~rootfig.histograms.Histogram` objects with ``is_data=True``.
     Overlaid histograms may have different binnings; stacks, ratio panels and
     ``flow="show"`` need identical bin edges.
+
+    A count-storage histogram that was filled with weights (or rescaled) has
+    lost its sum of squared weights and is rejected with a ``ValueError``;
+    ``assume_poisson=True`` draws it anyway with the absolute bin contents as
+    variances (a warning is issued). Fill with ``hist.storage.Weight()`` to keep
+    the real uncertainties.
     """
     if logx is None:
         logx = variable.log if variable is not None else False
-    histograms_ = _wrap_hists(hists, labels)
+    histograms_ = _wrap_hists(hists, labels, assume_poisson=assume_poisson)
     if not histograms_:
         msg = "no histograms to draw"
         raise ValueError(msg)
@@ -1230,7 +1237,12 @@ RatioSpec = bool | str | tuple[str, str]
 """What ``ratio=`` accepts: a flag, a reference label, a significance kind, or (kind, signal)."""
 
 
-def _wrap_hists(hists: Sequence[Histogram | Hist], labels: Sequence[str] | None) -> list[Histogram]:
+def _wrap_hists(
+    hists: Sequence[Histogram | Hist],
+    labels: Sequence[str] | None,
+    *,
+    assume_poisson: bool = False,
+) -> list[Histogram]:
     if labels is not None and len(labels) != len(hists):
         msg = f"got {len(labels)} labels for {len(hists)} histograms"
         raise ValueError(msg)
@@ -1244,7 +1256,8 @@ def _wrap_hists(hists: Sequence[Histogram | Hist], labels: Sequence[str] | None)
         else:
             axis_name = item.axes[0].name if item.ndim == 1 else ""
             label = axis_name or f"hist {index + 1}"
-        wrapped.append(Histogram(as_weight_storage(item), label=str(label)))
+        converted = as_weight_storage(item, assume_poisson=assume_poisson)
+        wrapped.append(Histogram(converted, label=str(label)))
     return wrapped
 
 

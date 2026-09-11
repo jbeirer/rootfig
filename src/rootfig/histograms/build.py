@@ -40,16 +40,23 @@ def fill(axes: Sequence[Axis], columns: Columns) -> Hist:
     return histogram
 
 
-def as_weight_storage(histogram: Hist) -> Hist:
+def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
     """Return ``histogram`` with ``Weight`` storage (a copy if it had another storage).
 
     Plain count storages (``Double``, ``Int64``, ...) carry no sum of squared
     weights; their variances are taken as ``hist`` reports them, i.e. the
-    counts (Poisson) for unweighted fills. If a storage reports no variances at
-    all (``hist`` does so after any weighted fill or arithmetic on a count
-    storage) the contents are used as variances, a Poisson guess, and a
-    :class:`~rootfig.errors.RootfigWarning` says so: the true sum of squared
-    weights is lost and cannot be reconstructed.
+    counts (Poisson) for unweighted fills. After a weighted fill or arithmetic
+    on such a storage ``hist`` reports no variances at all: the sum of squared
+    weights is lost and cannot be reconstructed. That is an error unless
+    ``assume_poisson=True``, which uses the absolute bin contents as variances
+    (the Poisson guess; a :class:`~rootfig.errors.RootfigWarning` says so).
+
+    Raises
+    ------
+    TypeError
+        If the storage is not a count or ``Weight`` storage (``Mean``, ...).
+    ValueError
+        If the histogram reports no variances and ``assume_poisson`` is False.
     """
     if histogram.storage_type is hist.storage.Weight:
         return histogram
@@ -67,14 +74,22 @@ def as_weight_storage(histogram: Hist) -> Hist:
     values = np.asarray(histogram.values(flow=True), dtype=float)
     reported = histogram.variances(flow=True)
     if reported is None:
-        warnings.warn(
+        what = (
             f"histogram with {histogram.storage_type.__name__} storage was filled with weights "
-            "or rescaled, so hist reports no variances; using the bin contents as variances "
-            "(Poisson guess). Fill with hist.storage.Weight() to keep the sum of squared weights",
+            "or rescaled, so hist reports no variances (the sum of squared weights is lost)"
+        )
+        if not assume_poisson:
+            msg = (
+                f"{what}. Fill it with hist.storage.Weight() to keep the uncertainties, or pass "
+                "assume_poisson=True to use the absolute bin contents as variances"
+            )
+            raise ValueError(msg)
+        warnings.warn(
+            f"{what}; using the absolute bin contents as variances (Poisson guess)",
             RootfigWarning,
             stacklevel=3,
         )
-        variances = values
+        variances = np.abs(values)  # never a negative variance for signed contents
     else:
         variances = np.asarray(reported, dtype=float)
     result = hist.Hist(*histogram.axes, storage=hist.storage.Weight())

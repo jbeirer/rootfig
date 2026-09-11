@@ -66,18 +66,23 @@ class Cutflow:
 
     @property
     def efficiencies(self) -> np.ndarray:
-        """Weighted efficiency of each step relative to the previous one (1 for the first)."""
+        """Weighted efficiency of each step relative to the previous one (1 for the first).
+
+        The plain ratio of yields: ``nan`` where the previous yield is zero. With
+        signed (NLO) weights a yield can be negative, and the ratio may then lie
+        outside ``[0, 1]``; it is still reported.
+        """
         y = self.yields
         with np.errstate(divide="ignore", invalid="ignore"):
-            rel = np.where(y[:-1] > 0, y[1:] / y[:-1], np.nan)
+            rel = np.where(y[:-1] != 0, y[1:] / y[:-1], np.nan)
         return np.concatenate([[1.0], rel])
 
     @property
     def absolute_efficiencies(self) -> np.ndarray:
-        """Weighted efficiency of each step relative to the first."""
+        """Weighted efficiency of each step relative to the first (see :attr:`efficiencies`)."""
         y = self.yields
         with np.errstate(divide="ignore", invalid="ignore"):
-            return np.where(y[0] > 0, y / y[0], np.nan)
+            return np.where(y[0] != 0, y / y[0], np.nan)
 
 
 @dataclass(frozen=True)

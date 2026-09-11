@@ -350,6 +350,12 @@ def align_experiment_label(ax: Axes) -> None:
     fig = ax.get_figure(root=True)
     if fig is None:  # pragma: no cover
         return
+    # The status word and the luminosity text can be wider than a small axes. Left in the
+    # layout, constrained layout would shrink the axes to make room for them until it
+    # collapses; the short experiment name stays in and reserves the space above the axes.
+    for text in ax.texts:
+        if isinstance(text, hep.label.ExpText | hep.label.LumiText):
+            text.set_in_layout(False)
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
     x_exp, y_exp = exp_txt.get_position()
