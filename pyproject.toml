@@ -40,7 +40,6 @@ Homepage = "https://github.com/jbeirer/rootfig"
 Documentation = "https://github.com/jbeirer/rootfig#readme"
 Repository = "https://github.com/jbeirer/rootfig"
 Issues = "https://github.com/jbeirer/rootfig/issues"
-Changelog = "https://github.com/jbeirer/rootfig/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
@@ -62,7 +61,7 @@ path = "src/rootfig/__init__.py"
 [tool.hatch.build.targets.sdist]
 include = [
   "src/rootfig", "tests", "docs", "examples", "mkdocs.yml",
-  "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "pyproject.toml",
+  "README.md", "CONTRIBUTING.md", "LICENSE", "pyproject.toml",
 ]
 
 [tool.hatch.build.targets.wheel]

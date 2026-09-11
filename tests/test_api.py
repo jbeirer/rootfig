@@ -828,7 +828,7 @@ class TestEfficiencyProfileSignificance:
 
 
 class TestReviewRegressions:
-    """End-to-end checks for the review findings (see CHANGELOG)."""
+    """End-to-end regression checks for previously fixed issues."""
 
     @staticmethod
     def _hist(values: list[float], weights: list[float] | None = None) -> Any:

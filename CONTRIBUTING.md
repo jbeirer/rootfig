@@ -111,14 +111,12 @@ docstring; the test suite fails until its baseline image exists.
 
 - Add tests for behaviour changes; unit tests assert histogram contents and
   matplotlib structure. Rendered output is covered by the gallery (below).
-- Update `CHANGELOG.md` under "Unreleased".
 - Run the checks above before pushing; `pre-commit run --all-files` does most
   of it.
 
 ## Releasing
 
-1. Update the version in `src/rootfig/__init__.py` and move the changelog
-   entries under a new heading.
+1. Update the version in `src/rootfig/__init__.py`.
 2. Commit, tag `vX.Y.Z`, push the tag.
 3. The `release.yml` workflow builds the distribution and publishes it to
    PyPI via Trusted Publishing (configure the publisher on PyPI first:
