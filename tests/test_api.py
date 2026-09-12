@@ -1371,7 +1371,7 @@ class TestWeightedRangeInference:
         p = rf.plot({"x": values, "w": weights}, "x", weight="w", bins=50)
         low, high = p.ax.get_xlim()
         assert high > 8.0
-        kept = (values >= low) & (values <= high)
+        kept = (values >= low) & (values < high)
         assert weights[kept].sum() / weights.sum() > 0.99
         plt.close(p.fig)
         # the same values unweighted are a thin tail and are cut

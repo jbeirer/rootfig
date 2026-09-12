@@ -246,16 +246,30 @@ def auto_range(
     return (low, high)
 
 
-def _padded(kept: np.ndarray, low: float, high: float) -> tuple[float, float]:
-    """Pad the extent of ``kept`` by 5 percent of its span, clamped to ``(low, high)``.
+def _padded(kept_low: float, kept_high: float, low: float, high: float) -> tuple[float, float]:
+    """Pad ``(kept_low, kept_high)`` by 5 percent of its span, clamped to ``(low, high)``.
 
     Clamping to the data keeps the padding from adding empty bins or giving a
     positive variable a negative lower edge, and bounds every candidate range by
     the extent of the data.
     """
-    kept_low, kept_high = float(kept.min()), float(kept.max())
     pad = 0.05 * (kept_high - kept_low)
     return max(kept_low - pad, low), min(kept_high + pad, high)
+
+
+def _retained_extent(samples: Sequence[np.ndarray]) -> tuple[float, float]:
+    """Span every sample keeps once each has had its own outliers rejected.
+
+    The rejection is per sample and the extents are unioned, so a sample is
+    measured against its own median and MAD. Judged against the pooled values a
+    sample that simply sits somewhere else - a signal offset from a background,
+    either of them normalised - scores as one big outlier and is dropped whole,
+    the more easily the more the other sample outnumbers it. Its own spread is
+    the honest scale to ask whether one of its entries is an outlier, and a
+    sentinel is still far from the bulk of the sample it appears in.
+    """
+    extents = [_keep_within(v, _modified_z_scores(v), ROBUST_LADDER[0]) for v in samples]
+    return min(float(k.min()) for k in extents), max(float(k.max()) for k in extents)
 
 
 def _outside(
@@ -269,10 +283,13 @@ def _outside(
     Row 0 is the fraction of each sample's entries, row 1 the fraction of its
     total ``|weight|``. A rare entry can carry a large share of a histogram's
     content, so both have to stay within budget for a cut to be cheap.
+
+    The upper edge is exclusive, as it is on the axis this range becomes, so a
+    value equal to ``high`` counts as out of the view rather than in it.
     """
     entries, content = [], []
     for values, weight in zip(samples, weights, strict=True):
-        gone = (values < low) | (values > high)
+        gone = (values < low) | (values >= high)
         entries.append(float(gone.mean()))
         if weight is None:
             content.append(entries[-1])
@@ -317,7 +334,7 @@ def _robust_range(
     budget, since a handful of high-weight entries can be most of what a
     histogram draws while being a rounding error in the count.
     """
-    best = _padded(_reject_outliers(values, ROBUST_LADDER[0]), low, high)
+    best = _padded(*_retained_extent(samples), low, high)
     budgets = np.array(
         [
             0.0 if _distinct_values_below(v, ROBUST_DISCRETE_VALUES) else ROBUST_COVERAGE_BUDGET
@@ -326,9 +343,11 @@ def _robust_range(
     )
     if not budgets.any():  # nothing may be cut: no walk to take
         return best
+    scores = _modified_z_scores(values)
     outside = _outside(samples, weights, *best)
     for threshold in ROBUST_LADDER[1:]:
-        candidate = _padded(_reject_outliers(values, threshold), low, high)
+        kept = _keep_within(values, scores, threshold)
+        candidate = _padded(float(kept.min()), float(kept.max()), low, high)
         if candidate[0] < best[0] or candidate[1] > best[1]:
             break  # an emptied selection falls back to every value: stop widening
         if np.any(_outside(samples, weights, *candidate) - outside > budgets):
@@ -349,7 +368,13 @@ def _distinct_values_below(values: np.ndarray, limit: int) -> bool:
     return bool(np.unique(values).size < limit)
 
 
-def _reject_outliers(values: np.ndarray, threshold: float = ROBUST_THRESHOLD) -> np.ndarray:
+def _modified_z_scores(values: np.ndarray) -> np.ndarray | None:
+    """Score each value by its distance from the median in units of the MAD.
+
+    ``None`` means the sample has no scale to measure against and nothing can be
+    rejected. The scores do not depend on a threshold, so the ladder computes
+    them once and compares the same array against each of its steps.
+    """
     median = np.median(values)
     deviation = np.abs(values - median)
     mad = np.median(deviation)
@@ -358,9 +383,19 @@ def _reject_outliers(values: np.ndarray, threshold: float = ROBUST_THRESHOLD) ->
         # mean absolute deviation, and if that is zero too, keep everything.
         mad = float(deviation.mean())
         if mad <= 0:
-            return values
-    score = 0.6745 * deviation / mad
-    kept = values[score <= threshold]
+            return None
+    return np.asarray(0.6745 * deviation / mad, dtype=float)
+
+
+def _reject_outliers(values: np.ndarray, threshold: float = ROBUST_THRESHOLD) -> np.ndarray:
+    """Drop the values scoring above ``threshold``, keeping all of them if none is left."""
+    return _keep_within(values, _modified_z_scores(values), threshold)
+
+
+def _keep_within(values: np.ndarray, scores: np.ndarray | None, threshold: float) -> np.ndarray:
+    if scores is None:
+        return values
+    kept = values[scores <= threshold]
     return kept if kept.size else values
 
 

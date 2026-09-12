@@ -116,11 +116,14 @@ rf.plot("events.root", "d0_significance", bins=50, range=(-5, 5))  # explicit
 
 This happens in two steps. Outliers are rejected by their modified z-score
 (`0.6745 * |x - median| / MAD`), with a threshold of 30, which removes sentinels
-and anything else far from the bulk. The threshold is then tightened while no
-more than 1 percent of any one sample (by entries and by weight) leaves the
-view, which cuts a tail that
-reaches far but thins out smoothly — the kind a distance threshold keeps and
-that leaves the interesting part of the distribution in a corner of the axis.
+and anything else far from the bulk. The threshold is then tightened for as
+long as each step costs no more than an *additional* 1 percent of any one
+sample, by entries and by weight. Additional is meant literally: the budget is
+measured against what the first step already moved out of the view, which may
+be a good deal more than 1 percent. This second step cuts a tail that reaches
+far but thins out smoothly, the kind a distance threshold keeps and that leaves
+the interesting part of the distribution in a corner of the axis.
+
 The budget is charged per sample rather than over the pooled entries, so a small
 signal sitting far from a large background keeps its own place on the axis
 instead of being cut as a rounding error, and it is charged against the weight a
