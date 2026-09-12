@@ -233,6 +233,7 @@ def xbreak_ratio(
         logy=True,
         xbreak=(125, 195),
         style=atlas,
+        figsize=(7, 5.6),
     )
 
 
@@ -359,6 +360,7 @@ def correlation(signal: rf.Sample) -> rf.Plot:
         ["MET", "sum(Jet_pt)", "nJet", "nMuon", "m_ll"],
         labels=[r"$E_T^{miss}$", r"$H_T$", r"$N_{jet}$", r"$N_{\mu}$", r"$m_{\ell\ell}$"],
         percent=True,
+        figsize=(7, 5.6),
     )
 
 

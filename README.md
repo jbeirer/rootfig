@@ -32,8 +32,7 @@ selection, and plot:
 ```python
 import rootfig as rf
 
-p = rf.plot("events.root", "Muon_pt", tree="events", selection="Muon_pt > 20", bins=50)
-p.save("muon_pt.pdf")
+rf.plot("events.root", "Muon_pt", tree="events", selection="Muon_pt > 20", bins=50)
 ```
 
 Start with a single distribution; add samples, weights, stacks and ratio
