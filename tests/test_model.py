@@ -26,6 +26,7 @@ from rootfig.model import (
     log_bins,
     resolve_axis,
 )
+from rootfig.model.binning import ROBUST_COVERAGE_BUDGET
 
 
 class TestCut:
@@ -151,9 +152,7 @@ class TestBinning:
     @pytest.mark.parametrize(
         "values",
         [
-            pytest.param(np.random.default_rng(1).normal(0, 1, 20_000), id="gauss"),
             pytest.param(np.random.default_rng(2).uniform(0, 1, 20_000), id="uniform"),
-            pytest.param(np.random.default_rng(3).exponential(30, 20_000), id="exponential"),
             pytest.param(
                 np.concatenate(
                     [
@@ -170,9 +169,134 @@ class TestBinning:
             pytest.param(np.repeat([0.0, 1.0, 2.0, 3.0], [9000, 700, 250, 50]), id="counts"),
         ],
     )
-    def test_robust_range_is_a_no_op_without_outliers(self, values: np.ndarray) -> None:
-        """These samples stay within the threshold and must have identical edges."""
+    def test_robust_range_is_a_no_op_without_a_tail(self, values: np.ndarray) -> None:
+        """Nothing to reject and nothing to cut: these must have identical edges.
+
+        The distributions with a hard edge end where the data ends, and the
+        categorical ones are excluded from tightening by their value count.
+        """
         assert auto_range([values], mode="robust") == auto_range([values])
+
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
+            pytest.param(np.random.default_rng(1).normal(0, 1, 20_000), (-3.3, 3.3), id="gauss"),
+            pytest.param(
+                np.random.default_rng(3).exponential(30, 20_000), (0.0, 159.0), id="exponential"
+            ),
+            pytest.param(
+                np.where(
+                    np.random.default_rng(8).random(100_000) < 0.06,
+                    np.random.default_rng(9).normal(0, 4, 100_000),
+                    np.random.default_rng(10).normal(0, 1, 100_000),
+                ),
+                (-5.8, 5.8),
+                id="gaussian-core-with-tails",
+            ),
+        ],
+    )
+    def test_robust_range_cuts_a_thin_tail_within_the_budget(
+        self, values: np.ndarray, expected: tuple[float, float]
+    ) -> None:
+        """A tail the distance threshold keeps is cut while few entries leave the view."""
+        low, high = auto_range([values], mode="robust")
+        full_low, full_high = auto_range([values])
+        assert (low, high) == pytest.approx(expected, abs=0.5)
+        assert full_low <= low  # tightened, never widened
+        assert high < full_high
+        outside = float(((values < low) | (values > high)).mean())
+        assert outside <= ROBUST_COVERAGE_BUDGET
+
+    @pytest.mark.parametrize("n", [100_000, 10_000, 1_000, 500, 200, 50])
+    def test_robust_range_keeps_a_small_distant_sample(self, n: int) -> None:
+        """A signal far from a large background survives however few entries it has.
+
+        The budget is charged per sample: measured against the pooled entries a
+        signal of a few hundred beside a background of a hundred thousand would be
+        under budget even when cut away completely.
+        """
+        rng = np.random.default_rng(0)
+        background = rng.exponential(60, 100_000) + 50
+        signal = rng.normal(800, 25, n)
+        low, high = auto_range([background, signal], mode="robust")
+        kept = float(((signal >= low) & (signal < high)).mean())
+        assert kept >= 1.0 - ROBUST_COVERAGE_BUDGET
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_robust_range_keeps_a_category_overlaid_with_a_continuous_sample(
+        self, reverse: bool
+    ) -> None:
+        """Categorical samples are recognised one by one, not in the pooled values.
+
+        Pooled with a large continuous sample this one looks continuous, and its
+        rarest category is five entries in a thousand - inside the budget, and
+        cut, unless the sample is judged on its own and given none.
+        """
+        background = np.random.default_rng(0).normal(0, 0.3, 100_000)
+        categorical = np.repeat([0.0, 1.0, 2.0, 3.0, 4.0], [300, 300, 200, 195, 5])
+        samples = [categorical, background] if reverse else [background, categorical]
+        low, high = auto_range(samples, mode="robust")
+        assert low <= 4.0 < high  # the upper edge is exclusive, as on the axis
+        # the continuous sample alone is tightened to a fraction of that
+        assert auto_range([background], mode="robust")[1] < 2.0
+
+    def test_robust_range_judges_a_sample_the_same_way_alone_or_overlaid(self) -> None:
+        """What a sample keeps does not depend on what it is plotted next to.
+
+        Rejecting within each sample means a value is an outlier by its own
+        sample's spread. A lone far value among near-identical ones is one either
+        way; a whole sample somewhere else is one neither way.
+        """
+        rng = np.random.default_rng(0)
+        sentinel_like = np.r_[np.zeros(999), 10.0]
+        background = rng.normal(0, 1, 100_000)
+        assert auto_range([sentinel_like], mode="robust")[1] < 10.0
+        assert auto_range([background, sentinel_like], mode="robust")[1] < 10.0
+        shifted = rng.normal(50, 1, 20_000)
+        assert auto_range([shifted], mode="robust")[1] > 50.0
+        assert auto_range([background, shifted], mode="robust")[1] > 50.0
+
+    def test_robust_range_still_cuts_an_overlay_of_continuous_samples(self) -> None:
+        """A zero budget is for categorical samples only, not for every overlay."""
+        rng = np.random.default_rng(0)
+        samples = [rng.exponential(30, 20_000), rng.exponential(30, 20_000)]
+        assert auto_range(samples, mode="robust")[1] < auto_range(samples)[1]
+
+    def test_robust_range_charges_the_budget_against_the_weights(self) -> None:
+        """Rare entries carrying most of the content are not a cheap cut.
+
+        The cluster is 0.25 percent of the entries -- inside the budget -- but
+        carries most of the ``|weight|``, so the range must keep it. Unweighted,
+        the same values are a thin tail and are cut.
+        """
+        rng = np.random.default_rng(0)
+        values = np.r_[rng.normal(0, 1, 20_000), rng.normal(8, 0.2, 50)]
+        weights = np.r_[np.ones(20_000), np.full(50, 1000.0)]
+        low, high = auto_range([values], mode="robust", weights=[weights])
+        assert high > 8.0
+        kept = (values >= low) & (values < high)
+        assert weights[kept].sum() / weights.sum() >= 1.0 - ROBUST_COVERAGE_BUDGET
+        assert auto_range([values], mode="robust")[1] < 8.0  # unweighted: a thin tail
+
+    def test_robust_range_weights_are_optional_and_per_sample(self) -> None:
+        """``None`` weights fall back to counting entries, per sample."""
+        rng = np.random.default_rng(0)
+        plain = rng.normal(0, 1, 20_000)
+        heavy = np.r_[rng.normal(0, 1, 5_000), rng.normal(9, 0.2, 20)]
+        unweighted = auto_range([plain, heavy], mode="robust")
+        assert auto_range([plain, heavy], mode="robust", weights=None) == unweighted
+        assert auto_range([plain, heavy], mode="robust", weights=[None, None]) == unweighted
+        # weighting only the second sample keeps its far cluster on the axis
+        weights = [None, np.r_[np.ones(5_000), np.full(20, 5000.0)]]
+        assert auto_range([plain, heavy], mode="robust", weights=weights)[1] > 9.0
+
+    def test_robust_range_keeps_categorical_values(self) -> None:
+        """A rare category is a bin of its own, not empty space at the edge."""
+        counts = np.repeat([0.0, 1.0, 2.0, 3.0], [9000, 700, 250, 50])
+        assert auto_range([counts], mode="robust")[1] == auto_range([counts])[1]
+        # the same shape spread over enough distinct values is tightened
+        spread = np.repeat(np.linspace(0.0, 30.0, 30), [1000] * 10 + [50] * 19 + [1])
+        assert auto_range([spread], mode="robust")[1] < auto_range([spread])[1]
 
     def test_robust_range_never_extends_past_the_data(self) -> None:
         rng = np.random.default_rng(0)
@@ -202,11 +326,11 @@ class TestBinning:
         assert (low, high) == pytest.approx(expected)
 
     def test_robust_range_and_a_distant_sample(self) -> None:
-        """Known property: the range is inferred from all samples at once.
+        """Outliers are rejected within each sample, so a shifted sample is kept.
 
         A signal in the tail of this broad background is kept at both tested
-        yields. One tens of deviations away from a narrow bulk is rejected
-        even when its yield is a fifth of the background's.
+        yields. One tens of deviations away from a narrow bulk is kept too, and
+        by its own spread rather than by how much the other sample outnumbers it.
         """
         rng = np.random.default_rng(0)
         broad = rng.exponential(60, 100_000) + 50
@@ -216,8 +340,12 @@ class TestBinning:
 
         narrow = rng.normal(0, 1, 100_000)
         signal = rng.normal(50, 1, 20_000)
-        assert auto_range([narrow, signal], mode="robust")[1] < 10
-        assert auto_range([narrow, signal])[1] > 50  # "auto" keeps it on the axis
+        low, high = auto_range([narrow, signal], mode="robust")
+        assert high > 50.0  # the whole sample would otherwise be overflow
+        assert float(((signal >= low) & (signal < high)).mean()) == 1.0
+        # a twentieth of the yield is still kept: it is not a question of size
+        tiny = rng.normal(50, 1, 1_000)
+        assert auto_range([narrow, tiny], mode="robust")[1] > 50.0
 
     def test_resolve_int_bins_explicit_range(self) -> None:
         axis = resolve_axis(Variable("x", bins=10, range=(0.0, 5.0), unit="GeV"))

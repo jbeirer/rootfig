@@ -178,7 +178,12 @@ def build_histograms(
         load_columns(s, [var], selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite)
         for s in samples
     ]
-    axis = resolve_axis(var, [c.values for c in columns], name=var.safe_name)
+    axis = resolve_axis(
+        var,
+        [c.values for c in columns],
+        name=var.safe_name,
+        weights=[c.weights for c in columns],
+    )
     return [
         Histogram(
             hist=fill([axis], cols),
@@ -211,9 +216,12 @@ def build_histograms_2d(
         )
         for s in samples
     ]
-    axis_x = resolve_axis(var_x, [c.arrays[0] for c in columns], name=var_x.safe_name)
+    weights = [c.weights for c in columns]
+    axis_x = resolve_axis(
+        var_x, [c.arrays[0] for c in columns], name=var_x.safe_name, weights=weights
+    )
     name_y = var_y.safe_name if var_y.safe_name != var_x.safe_name else f"{var_y.safe_name}_y"
-    axis_y = resolve_axis(var_y, [c.arrays[1] for c in columns], name=name_y)
+    axis_y = resolve_axis(var_y, [c.arrays[1] for c in columns], name=name_y, weights=weights)
     return [
         Histogram(
             hist=fill([axis_x, axis_y], cols),

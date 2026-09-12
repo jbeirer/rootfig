@@ -1318,3 +1318,63 @@ class TestReviewRegressions:
             rf.cutflow(sample, ["x > 0"], weight="w", nonfinite="error")
         with pytest.raises(ValueError, match="scale must be"):
             rf.Sample({"x": np.array([1.0])}, scale=np.inf)
+
+
+class TestHeadroomIsMeasured:
+    """The y limit is a small fixed margin, raised only as far as artists need.
+
+    A peaked distribution leaves a corner free, so the static margin stands. An
+    axis-filling one has nowhere to put a legend, a statistics box, a text line
+    or an experiment label, so ``raise_ylim_above`` lifts the limit further.
+    """
+
+    @staticmethod
+    def _peaked() -> dict[str, np.ndarray]:
+        return {"x": np.random.default_rng(0).normal(0.0, 1.0, 20_000)}
+
+    @staticmethod
+    def _flat() -> dict[str, np.ndarray]:
+        return {"x": np.random.default_rng(1).uniform(0.0, 10.0, 20_000)}
+
+    @staticmethod
+    def _ratio(p: rf.Plot) -> float:
+        tallest = max(float(h.hist.values().max()) for h in p.histograms)
+        return p.ax.get_ylim()[1] / tallest
+
+    def test_peaked_plot_keeps_the_static_margin(self) -> None:
+        p = rf.plot(self._peaked(), "x", bins=50, legend="upper right")
+        assert self._ratio(p) == pytest.approx(1.20)
+        plt.close(p.fig)
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            pytest.param({"stats": True}, id="stats"),
+            pytest.param({"text": ["a line", "another line"]}, id="text"),
+            pytest.param({"style": "ATLAS"}, id="experiment-label"),
+            pytest.param({"legend": "upper right"}, id="anchored-legend"),
+            pytest.param({"xbreak": (3.0, 7.0), "legend": "upper right"}, id="xbreak"),
+        ],
+    )
+    def test_axis_filling_plot_is_lifted(self, options: dict[str, Any]) -> None:
+        p = rf.plot(self._flat(), "x", bins=50, **options)
+        assert self._ratio(p) > 1.20
+        plt.close(p.fig)
+
+
+class TestWeightedRangeInference:
+    def test_high_weight_entries_stay_on_the_axis(self) -> None:
+        """An inferred range accounts for the content a cut would remove, not just entries."""
+        rng = np.random.default_rng(0)
+        values = np.r_[rng.normal(0, 1, 20_000), rng.normal(8, 0.2, 50)]
+        weights = np.r_[np.ones(20_000), np.full(50, 1000.0)]
+        p = rf.plot({"x": values, "w": weights}, "x", weight="w", bins=50)
+        low, high = p.ax.get_xlim()
+        assert high > 8.0
+        kept = (values >= low) & (values < high)
+        assert weights[kept].sum() / weights.sum() > 0.99
+        plt.close(p.fig)
+        # the same values unweighted are a thin tail and are cut
+        unweighted = rf.plot({"x": values}, "x", bins=50)
+        assert unweighted.ax.get_xlim()[1] < 8.0
+        plt.close(unweighted.fig)

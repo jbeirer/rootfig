@@ -396,7 +396,7 @@ class TestFigure:
         assert ax.get_xlim() == (0, 1)
         bottom, top = ax.get_ylim()
         assert bottom == 0.0
-        assert top == pytest.approx(14.5)
+        assert top == pytest.approx(12.0)
 
     def test_finish_axes_log_and_user_limits(self) -> None:
         fig, ax = plt.subplots()
@@ -868,7 +868,7 @@ class TestHeadroom:
             ax.set_yscale("log")
             ax.set_ylim(1, 145)
         else:
-            ax.set_ylim(0, 145)  # the usual 1.45 headroom
+            ax.set_ylim(0, 120)  # the usual 1.20 headroom
         ax.set_xlim(0, 10)
         return fig, ax, edges, heights
 
@@ -878,7 +878,7 @@ class TestHeadroom:
         raise_ylim_above(
             [ax], overlay_artists(ax, legend), edges=edges, heights=heights, logy=False
         )
-        assert ax.get_ylim()[1] > 145
+        assert ax.get_ylim()[1] > 120
         # the legend bottom now clears the histogram
         fig.canvas.draw()
         bottom = ax.transData.inverted().transform(legend.get_window_extent().get_points())[0, 1]
@@ -889,11 +889,11 @@ class TestHeadroom:
         fig, ax, edges, heights = self._axes()
         legend = ax.legend(loc="lower left")
         raise_ylim_above([ax], [legend], edges=edges, heights=heights, logy=False)
-        assert ax.get_ylim()[1] == 145
+        assert ax.get_ylim()[1] == 120
         heights_low = np.full(10, 10.0)
         legend = ax.legend(loc="upper right")
         raise_ylim_above([ax], [legend], edges=edges, heights=heights_low, logy=False)
-        assert ax.get_ylim()[1] == 145
+        assert ax.get_ylim()[1] == 120
         plt.close(fig)
 
     def test_floating_legend_and_log(self) -> None:
@@ -906,7 +906,7 @@ class TestHeadroom:
         peaked = np.r_[np.full(5, 140.0), np.zeros(5)]
         legend2 = ax2.legend(loc="best")
         raise_ylim_above([ax2], [], edges=edges2, heights=peaked, logy=False, floating=[legend2])
-        assert ax2.get_ylim()[1] == 145
+        assert ax2.get_ylim()[1] == 120
         plt.close(fig)
         plt.close(fig2)
 
@@ -915,7 +915,7 @@ class TestHeadroom:
         raise_ylim_above([], [], edges=edges, heights=heights, logy=False)
         raise_ylim_above([ax], [], edges=edges, heights=np.array([]), logy=False)
         raise_ylim_above([ax], [ax.legend()], edges=edges, heights=heights * np.nan, logy=False)
-        assert ax.get_ylim()[1] == 145
+        assert ax.get_ylim()[1] == 120
         plt.close(fig)
 
 

@@ -32,8 +32,8 @@ class Variable:
     range
         Range used when ``bins`` is an integer, see :data:`RangeSpec`. Defaults
         to :data:`DEFAULT_RANGE` (``"robust"``), which ignores far outliers such
-        as ``-999`` sentinels; ``"auto"`` uses the full finite minimum and
-        maximum instead.
+        as ``-999`` sentinels and cuts the thin end of a tail; ``"auto"`` uses
+        the full finite minimum and maximum instead.
     label
         Axis label; may contain matplotlib math text. Defaults to the
         expression.
