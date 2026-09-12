@@ -222,6 +222,29 @@ class TestBinning:
         kept = float(((signal >= low) & (signal <= high)).mean())
         assert kept >= 1.0 - ROBUST_COVERAGE_BUDGET
 
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_robust_range_keeps_a_category_overlaid_with_a_continuous_sample(
+        self, reverse: bool
+    ) -> None:
+        """Categorical samples are recognised one by one, not in the pooled values.
+
+        Pooled with a large continuous sample this one looks continuous, and its
+        rarest category is one entry in a thousand - under the budget, and cut,
+        unless the sample is judged on its own.
+        """
+        background = np.random.default_rng(0).normal(0, 1, 100_000)
+        categorical = np.r_[np.zeros(999), 10.0]
+        samples = [categorical, background] if reverse else [background, categorical]
+        low, high = auto_range(samples, mode="robust")
+        assert low <= 10.0 <= high
+        assert (low, high) == auto_range(samples)
+
+    def test_robust_range_still_cuts_an_overlay_of_continuous_samples(self) -> None:
+        """A zero budget is for categorical samples only, not for every overlay."""
+        rng = np.random.default_rng(0)
+        samples = [rng.exponential(30, 20_000), rng.exponential(30, 20_000)]
+        assert auto_range(samples, mode="robust")[1] < auto_range(samples)[1]
+
     def test_robust_range_keeps_categorical_values(self) -> None:
         """A rare category is a bin of its own, not empty space at the edge."""
         counts = np.repeat([0.0, 1.0, 2.0, 3.0], [9000, 700, 250, 50])

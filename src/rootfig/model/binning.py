@@ -51,10 +51,11 @@ RangeSpec: TypeAlias = tuple[float, float] | Literal["auto", "robust"] | None
   bulk of the data and cutting the thin end of a tail (see :func:`auto_range`),
   so that neither a sentinel such as ``-999`` nor a long tail dominates the
   range. The result is padded by 5 percent but clamped to the ``"auto"`` range,
-  so it never reaches past the data; a sample with a hard edge or with fewer
-  than :data:`ROBUST_DISCRETE_VALUES` distinct values is left where ``"auto"``
-  puts it. Values outside land in the under/overflow. Degenerate ranges are
-  widened symmetrically.
+  so it never reaches past the data. Each sample is charged separately for the
+  values a cut would take off its axis, and a sample with fewer than
+  :data:`ROBUST_DISCRETE_VALUES` distinct values keeps every one of them.
+  Values outside land in the under/overflow. Degenerate ranges are widened
+  symmetrically.
 * ``"auto"`` - the finite minimum and maximum over all samples.
 """
 
@@ -193,8 +194,9 @@ def auto_range(
     :data:`ROBUST_COVERAGE_BUDGET`, which cuts a long thin tail that the
     distance threshold alone keeps. Each candidate is padded by 5 percent of its
     span and clamped to the ``"auto"`` range, so the result never reaches past
-    the data or past the first step. Categorical samples (fewer than
-    :data:`ROBUST_DISCRETE_VALUES` distinct values) are not tightened. Use
+    the data or past the first step. The budget is charged per sample, and a
+    categorical sample (fewer than :data:`ROBUST_DISCRETE_VALUES` distinct
+    values) gets none, so none of its values is ever cut. Use
     ``mode="auto"`` to retain the full finite extent. If MAD is zero, the mean
     absolute deviation from the median is used instead. A degenerate range (all
     values equal) is widened symmetrically; if there are no finite values at
@@ -252,16 +254,27 @@ def _robust_range(
     thousand could be moved into the overflow in its entirety and still look
     cheap. Charging each sample for its own losses costs such a cut the whole
     sample, so the walk stops before it.
+
+    A categorical sample gets a budget of zero, so no step may take a value off
+    its axis. This too is decided per sample: pooled with a continuous one it
+    would look continuous, and its rarest category — a single entry among a
+    thousand — would be cheap enough to cut.
     """
     best = _padded(_reject_outliers(values, ROBUST_LADDER[0]), low, high)
-    if _distinct_values_below(values, ROBUST_DISCRETE_VALUES):
+    budgets = np.array(
+        [
+            0.0 if _distinct_values_below(v, ROBUST_DISCRETE_VALUES) else ROBUST_COVERAGE_BUDGET
+            for v in samples
+        ]
+    )
+    if not budgets.any():  # nothing may be cut: no walk to take
         return best
     outside = _outside(samples, *best)
     for threshold in ROBUST_LADDER[1:]:
         candidate = _padded(_reject_outliers(values, threshold), low, high)
         if candidate[0] < best[0] or candidate[1] > best[1]:
             break  # an emptied selection falls back to every value: stop widening
-        if np.any(_outside(samples, *candidate) - outside > ROBUST_COVERAGE_BUDGET):
+        if np.any(_outside(samples, *candidate) - outside > budgets):
             break
         best = candidate
     return best
