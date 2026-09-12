@@ -347,31 +347,28 @@ def arrays() -> rf.Plot:
 def hist2d(signal: rf.Sample, met: rf.Variable) -> rf.Plot:
     """``rf.plot2d`` fills a 2D histogram of one sample; both variables must have the same
     structure (both per-event here). ``logz`` and ``cmap`` control the colour scale."""
-    p = rf.plot2d(
+    return rf.plot2d(
         signal,
         rf.Variable("sum(Jet_pt)", bins=(40, 0, 800), label=r"$H_T$", unit="GeV"),
         met,
         selection="nJet >= 2",
         logz=True,
         cmap="magma",
+        zlabel="Events",
     )
-    p.fig.axes[-1].set_ylabel("")  # Omit the colour-bar title in this gallery layout.
-    return p
 
 
 @example("correlation", "A correlation matrix")
 def correlation(signal: rf.Sample) -> rf.Plot:
     """``rf.correlation`` computes the (weighted) linear correlation of several per-event
     quantities and draws it as an annotated matrix; ``percent=True`` labels cells in percent."""
-    p = rf.correlation(
+    return rf.correlation(
         signal,
         ["MET", "sum(Jet_pt)", "nJet", "nMuon", "m_ll"],
         labels=[r"$E_T^{miss}$", r"$H_T$", r"$N_{jet}$", r"$N_{\mu}$", r"$m_{\ell\ell}$"],
         percent=True,
         figsize=(7, 5.6),
     )
-    p.fig.axes[-1].set_ylabel("")  # Omit the colour-bar title in this gallery layout.
-    return p
 
 
 @example("luminosity", "Cross sections and a luminosity instead of hand-made scale factors")
