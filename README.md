@@ -1,39 +1,52 @@
-# rootfig
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jbeirer/rootfig/main/.github/assets/rootfig-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/jbeirer/rootfig/main/.github/assets/rootfig-logo-light.svg">
+    <img src="https://raw.githubusercontent.com/jbeirer/rootfig/main/.github/assets/rootfig-logo-light.svg" alt="rootfig" width="560">
+  </picture>
+</p>
 
-**Publication-quality figures straight from ROOT trees, without ROOT.**
+<p align="center">
+  <strong>Publication-quality figures straight from ROOT trees, without ROOT.</strong>
+</p>
 
-[![Docs](https://img.shields.io/badge/docs-online-blue)](https://jbeirer.github.io/rootfig/)
-[![DOI](https://zenodo.org/badge/1366702602.svg)](https://doi.org/10.5281/zenodo.22726311)
-[![CI](https://github.com/jbeirer/rootfig/actions/workflows/ci.yml/badge.svg)](https://github.com/jbeirer/rootfig/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/jbeirer/rootfig/branch/main/graph/badge.svg)](https://codecov.io/gh/jbeirer/rootfig)
-[![PyPI](https://img.shields.io/pypi/v/rootfig.svg)](https://pypi.org/project/rootfig/)
-[![Python](https://img.shields.io/pypi/pyversions/rootfig.svg)](https://pypi.org/project/rootfig/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://jbeirer.github.io/rootfig/">Documentation</a> ·
+  <a href="https://jbeirer.github.io/rootfig/gallery/">Gallery</a> ·
+  <a href="https://jbeirer.github.io/rootfig/quickstart/">Quick start</a>
+</p>
 
-**[Documentation](https://jbeirer.github.io/rootfig/) ·
-[Gallery](https://jbeirer.github.io/rootfig/gallery/) ·
-[Quick start](https://jbeirer.github.io/rootfig/quickstart/)**
+<p align="center">
+  <a href="https://jbeirer.github.io/rootfig/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Documentation"></a>
+  <a href="https://doi.org/10.5281/zenodo.22726311"><img src="https://zenodo.org/badge/1366702602.svg" alt="DOI"></a>
+  <a href="https://github.com/jbeirer/rootfig/actions/workflows/ci.yml"><img src="https://github.com/jbeirer/rootfig/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/jbeirer/rootfig"><img src="https://codecov.io/gh/jbeirer/rootfig/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="https://pypi.org/project/rootfig/"><img src="https://img.shields.io/pypi/v/rootfig.svg" alt="PyPI"></a>
+  <a href="https://pypi.org/project/rootfig/"><img src="https://img.shields.io/pypi/pyversions/rootfig.svg" alt="Python"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+</p>
 
-Go from ROOT files to a styled figure in one call. Choose a variable, add a
+Go from a ROOT file to a styled figure in one call. Choose a variable, add a
 selection, and plot:
 
 ```python
 import rootfig as rf
 
-rf.plot("events.root", "Muon_pt", tree="events", selection="Muon_pt > 20", bins=50)
+p = rf.plot("events.root", "Muon_pt", tree="events", selection="Muon_pt > 20", bins=50)
+p.save("muon_pt.pdf")
 ```
 
 Start with a single distribution; add samples, weights, stacks and ratio
 panels as your analysis grows. Every plot gives you a matplotlib figure to
-customise and save. No ROOT installation required.
+customise and save.
 
 <p align="center">
-  <a href="https://jbeirer.github.io/rootfig/gallery/"><img src="docs/images/gallery/stack_data.png" alt="Stacked simulation with data and a ratio panel" width="48%"></a>
-  <a href="https://jbeirer.github.io/rootfig/gallery/"><img src="docs/images/gallery/xbreak_ratio.png" alt="Broken x axis with a ratio panel" width="48%"></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#logarithmic-axes-with-log-spaced-bins"><img src="https://raw.githubusercontent.com/jbeirer/rootfig/main/docs/images/gallery/log_axes.png" alt="Logarithmic axes with log-spaced bins" width="48%"></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-broken-x-axis-peak-and-far-tail-without-the-empty-middle"><img src="https://raw.githubusercontent.com/jbeirer/rootfig/main/docs/images/gallery/xbreak_ratio.png" alt="Broken x axis with a ratio panel" width="48%"></a>
 </p>
 <p align="center">
-  <a href="https://jbeirer.github.io/rootfig/gallery/"><img src="docs/images/gallery/object_vs_event.png" alt="Per-object versus per-event selections" width="48%"></a>
-  <a href="https://jbeirer.github.io/rootfig/gallery/"><img src="docs/images/gallery/hist2d.png" alt="Two-dimensional histogram" width="48%"></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-correlation-matrix"><img src="https://raw.githubusercontent.com/jbeirer/rootfig/main/docs/images/gallery/correlation.png" alt="A correlation matrix" width="48%"></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-two-dimensional-histogram"><img src="https://raw.githubusercontent.com/jbeirer/rootfig/main/docs/images/gallery/hist2d.png" alt="Two-dimensional histogram" width="48%"></a>
 </p>
 
 **[Explore the gallery →](https://jbeirer.github.io/rootfig/gallery/)**
@@ -56,16 +69,16 @@ files are both supported.
 ```python
 import rootfig as rf
 
-# Overlay two samples, normalised to unity, with a ratio panel.
+# Overlay two samples, each normalised to unity, with a Signal / Background panel.
 rf.plot(
-    ["signal.root", "background.root"],
+    {"Signal": "signal.root", "Background": "background.root"},
     "Muon_pt",
     tree="events",
     selection="abs(Muon_eta) < 2.5",
     weight="event_weight",
     bins=(50, 0, 200),
     normalize=True,
-    ratio=True,
+    ratio="Background",
 )
 ```
 
