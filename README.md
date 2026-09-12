@@ -122,9 +122,10 @@ matplotlib `Figure`/`Axes`, `p.hists` are `hist.Hist` objects, and
   `count(Jet_pt) >= 2` or `Muon_pt > 20`; event and object selections have
   explicit rules, and event weights carry through to each selected object.
 - **Compare samples with a few keywords.** Overlays, stacks, data points and
-  ratio panels share binning - inferred robustly, so `-999` sentinels do not set
-  the axis - and propagate histogram uncertainties. Normalise to unity, density,
-  bin width or luminosity.
+  ratio panels share binning and propagate histogram uncertainties; bin edges
+  and `(n, low, high)` are used as given, while a range inferred from the data
+  ignores far outliers, so `-999` sentinels do not set the axis. Normalise to
+  unity, density, bin width or luminosity.
 - **Style figures for your analysis.** Add experiment labels, units, log axes
   and broken axes, then refine the result with matplotlib.
 - **Go beyond 1D plots.** Draw 2D histograms, correlations, efficiencies,

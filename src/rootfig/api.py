@@ -720,9 +720,11 @@ def plot2d(
     two bin counts, never a range; a range needs ``(n, low, high)``); per-axis
     ranges, labels and logarithmic scales (``logx``/``logy`` default to the
     variables' ``log`` flags) are best given through
-    :class:`~rootfig.model.Variable` objects. Each axis infers its range
-    robustly and independently; unlike the 1D plots there is no flow indicator,
-    so pass ``rf.Variable(x, range="auto")`` when the full extent matters.
+    :class:`~rootfig.model.Variable` objects. The two axes infer their ranges
+    robustly and independently, and unlike the 1D plots there is no flow
+    indicator, so give every axis that needs its full extent its own
+    ``range="auto"``: ``rf.Variable(x, range="auto")`` leaves the y axis
+    inferring robustly.
     """
     sample = _single_sample(data, tree=tree)
     x_bins, y_bins = _split_bins(bins)
