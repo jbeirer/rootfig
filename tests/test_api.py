@@ -676,6 +676,28 @@ class TestPlot2D:
         np.testing.assert_allclose(p3.fig.get_size_inches(), (4, 5))
 
 
+class TestNotebookDisplay:
+    """Contracts that keep ``rf.plot`` displaying in a Jupyter kernel."""
+
+    def test_figure_is_registered_with_pyplot(self, signal_file: Path) -> None:
+        # The inline backend flushes pyplot-managed figures after each cell; a figure
+        # built with Figure() instead of plt.figure() would never be displayed.
+        import matplotlib._pylab_helpers as pylab_helpers
+
+        plot = rf.plot(signal_file, "MET", tree="events")
+        try:
+            assert plot.fig.number in pylab_helpers.Gcf.figs
+        finally:
+            plot.close()
+
+    def test_plot_does_not_change_interactive_mode(self, signal_file: Path) -> None:
+        import matplotlib
+
+        before = matplotlib.is_interactive()
+        rf.plot(signal_file, "MET", tree="events").close()
+        assert matplotlib.is_interactive() is before
+
+
 class TestFigureShape:
     """Every plot type fits its canvas and is saved at exactly ``figsize`` (no cropping)."""
 
