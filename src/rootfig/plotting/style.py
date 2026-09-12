@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from typing import Any
 
 import matplotlib as mpl
@@ -17,6 +18,7 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 from cycler import cycler
 from matplotlib.axes import Axes
+from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties, findfont, fontManager
 from matplotlib.offsetbox import AnchoredText
@@ -28,12 +30,15 @@ from rootfig.model.style import EXPERIMENT_STYLES, Style, StyleLike, as_style
 from rootfig.plotting.figure import fit_ylabel
 
 __all__ = [
+    "DARK_THEME",
     "DEFAULT_COLORS",
     "ROOTFIG_STYLE",
     "add_experiment_label",
     "align_experiment_label",
     "color_cycle",
+    "dark_theme",
     "finalize_figure",
+    "foreground",
     "pin_fonts",
     "resolve_rc",
     "style_context",
@@ -111,6 +116,58 @@ ROOTFIG_STYLE: Mapping[str, Any] = {
 }
 """Experiment-neutral defaults used when a :class:`Style` has no ``base``."""
 
+_DARK_INK = "#e6edf3"
+
+DARK_THEME: Mapping[str, Any] = {
+    "figure.facecolor": "none",
+    "axes.facecolor": "none",
+    "text.color": _DARK_INK,
+    "axes.labelcolor": _DARK_INK,
+    "axes.edgecolor": _DARK_INK,
+    "xtick.color": _DARK_INK,
+    "ytick.color": _DARK_INK,
+    "patch.edgecolor": _DARK_INK,
+    "hatch.color": _DARK_INK,
+    "grid.color": "#30363d",
+    # take the figure's own (transparent) colour when saved, whatever the global setting
+    "savefig.facecolor": "auto",
+    "savefig.edgecolor": "auto",
+}
+"""Colours applied by :func:`dark_theme`: light ink on a transparent background."""
+
+_theme: ContextVar[Mapping[str, Any] | None] = ContextVar("rootfig_theme", default=None)
+
+
+@contextlib.contextmanager
+def dark_theme() -> Iterator[None]:
+    """Draw everything made inside the block for a dark page.
+
+    The block runs under :data:`DARK_THEME`, so figures, axes and artists made
+    with plain matplotlib (``plt.subplots()`` for ``ax=``, ``p.ax.text(...)``)
+    match. rootfig figures apply it again after their style sheet, so it also
+    holds for experiment styles that fix a white background (ATLAS, LHCb,
+    ALICE, DUNE); ``Style.rc`` still wins. The background is transparent, and
+    :meth:`Plot.save <rootfig.Plot.save>` keeps it so, so one image suits any
+    dark page.
+    """
+    _activate_backend()  # outside the rc context, as in style_context
+    token = _theme.set(DARK_THEME)
+    try:
+        with plt.style.context(dict(DARK_THEME)):
+            yield
+    finally:
+        _theme.reset(token)
+
+
+def foreground() -> str:
+    """Return the ink colour of the active style (``text.color``) for points and outlines.
+
+    A colour name or hex string is returned as set; an RGB(A) tuple, which the
+    rcParam also accepts, is converted to hex so it stays usable as a string.
+    """
+    color = mpl.rcParams["text.color"]
+    return color if isinstance(color, str) else to_hex(color, keep_alpha=True)
+
 
 def _mplhep_style(name: str) -> Mapping[str, Any] | None:
     """Return the mplhep style sheet ``name`` if it exists (case-insensitive)."""
@@ -152,6 +209,9 @@ def resolve_rc(style: Style) -> list[Mapping[str, Any] | str]:
             raise ValueError(msg)
     if style.colors:
         sheets.append({"axes.prop_cycle": cycler(color=list(style.colors))})
+    theme = _theme.get()
+    if theme is not None:
+        sheets.append(theme)
     if style.rc:
         sheets.append(dict(style.rc))
     return sheets

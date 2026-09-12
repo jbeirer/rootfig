@@ -18,7 +18,7 @@ from rootfig.histograms.build import Histogram
 from rootfig.histograms.ratio import compatible_binning
 from rootfig.model.samples import HistType
 from rootfig.model.style import Style
-from rootfig.plotting.style import color_cycle
+from rootfig.plotting.style import color_cycle, foreground
 
 __all__ = [
     "DATA_STYLE",
@@ -35,8 +35,8 @@ FlowSpec: TypeAlias = Literal["hint", "show", "sum", "none"]
 """How under/overflow is shown (mplhep ``flow``): small arrows hinting at flow content
 (``"hint"``), extra bins (``"show"``), added to the edge bins (``"sum"``), or ignored."""
 
-DATA_STYLE: dict[str, Any] = {"color": "black", "marker": "o", "markersize": 5, "capsize": 0}
-"""Default appearance of data points."""
+DATA_STYLE: dict[str, Any] = {"marker": "o", "markersize": 5, "capsize": 0}
+"""Default appearance of data points, drawn in the style's ink colour unless a sample sets one."""
 
 
 @dataclass(frozen=True)
@@ -241,7 +241,7 @@ def draw_histograms(
 ) -> Drawn:
     """Draw ``histograms`` on ``ax``.
 
-    Histograms flagged ``is_data`` are always drawn as black points with error
+    Histograms flagged ``is_data`` are always drawn as points with error
     bars on top; the others are overlaid (default) or stacked.
 
     Parameters
@@ -284,9 +284,9 @@ def draw_histograms(
     mc = [h for h in histograms if not h.is_data]
     colors = _assign_colors(mc, style)
     used_colors: dict[str, str] = {h.label: c for h, c in zip(mc, colors, strict=True)}
-    used_colors.update({h.label: (h.color or "black") for h in data})
+    used_colors.update({h.label: (h.color or foreground()) for h in data})
     by_histogram = {id(h): c for h, c in zip(mc, colors, strict=True)}
-    by_histogram.update({id(h): (h.color or "black") for h in data})
+    by_histogram.update({id(h): (h.color or foreground()) for h in data})
     histogram_colors = [by_histogram[id(h)] for h in histograms]
 
     if mc and stack:
@@ -302,7 +302,7 @@ def draw_histograms(
             flow=flow,
             yerr=False,
             alpha=fill_alpha,
-            edgecolor="black",
+            edgecolor=foreground(),
             linewidth=0.5,
         )
         artists.extend(_flatten_artists(stacked))
@@ -318,7 +318,7 @@ def draw_histograms(
                 yerr=errors,
                 flow=flow,
                 facecolor="none",
-                edgecolor="black",
+                edgecolor=foreground(),
                 hatch="////",
                 linewidth=0.0,
                 alpha=0.5,
@@ -363,7 +363,7 @@ def draw_histograms(
             xerr=False,
             label=histogram.label,
             flow=flow,
-            **{**DATA_STYLE, **({"color": histogram.color} if histogram.color else {})},
+            **{**DATA_STYLE, "color": histogram.color or foreground()},
         )
         artists.extend(_flatten_artists(drawn))
         labels.append(histogram.label)

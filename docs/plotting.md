@@ -13,7 +13,8 @@ All options below are keyword arguments of [`rf.plot`][rootfig.plot] (and of
   the given order (first sample at the bottom) and draws a hatched band for
   the statistical uncertainty of the total.
 - **Data**: samples with `is_data=True` (or passed as `observed=...`) are
-  black points with error bars, drawn on top and never stacked.
+  points with error bars, drawn on top and never stacked, in the style's text
+  colour (black by default) unless the sample sets `color`.
 - `errorbars=True` adds statistical error bars to non-data histograms.
 
 ## Luminosity
@@ -184,7 +185,8 @@ range avoids range inference.
   a sentinel region. The right segment is `Plot.ax_right`
   (`Plot.ratio_ax_right`). Not available together with `ax=` or `flow="show"`.
 
-  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio.png){ width="60%" }
+  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio.png#only-light){ width="60%" }
+  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio-dark.png#only-dark){ width="60%" }
 - `flow`: how under/overflow is shown (this is where entries outside an
   inferred [range](#binning-and-range) end up), `"hint"` (small arrows, default),
   `"show"` (extra bins labelled `<low` / `>high`, added on a side as soon as any
@@ -208,6 +210,17 @@ range avoids range inference.
 - `legend=False` or a location string such as `"upper left"`.
 - `style=` an experiment name or a [`Style`][rootfig.Style]; see
   [Samples, variables, cuts and styles](composable.md).
+- `with rf.dark_theme():` draws the figures made inside the block for a dark
+  page — light ink on a transparent background, applied on top of any style
+  (including experiment styles that fix a white background). Colours set in
+  `Style.rc`, background and text included, are applied after it and win for
+  the figures and axes rootfig creates, so such a style is not rendered dark.
+  Data points and outlines follow the style's `text.color`. Plain matplotlib
+  inside the block matches too: axes made with `plt.subplots()` for `ax=`, text
+  added to `Plot.ax`, and `fig.savefig()` keeps the transparent background.
+  Axes passed with `ax=` keep the properties they were created with (their
+  background, frame and ticks), so a `Style.rc` passed to that plot colours
+  only what rootfig draws into them.
 - `text=` extra line(s) drawn with the experiment label.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).

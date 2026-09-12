@@ -12,7 +12,7 @@ from matplotlib.ticker import MaxNLocator
 from rootfig.histograms.build import Histogram
 from rootfig.histograms.ratio import Ratio, RatioUncertainty, SignificanceKind, ratio
 from rootfig.model.style import Style
-from rootfig.plotting.style import color_cycle
+from rootfig.plotting.style import color_cycle, foreground
 
 __all__ = ["draw_ratio_panel", "draw_significance_panel", "ratio_ylim"]
 
@@ -48,7 +48,7 @@ def draw_ratio_panel(
         (error bars carry the numerator's; the reference uncertainty is a band).
     colors
         One colour per numerator; defaults to the numerator's own colour or the
-        style cycle (black for data).
+        style cycle (``text.color`` for data).
     ylim
         Vertical range; defaults to :data:`DEFAULT_RATIO_YLIM` expanded to cover
         the points.
@@ -62,7 +62,8 @@ def draw_ratio_panel(
     if colors is None:
         cycle = iter(color_cycle(max(len(numerators), 1), style))
         colors = [
-            ("black" if h.is_data and not h.color else (h.color or next(cycle))) for h in numerators
+            (foreground() if h.is_data and not h.color else (h.color or next(cycle)))
+            for h in numerators
         ]
 
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, zorder=1)
@@ -150,7 +151,7 @@ def draw_significance_panel(
         markersize=4,
         capsize=0,
         elinewidth=1.0,
-        color=color or "black",
+        color=color or foreground(),
     )
     if ylim is None:
         top = float(np.max(result.values[ok] + errors[ok])) if ok.any() else 1.0

@@ -11,6 +11,7 @@ import hist
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib.colors import to_rgba
 
 import rootfig as rf
 from rootfig.api import _split_bins
@@ -309,6 +310,66 @@ class TestPlot:
             expected = np.where(total > 0, p.histograms[2].values() / total, np.nan)
         ok = np.isfinite(expected)
         assert p.ratios[0].values[ok].tolist() == pytest.approx(expected[ok].tolist())
+
+    @staticmethod
+    def _marker_colors(p: rf.Plot) -> set[tuple[float, ...]]:
+        lines = [*p.ax.lines, *(p.ratio_ax.lines if p.ratio_ax else [])]
+        return {to_rgba(line.get_color()) for line in lines if line.get_marker() == "o"}
+
+    def test_dark_theme_overrides_experiment_style(
+        self, signal_file: Path, background_file: Path, tmp_path: Path
+    ) -> None:
+        mc = [rf.Sample(signal_file, tree="events", label="Signal")]
+        observed = rf.Sample(background_file, tree="events", label="Data", entry_stop=1000)
+        kwargs: dict[str, Any] = {"observed": observed, "bins": (20, 0, 200), "ratio": True}
+        with rf.dark_theme():
+            dark = rf.plot(mc, "MET", style="ATLAS", stack=True, **kwargs)
+        ink = to_rgba(rf.plotting.DARK_THEME["text.color"])
+        assert self._marker_colors(dark) == {ink}
+        assert dark.fig.get_facecolor()[3] == 0.0  # transparent despite ATLAS's white
+        assert to_rgba(dark.ax.xaxis.label.get_color()) == ink
+        with plt.rc_context({"savefig.facecolor": "white"}):  # global state at save time
+            (saved,) = dark.save(tmp_path / "dark.png")
+        assert plt.imread(saved)[0, :, 3].max() == 0.0  # the top row is background only
+        light = rf.plot(mc, "MET", style="ATLAS", stack=True, **kwargs)
+        assert self._marker_colors(light) == {to_rgba("black")}
+        assert light.fig.get_facecolor() == to_rgba("white")
+
+    def test_data_follows_rgba_tuple_text_color(
+        self, signal_file: Path, background_file: Path
+    ) -> None:
+        grey = (0.8, 0.8, 0.8, 1.0)
+        p = rf.plot(
+            [rf.Sample(signal_file, tree="events", label="Signal")],
+            "MET",
+            observed=rf.Sample(background_file, tree="events", label="Data", entry_stop=1000),
+            bins=(20, 0, 200),
+            stack=True,
+            ratio=True,
+            style=rf.Style(rc={"text.color": grey}),
+        )
+        assert self._marker_colors(p) == {grey}
+
+    def test_dark_theme_covers_plain_matplotlib_in_the_block(
+        self, signal_file: Path, background_file: Path, tmp_path: Path
+    ) -> None:
+        mc = [rf.Sample(signal_file, tree="events", label="Signal")]
+        observed = rf.Sample(background_file, tree="events", label="Data", entry_stop=1000)
+        with plt.rc_context({"savefig.facecolor": "white"}):  # an opaque global save setting
+            before = dict(plt.rcParams)
+            with rf.dark_theme():
+                fig, ax = plt.subplots()
+                p = rf.plot(mc, "MET", observed=observed, bins=(20, 0, 200), ax=ax)
+                note = p.ax.text(0.5, 0.5, "hello")
+                fig.savefig(tmp_path / "plain.png")
+            assert dict(plt.rcParams) == before  # nothing leaks out of the block
+        assert plt.imread(tmp_path / "plain.png")[0, :, 3].max() == 0.0  # background only
+        ink = to_rgba(rf.plotting.DARK_THEME["text.color"])
+        assert self._marker_colors(p) == {ink}
+        assert to_rgba(note.get_color()) == ink
+        assert to_rgba(ax.spines["left"].get_edgecolor()) == ink
+        assert fig.get_facecolor()[3] == ax.get_facecolor()[3] == 0.0
+        plt.close(fig)
 
     def test_stack_ratio_requires_data(self, signal_file: Path, background_file: Path) -> None:
         with pytest.raises(ValueError, match="observed"):

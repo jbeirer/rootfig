@@ -4,8 +4,9 @@ Run ``uv run python examples/gallery`` (or plain ``python`` where rootfig is
 installed). Toy ROOT files and one PNG per example are written to
 ``examples/out/`` in a few seconds. The same functions feed
 ``docs/gallery.md`` (code shown next to each figure) and
-``tests/test_gallery.py`` (pixel comparison against ``docs/images/gallery/``),
-so the pictures in the documentation are always made by the code shown.
+``tests/test_gallery.py`` (pixel comparison against ``docs/images/gallery/``).
+The tests render each example twice, as shown and inside ``rf.dark_theme()``
+for dark pages, so the pictures in the documentation are made by the code shown.
 
 This module holds what a reader of the gallery is looking for: the shared
 :func:`define` block and the examples. The toy data lives in :mod:`.data`, the
@@ -279,10 +280,11 @@ def expressions(signal: rf.Sample, pt: rf.Variable) -> rf.Plot:
 def ratio_reference(signal: rf.Sample, zjets: rf.Sample, diboson: rf.Sample) -> rf.Plot:
     """``ratio="Z + jets"`` picks the reference sample by label; ``ratio_ylim`` and
     ``ratio_label`` override the automatic range and label. A ``Sample`` can carry its own
-    ``color`` and ``histtype``."""
+    ``color`` and ``histtype``; the reference takes the text colour, like data points, so it
+    stays visible on light and dark pages."""
     return rf.plot(
         [
-            zjets.with_(color="black", histtype="errorbar"),
+            zjets.with_(color=plt.rcParams["text.color"], histtype="errorbar"),
             diboson.with_(color="#d95f02"),
             signal.with_(color="#1b9e77", histtype="fill"),
         ],

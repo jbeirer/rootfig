@@ -28,8 +28,9 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
   implementing the [`Source`][rootfig.io.Source] protocol.
 - `selection` and `weight` belong to the sample and combine with the ones
   given to `plot()` (`&` and `*` respectively).
-- `is_data=True` draws black points with error bars, keeps the sample out of
-  stacks and makes it the numerator of ratios.
+- `is_data=True` draws points with error bars (in the style's text colour
+  unless `color` is set), keeps the sample out of stacks and makes it the
+  numerator of ratios.
 - `xsec` and `ngen` describe simulated processes: the cross section (pb, or a
   string with a unit such as `"1.2 fb"`) and the number of generated events (a
   number, the name of an object in the file holding it, e.g. FCCAnalyses'

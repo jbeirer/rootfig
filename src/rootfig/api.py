@@ -79,6 +79,7 @@ from rootfig.plotting import (
     finalize_figure,
     finish_axes,
     fold_flow_bins,
+    foreground,
     label_flow_bins,
     legend_location,
     make_figure,
@@ -346,7 +347,7 @@ def plot(
     label
         Legend label(s) for samples given as plain files.
     observed
-        A sample of observed data (or the file(s) for one) drawn as black points,
+        A sample of observed data (or the file(s) for one) drawn as points,
         excluded from stacks and used as numerator of the ratio.
     xlabel, ylabel, unit, title
         Axis labels; defaults come from the variable, the normalisation and the
@@ -648,7 +649,7 @@ def plot_histograms(
                     axis,
                     style=st,
                     uncertainty=uncertainty,
-                    colors=[color_of.get(id(h), h.color or "black") for h in numerators],
+                    colors=[color_of.get(id(h), h.color or foreground()) for h in numerators],
                     ylim=ratio_ylim,
                     ylabel=ratio_label if index == 0 else "",
                 )

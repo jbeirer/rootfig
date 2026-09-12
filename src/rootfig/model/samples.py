@@ -45,7 +45,7 @@ class Sample:
         or ``"mc_weight * pileup_sf"``. Combined multiplicatively with the
         weight given to :func:`rootfig.plot`.
     is_data
-        Mark as observed data: drawn as black points with error bars, excluded
+        Mark as observed data: drawn as points with error bars, excluded
         from stacks, and used as the numerator of data/MC ratios.
     color
         Matplotlib colour. Defaults to the style's colour cycle.

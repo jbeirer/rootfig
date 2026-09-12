@@ -102,8 +102,14 @@ class Plot:
             Forwarded to :meth:`matplotlib.figure.Figure.savefig`. Figures made
             by rootfig use constrained layout and are saved at exactly their
             ``figsize``. For figures drawn into user axes without a layout
-            engine, ``bbox_inches="tight"`` is used unless given.
+            engine, ``bbox_inches="tight"`` is used unless given. The background
+            is the figure's own (``facecolor="auto"``) unless given: saving runs
+            after the style has been undone, so the global ``savefig.facecolor``
+            would otherwise paint over it (a :func:`~rootfig.dark_theme` figure
+            would lose its transparency).
         """
+        kwargs.setdefault("facecolor", "auto")
+        kwargs.setdefault("edgecolor", "auto")
         if self.fig.get_layout_engine() is None:
             kwargs.setdefault("bbox_inches", "tight")
             kwargs.setdefault("pad_inches", 0.04)

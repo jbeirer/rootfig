@@ -15,7 +15,7 @@ from matplotlib.text import Text
 
 from rootfig.histograms.build import Histogram
 from rootfig.model.style import Style
-from rootfig.plotting.style import legend_location
+from rootfig.plotting.style import foreground, legend_location
 
 __all__ = ["add_legend", "add_stats_box", "add_text"]
 
@@ -84,7 +84,7 @@ def add_stats_box(
             continue
         body = histogram.stats.format(precision, include_entries=include_entries)
         text = f"{histogram.label}\n{body}" if len(histograms) > 1 else body
-        color = colors.get(histogram.label, "black") if colors else "black"
+        color = colors.get(histogram.label, foreground()) if colors else foreground()
         blocks.append((text, color))
     if not blocks:
         return []

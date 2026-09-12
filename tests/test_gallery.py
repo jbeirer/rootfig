@@ -7,6 +7,9 @@ images shown in the documentation. Without ``--mpl`` the examples still run, so
 a crash in any of them fails the suite on every platform; the comparison itself
 is only enabled on Linux in CI because font rendering differs across systems.
 
+Each example is compared twice: as drawn by default (``<name>.png``) and inside
+:func:`rootfig.dark_theme` (``<name>-dark.png``), the image shown on dark pages.
+
 Regenerate the baselines after an intended visual change::
 
     uv run pytest tests/test_gallery.py --mpl-generate-path=docs/images/gallery
@@ -14,6 +17,7 @@ Regenerate the baselines after an intended visual change::
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import re
 import sys
@@ -23,6 +27,8 @@ from typing import Any
 
 import pytest
 from matplotlib.figure import Figure
+
+import rootfig as rf
 
 ROOT = Path(__file__).resolve().parent.parent
 GALLERY_DIR = ROOT / "examples" / "gallery"
@@ -51,6 +57,7 @@ def load_gallery(name: str = "rootfig_gallery") -> ModuleType:
 gallery = load_gallery()
 EXAMPLES = list(gallery.EXAMPLES)
 SAVEFIG = {"dpi": 150}  # as Plot.save: constrained layout, no cropping
+THEMES = {"": contextlib.nullcontext, "-dark": rf.dark_theme}  # baseline suffix -> context
 
 
 @pytest.fixture(scope="module")
@@ -85,37 +92,39 @@ def test_loading_the_package_twice_does_not_duplicate_examples() -> None:
 
 
 def test_every_example_has_a_baseline() -> None:
-    missing = [ex.name for ex in EXAMPLES if not (BASELINE_DIR / f"{ex.name}.png").is_file()]
+    expected = {f"{ex.name}{suffix}" for ex in EXAMPLES for suffix in THEMES}
+    missing = sorted(name for name in expected if not (BASELINE_DIR / f"{name}.png").is_file())
     assert not missing, (
         f"no baseline image for {missing}; run "
         "`uv run pytest tests/test_gallery.py --mpl-generate-path=docs/images/gallery`"
     )
-    stale = sorted(
-        p.stem for p in BASELINE_DIR.glob("*.png") if p.stem not in {e.name for e in EXAMPLES}
-    )
+    stale = sorted(p.stem for p in BASELINE_DIR.glob("*.png") if p.stem not in expected)
     assert not stale, f"baseline images without an example: {stale}"
 
 
 @pytest.mark.parametrize(
-    "example",
+    ("example", "suffix"),
     [
         pytest.param(
             example,
-            id=example.name,
+            suffix,
+            id=f"{example.name}{suffix}",
             marks=pytest.mark.mpl_image_compare(
                 baseline_dir="../docs/images/gallery",
-                filename=f"{example.name}.png",
+                filename=f"{example.name}{suffix}.png",
                 savefig_kwargs=SAVEFIG,
                 style="default",
                 deterministic=True,
             ),
         )
         for example in EXAMPLES
+        for suffix in THEMES
     ],
 )
-def test_example(example: Any, dataset: Any, workdir: Path) -> Figure:
+def test_example(example: Any, suffix: str, dataset: Any, workdir: Path) -> Figure:
     before = Path.cwd()
-    plot = example.run(dataset, cwd=workdir)
+    with THEMES[suffix]():
+        plot = example.run(dataset, cwd=workdir)
     assert Path.cwd() == before, "Example.run must restore the working directory"
     assert plot.fig is not None
     assert plot.ax is not None
@@ -143,7 +152,8 @@ def test_docs_hook_renders_every_example_once_in_marker_order() -> None:
     titles = re.findall(r"^## (.+)$", page, flags=re.MULTILINE)
     expected = ["The one-liner", "Setup", *[ex.title for ex in EXAMPLES if ex.name != "quick"]]
     assert titles == [*expected, "Beyond figures"]
-    assert page.count("![") == len(EXAMPLES)
+    assert page.count("![") == 2 * len(EXAMPLES)  # one image per theme
+    assert page.count("#only-dark)") == len(EXAMPLES)
     assert 'signal = rf.Sample("signal.root"' in page  # the Setup block
     assert "return " not in page
     # rendering again (mkdocs serve rebuilds) must give the same page, not a doubled registry
