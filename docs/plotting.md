@@ -116,7 +116,11 @@ rf.plot("events.root", "d0_significance", bins=50, range=(-5, 5))  # explicit
 
 This happens in two steps. Outliers are rejected by their modified z-score
 (`0.6745 * |x - median| / MAD`), with a threshold of 30, which removes sentinels
-and anything else far from the bulk. The threshold is then tightened for as
+and anything else far from the bulk. That is done within each sample, and the
+ranges they keep are unioned, so a sample is judged against its own median and
+spread: a signal offset from a background is not an outlier merely because the
+background outnumbers it, and a sample keeps the same values whether it is
+plotted alone or in an overlay. The threshold is then tightened for as
 long as each step costs no more than an *additional* 1 percent of any one
 sample, by entries and by weight. Additional is meant literally: the budget is
 measured against what the first step already moved out of the view, which may
@@ -143,10 +147,8 @@ Cases where you may want `range="auto"`:
   what the second step is for, so `"auto"` is the way to see the whole tail;
 - a sparse discrete distribution can lose rare valid values from the visible
   range, for example the ones in a binary sample with 999 zeros and one one;
-- a sample sitting tens of deviations away from a narrow bulk is treated as an
-  outlier while the bulk dominates the combined sample - for example a small
-  signal far from a narrow background in an overlay. Relative sample sizes
-  affect the median and MAD, and therefore which entries are rejected;
+- a lone value far from a bulk of near-identical ones looks exactly like a
+  sentinel and is rejected with them, however real it is;
 - `xbreak=(a, b)` is validated against the inferred axis, so a break meant to
   span a far tail needs `range="auto"` or an explicit range.
 

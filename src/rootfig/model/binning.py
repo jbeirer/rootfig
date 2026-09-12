@@ -334,7 +334,14 @@ def _robust_range(
     budget, since a handful of high-weight entries can be most of what a
     histogram draws while being a rounding error in the count.
     """
-    best = _padded(*_retained_extent(samples), low, high)
+    # The ladder scores the pooled values; with one sample those are its own scores.
+    scores = _modified_z_scores(values)
+    if len(samples) == 1:
+        only = _keep_within(values, scores, ROBUST_LADDER[0])
+        extent = (float(only.min()), float(only.max()))
+    else:
+        extent = _retained_extent(samples)
+    best = _padded(*extent, low, high)
     budgets = np.array(
         [
             0.0 if _distinct_values_below(v, ROBUST_DISCRETE_VALUES) else ROBUST_COVERAGE_BUDGET
@@ -343,7 +350,6 @@ def _robust_range(
     )
     if not budgets.any():  # nothing may be cut: no walk to take
         return best
-    scores = _modified_z_scores(values)
     outside = _outside(samples, weights, *best)
     for threshold in ROBUST_LADDER[1:]:
         kept = _keep_within(values, scores, threshold)
