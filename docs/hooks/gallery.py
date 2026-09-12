@@ -75,11 +75,13 @@ def expand_markers(markdown: str, gallery: ModuleType) -> str:
         if names is None:
             wanted = [ex.name for ex in gallery.EXAMPLES if ex.name not in shown]
         else:
-            wanted = [name.strip() for name in names.replace(",", " ").split()]
-            unknown = [name for name in wanted if name not in by_name]
+            asked = names.replace(",", " ").split()
+            unknown = [name for name in asked if name not in by_name]
             if unknown:
                 msg = f"unknown gallery example(s) {unknown} in {match.group(0)!r}"
                 raise ValueError(msg)
+            # first marker wins: skip what an earlier marker (or this one) already rendered
+            wanted = list(dict.fromkeys(name for name in asked if name not in shown))
         shown.update(wanted)
         return "\n".join(render_section(gallery, by_name[name]) for name in wanted)
 

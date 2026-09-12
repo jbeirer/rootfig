@@ -149,6 +149,12 @@ def test_docs_hook_renders_every_example_once_in_marker_order() -> None:
     # rendering again (mkdocs serve rebuilds) must give the same page, not a doubled registry
     assert hook.on_page_markdown(PAGE) == page
     assert hook.on_page_markdown("no markers here") == "no markers here"
+    # the first marker asking for an example wins; later ones (and repeats) render nothing more
+    repeated = hook.on_page_markdown(
+        "<!-- gallery: quick, quick -->\n<!-- gallery: quick -->\n"
+        "<!-- gallery -->\n<!-- gallery: arrays -->"
+    )
+    assert re.findall(r"^## (.+)$", repeated, flags=re.MULTILINE) == [ex.title for ex in EXAMPLES]
     with pytest.raises(ValueError, match="unknown gallery example"):
         hook.on_page_markdown("<!-- gallery: no_such_example -->")
 
