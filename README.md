@@ -40,12 +40,14 @@ panels as your analysis grows. Every plot gives you a matplotlib figure to
 customise and save.
 
 <p align="center">
-  <a href="https://jbeirer.github.io/rootfig/gallery/#logarithmic-axes-with-log-spaced-bins"><img src="docs/images/gallery/log_axes.png" alt="Logarithmic axes with log-spaced bins" width="48%"></a>
-  <a href="https://jbeirer.github.io/rootfig/gallery/#a-broken-x-axis-peak-and-far-tail-without-the-empty-middle"><img src="docs/images/gallery/xbreak_ratio.png" alt="Broken x axis with a ratio panel" width="48%"></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#logarithmic-axes-with-log-spaced-bins"><img src="docs/images/gallery/log_axes.png" alt="Logarithmic axes with log-spaced bins" width="46%"></a>
+  &nbsp;&nbsp;
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-broken-x-axis-peak-and-far-tail-without-the-empty-middle"><img src="docs/images/gallery/xbreak_ratio.png" alt="Broken x axis with a ratio panel" width="46%"></a>
 </p>
 <p align="center">
-  <a href="https://jbeirer.github.io/rootfig/gallery/#a-correlation-matrix"><img src="docs/images/gallery/correlation.png" alt="A correlation matrix" width="48%"></a>
-  <a href="https://jbeirer.github.io/rootfig/gallery/#a-two-dimensional-histogram"><img src="docs/images/gallery/hist2d.png" alt="Two-dimensional histogram" width="48%"></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-correlation-matrix"><img src="docs/images/gallery/correlation.png" alt="A correlation matrix" width="46%"></a>
+  &nbsp;&nbsp;
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-two-dimensional-histogram"><img src="docs/images/gallery/hist2d.png" alt="Two-dimensional histogram" width="46%"></a>
 </p>
 
 **[Explore the gallery →](https://jbeirer.github.io/rootfig/gallery/)**
