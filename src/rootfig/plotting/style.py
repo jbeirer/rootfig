@@ -8,6 +8,7 @@ who want a persistent style can call :func:`use_style` explicitly.
 from __future__ import annotations
 
 import contextlib
+import warnings
 from collections.abc import Iterator, Mapping
 from typing import Any
 
@@ -17,10 +18,12 @@ import mplhep as hep
 from cycler import cycler
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.font_manager import FontProperties, findfont, fontManager
 from matplotlib.offsetbox import AnchoredText
 from matplotlib.text import Text
 from matplotlib.transforms import ScaledTranslation
 
+from rootfig.errors import RootfigWarning
 from rootfig.model.style import EXPERIMENT_STYLES, Style, StyleLike, as_style
 
 __all__ = [
@@ -296,13 +299,33 @@ def _lumi_line(lumi: tuple[str, str], com: tuple[str, str] | None, *, atlas_styl
 
 def _generic_font_lists() -> dict[str, list[str]]:
     """Return the concrete font list behind each generic family in the current rcParams."""
+    sans = list(mpl.rcParams["font.sans-serif"])
     return {
-        "sans-serif": list(mpl.rcParams["font.sans-serif"]),
+        # matplotlib accepts "sans" and "sans serif" as aliases of "sans-serif"
+        "sans-serif": sans,
+        "sans": sans,
+        "sans serif": sans,
         "serif": list(mpl.rcParams["font.serif"]),
         "monospace": list(mpl.rcParams["font.monospace"]),
         "cursive": list(mpl.rcParams["font.cursive"]),
         "fantasy": list(mpl.rcParams["font.fantasy"]),
     }
+
+
+def _font_is_available(name: str) -> bool:
+    """Return whether matplotlib can resolve the font family ``name``.
+
+    Asks ``findfont`` rather than testing membership in the installed font names,
+    because matching is case- and spelling-insensitive: "Tex Gyre Termes" (how the
+    mplhep LHCb2 sheet spells it) resolves fine but is not among the names. The
+    result is not cached here -- matplotlib memoises the lookup itself and clears
+    that cache when a font is registered, which a cache of ours would miss.
+    """
+    try:
+        findfont(FontProperties(family=name), fallback_to_default=False)
+    except ValueError:
+        return False
+    return True
 
 
 def pin_fonts(fig: Figure) -> None:
@@ -314,15 +337,29 @@ def pin_fonts(fig: Figure) -> None:
     would therefore be painted in different fonts from those its layout and
     label positions were computed with: labels shift and get clipped. Call this
     inside the style context once drawing is complete.
+
+    Only families that are actually installed are pinned. matplotlib walks the
+    whole family list on *every* draw (it builds the glyph fallback chain from
+    it, uncached) and logs a ``findfont: Font family 'X' not found.`` warning for
+    each miss, so pinning a font that is absent means hundreds of log lines per
+    figure for no benefit: the first family that resolves is the one used.
+    Fully unavailable family lists warn once per distinct expanded list per call.
     """
     resolved = _generic_font_lists()
+    missing: dict[tuple[str, ...], None] = {}
+    fallback = fontManager.defaultFamily["ttf"]
 
     def concrete(families: Any) -> list[str]:
         names = [families] if isinstance(families, str) else list(families)
         out: list[str] = []
         for family in names:
             out.extend(resolved.get(family, [family]))
-        return list(dict.fromkeys(out))
+        unique = list(dict.fromkeys(out))
+        available = [name for name in unique if _font_is_available(name)]
+        if available:
+            return available
+        missing[tuple(unique)] = None
+        return [fallback]
 
     for text in fig.findobj(Text):
         text.set_fontfamily(concrete(text.get_fontfamily()))
@@ -330,6 +367,15 @@ def pin_fonts(fig: Figure) -> None:
     for axes in fig.axes:
         # tick labels are re-created on every draw; give them the family explicitly
         axes.tick_params(axis="both", which="both", labelfontfamily=tick_family)
+
+    for families in missing:
+        warnings.warn(
+            f"none of the requested fonts are installed ({', '.join(families)}); "
+            f"falling back to {fallback!r}. Install one of them, or set another "
+            "via Style(rc={'font.sans-serif': [...]}), to control the figure's font.",
+            RootfigWarning,
+            stacklevel=2,
+        )
 
 
 def finalize_figure(fig: Figure, ax: Axes) -> None:

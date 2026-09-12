@@ -9,9 +9,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib import font_manager
 from matplotlib.axes import Axes
 from matplotlib.collections import PolyCollection
 from matplotlib.figure import Figure
+from matplotlib.font_manager import FontProperties, findfont
+from matplotlib.text import Text
 
 from rootfig.errors import RootfigWarning
 from rootfig.histograms import Histogram, fill, summarize
@@ -45,6 +48,7 @@ from rootfig.plotting import (
     use_style,
     ylabel_for,
 )
+from rootfig.plotting.style import pin_fonts
 from rootfig.selection import Columns
 
 
@@ -132,6 +136,59 @@ class TestStyle:
         with style_context():
             pass
         assert calls == []  # conftest already resolved the backend
+
+    @pytest.mark.parametrize("experiment", [None, "ATLAS", "CMS", "LHCb", "ALICE"])
+    def test_pin_fonts_pins_only_installed_families(self, experiment: str | None) -> None:
+        # matplotlib walks the whole family list on every draw and logs a warning per
+        # miss, so a family that cannot be resolved must never be pinned.
+        with style_context(Style(experiment=experiment)):
+            layout = make_figure(Style(), ratio=False)
+            layout.main.set_xlabel("x")
+            pin_fonts(layout.fig)
+            families = [name for text in layout.fig.findobj(Text) for name in text.get_fontfamily()]
+        assert families
+        for name in families:
+            assert name not in font_manager.font_family_aliases  # never generic
+            findfont(FontProperties(family=name), fallback_to_default=False)  # resolves
+        plt.close(layout.fig)
+
+    def test_pin_fonts_keeps_case_insensitive_matches(self) -> None:
+        # mplhep's LHCb2 sheet spells it "Tex Gyre Termes", which is not among the
+        # installed font names but does resolve; filtering must not drop it.
+        with style_context(Style(rc={"font.family": ["Tex Gyre Termes"]})):
+            layout = make_figure(Style(), ratio=False)
+            layout.main.set_xlabel("x")
+            pin_fonts(layout.fig)
+            assert layout.main.xaxis.label.get_fontfamily() == ["Tex Gyre Termes"]
+        plt.close(layout.fig)
+
+    @pytest.mark.parametrize("rc_key", ["font.family", "font.sans-serif"])
+    def test_pin_fonts_falls_back_when_nothing_is_installed(self, rc_key: str) -> None:
+        with style_context(Style(rc={rc_key: ["No Such Font XYZ"]})):
+            layout = make_figure(Style(), ratio=False)
+            layout.main.set_xlabel("x")
+            with pytest.warns(RootfigWarning, match="none of the requested fonts") as caught:
+                pin_fonts(layout.fig)
+            assert len(caught) == 1
+            assert layout.main.xaxis.label.get_fontfamily() == [
+                font_manager.fontManager.defaultFamily["ttf"]
+            ]
+        plt.close(layout.fig)
+
+    def test_pin_fonts_warns_once_per_missing_configuration_per_call(self) -> None:
+        with style_context(Style(rc={"font.family": ["No Such Font XYZ"]})):
+            # Each figure should report its missing configurations independently.
+            for _ in range(2):
+                layout = make_figure(Style(), ratio=False)
+                for y in (0.3, 0.6):
+                    layout.main.text(0.5, y, "label", fontfamily=["Another Missing Font XYZ"])
+                with pytest.warns(RootfigWarning, match="none of the requested fonts") as caught:
+                    pin_fonts(layout.fig)
+                assert len(caught) == 2
+                messages = [str(warning.message) for warning in caught]
+                assert sum("(No Such Font XYZ)" in message for message in messages) == 1
+                assert sum("(Another Missing Font XYZ)" in message for message in messages) == 1
+                plt.close(layout.fig)
 
     def test_use_style_is_global(self) -> None:
         before = dict(matplotlib.rcParams)
