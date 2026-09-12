@@ -86,6 +86,58 @@ shorter `ratio_label` such as `"Ratio"` to keep it at full size. The
 computed values are returned in `Plot.ratios` as
 [`Ratio`][rootfig.Ratio] objects (`values`, `errors`, `band`, `edges`).
 
+## Binning and range
+
+`bins` takes an `int`, a `(n, low, high)` triple, a sequence of edges or a
+`hist` axis, and is shared by every sample of one plot (and by the numerator
+and denominator of an [efficiency](#efficiencies)).
+
+With an integer `bins` the range comes from `range`:
+
+| `range` | Meaning |
+| --- | --- |
+| `(low, high)` | explicit |
+| `"robust"` | **default**: the min/max of the data, ignoring values far from the bulk |
+| `"auto"` | the full finite minimum and maximum over all samples |
+
+```python
+rf.plot("events.root", "d0_significance", bins=50)  # robust
+rf.plot("events.root", "d0_significance", bins=50, range="auto")  # full extent
+rf.plot("events.root", "d0_significance", bins=50, range=(-5, 5))  # explicit
+```
+
+!!! note "Behaviour change"
+
+    An integer `bins` now uses `range="robust"`. Far outliers such as
+    `-999` sentinels no longer set the axis. They are **not removed from the
+    data**: they go to the under/overflow, shown by the flow arrows
+    (`flow="show"` turns them into visible bins, `flow="sum"` folds them into
+    the edge bins). Statistics boxes and `rf.summarize` are computed before
+    binning, so means and entry counts are unaffected either way.
+
+Outliers are rejected by their modified z-score (`0.6745 * |x - median| / MAD`),
+with a threshold of 30. If MAD is zero, the mean absolute deviation from the
+median is used instead. The result is padded by 5 percent, clamped to the
+`"auto"` range (whose upper edge is nudged above the maximum to include it).
+Degenerate ranges are widened symmetrically. Whenever no values exceed the
+threshold, the two modes give *exactly* the same edges. The threshold cannot
+distinguish sentinels from valid data. Cases where you may want `range="auto"`:
+
+- a distribution with a long tail (log-normal, Student-t, or an invariant mass
+  with a continuum) can have valid tail entries pushed into the flow bins;
+- a sparse discrete distribution can lose rare valid values from the visible
+  range, for example the ones in a binary sample with 999 zeros and one one;
+- a sample sitting tens of deviations away from a narrow bulk is treated as an
+  outlier while the bulk dominates the combined sample - for example a small
+  signal far from a narrow background in an overlay. Relative sample sizes
+  affect the median and MAD, and therefore which entries are rejected;
+- `xbreak=(a, b)` is validated against the inferred axis, so a break meant to
+  span a far tail needs `range="auto"` or an explicit range.
+
+Inferring a robust range requires additional median and deviation calculations
+over the combined samples, with additional time and memory costs. An explicit
+range avoids range inference.
+
 ## Axes
 
 - `logx`, `logy`: logarithmic scales. Log-spaced bins: `bins=rf.log_bins(n, low, high)`.
@@ -99,7 +151,8 @@ computed values are returned in `Plot.ratios` as
   (`Plot.ratio_ax_right`). Not available together with `ax=` or `flow="show"`.
 
   ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio.png){ width="60%" }
-- `flow`: how under/overflow is shown, `"hint"` (small arrows, default),
+- `flow`: how under/overflow is shown (this is where entries outside an
+  inferred [range](#binning-and-range) end up), `"hint"` (small arrows, default),
   `"show"` (extra bins labelled `<low` / `>high`, added on a side as soon as any
   sample has content there, identical for all samples and the ratio panel),
   `"sum"` (added to the edge bins before anything is computed, so ratios,

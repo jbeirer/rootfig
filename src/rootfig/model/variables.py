@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from rootfig.expressions import Expression, parse
-from rootfig.model.binning import Bins, RangeSpec, validate_bins
+from rootfig.model.binning import DEFAULT_RANGE, Bins, RangeSpec, validate_bins
 
 __all__ = ["Variable", "as_variable"]
 
@@ -27,10 +27,13 @@ class Variable:
         A rootfig expression (a branch name or a formula, see
         :mod:`rootfig.expressions`).
     bins
-        Binning specification, see :data:`Bins`. Default 50 bins with an
-        automatic range.
+        Binning specification, see :data:`Bins`. Default 50 bins over a range
+        inferred from the data.
     range
-        Range used when ``bins`` is an integer, see :data:`RangeSpec`.
+        Range used when ``bins`` is an integer, see :data:`RangeSpec`. Defaults
+        to :data:`DEFAULT_RANGE` (``"robust"``), which ignores far outliers such
+        as ``-999`` sentinels; ``"auto"`` uses the full finite minimum and
+        maximum instead.
     label
         Axis label; may contain matplotlib math text. Defaults to the
         expression.
@@ -48,7 +51,7 @@ class Variable:
 
     expression: str
     bins: Bins = 50
-    range: RangeSpec = "auto"
+    range: RangeSpec = DEFAULT_RANGE
     label: str | None = None
     unit: str | None = None
     log: bool = False

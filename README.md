@@ -122,8 +122,9 @@ matplotlib `Figure`/`Axes`, `p.hists` are `hist.Hist` objects, and
   `count(Jet_pt) >= 2` or `Muon_pt > 20`; event and object selections have
   explicit rules, and event weights carry through to each selected object.
 - **Compare samples with a few keywords.** Overlays, stacks, data points and
-  ratio panels share binning and propagate histogram uncertainties.
-  Normalise to unity, density, bin width or luminosity.
+  ratio panels share binning - inferred robustly, so `-999` sentinels do not set
+  the axis - and propagate histogram uncertainties. Normalise to unity, density,
+  bin width or luminosity.
 - **Style figures for your analysis.** Add experiment labels, units, log axes
   and broken axes, then refine the result with matplotlib.
 - **Go beyond 1D plots.** Draw 2D histograms, correlations, efficiencies,
@@ -154,7 +155,7 @@ stack, building on familiar libraries:
 | --- | --- | --- |
 | Reading ROOT files | [uproot](https://github.com/scikit-hep/uproot5) | file globs, tree auto-detection, reading only the required branches |
 | Jagged arrays | [Awkward Array](https://github.com/scikit-hep/awkward) | the per-event/per-object rules for cuts and weights |
-| Histograms | [hist](https://github.com/scikit-hep/hist) / boost-histogram | shared binning, automatic ranges, normalisation, ratios |
+| Histograms | [hist](https://github.com/scikit-hep/hist) / boost-histogram | shared binning, robust automatic ranges, normalisation, ratios |
 | Drawing | [mplhep](https://github.com/scikit-hep/mplhep) + matplotlib | overlays, stacks, ratio panels, labels and legends with good defaults |
 
 If you already have `hist.Hist` objects, `rf.plot_histograms` draws them with

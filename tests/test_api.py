@@ -134,11 +134,34 @@ class TestHistogram:
         assert h.sum(flow=True).value == 2000
 
     def test_auto_and_robust_range(self, signal_file: Path) -> None:
-        auto = rf.histogram(signal_file, "sentinel", tree="events", bins=20)
+        auto = rf.histogram(signal_file, "sentinel", tree="events", bins=20, range="auto")
         robust = rf.histogram(signal_file, "sentinel", tree="events", bins=20, range="robust")
+        default = rf.histogram(signal_file, "sentinel", tree="events", bins=20)
         assert auto.axes[0].edges[0] <= -999
         assert robust.axes[0].edges[0] > -10
         assert robust.values(flow=True)[0] > 0  # sentinels went to underflow
+        # "robust" is the default, so an unspecified range bins like it
+        np.testing.assert_allclose(default.axes[0].edges, robust.axes[0].edges)
+
+    def test_default_range_keeps_a_positive_axis_for_a_log_scale(self, signal_file: Path) -> None:
+        """The robust pad must not push the lower edge of a positive variable below zero."""
+        h = rf.histogram(signal_file, "MET", tree="events", bins=30)
+        assert h.axes[0].edges[0] >= 0.0
+        p = rf.plot(signal_file, "MET", tree="events", bins=30, logx=True)
+        assert p.ax.get_xlim()[0] > 0.0
+
+    def test_default_range_leaves_room_for_xbreak(self, signal_file: Path) -> None:
+        """``xbreak`` is validated against the inferred axis, which must cover the data."""
+        h = rf.histogram(signal_file, "MET", tree="events", bins=40)
+        low, high = float(h.axes[0].edges[0]), float(h.axes[0].edges[-1])
+        p = rf.plot(
+            signal_file,
+            "MET",
+            tree="events",
+            bins=40,
+            xbreak=(low + 0.3 * (high - low), low + 0.6 * (high - low)),
+        )
+        assert p.ax_right is not None
 
     def test_edges_and_log_bins(self, signal_file: Path) -> None:
         h = rf.histogram(signal_file, "Muon_pt", tree="events", bins=rf.log_bins(10, 5, 500))
@@ -636,6 +659,15 @@ class TestPlot2D:
         pt = signal_columns["Muon_pt"]
         assert p.histograms[0].hist.sum(flow=True).value == pytest.approx(int(ak.sum(pt > 10)))
         assert len(p.fig.axes) == 2
+
+    def test_default_range_survives_a_sentinel(self, signal_file: Path) -> None:
+        """Both 2D axes infer their range robustly, so one sentinel column does not
+        collapse the plot into a single populated pixel."""
+        p = rf.plot2d(signal_file, "sentinel", "MET", tree="events", bins=(20, 20))
+        h = p.histograms[0].hist
+        assert h.axes[0].edges[0] > -10  # not dragged down to -999
+        filled = int((h.values() > 0).sum())
+        assert filled > 20
 
     def test_variables_and_shared_bins(self, signal_file: Path, tmp_path: Path) -> None:
         x = rf.Variable("MET", bins=(10, 0, 100), label="MET", unit="GeV")

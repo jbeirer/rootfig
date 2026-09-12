@@ -13,6 +13,7 @@ import pytest
 from rootfig.errors import BinningError, ExpressionError, LuminosityError, SourceError
 from rootfig.io import ArraySource, FileSource
 from rootfig.model import (
+    DEFAULT_RANGE,
     Cut,
     Sample,
     Style,
@@ -61,7 +62,7 @@ class TestVariable:
     def test_defaults(self) -> None:
         var = Variable("Muon_pt")
         assert var.bins == 50
-        assert var.range == "auto"
+        assert var.range == DEFAULT_RANGE == "robust"
         assert var.axis_label == "Muon_pt"
         assert var.safe_name == "Muon_pt"
         assert str(var) == "Muon_pt"
@@ -139,11 +140,84 @@ class TestBinning:
 
     def test_robust_range_ignores_sentinels(self) -> None:
         rng = np.random.default_rng(0)
-        values = rng.normal(0, 1, 5000)
-        values[:50] = -999.0
-        low, high = auto_range([values], mode="robust")
-        assert low > -10
-        assert high < 10
+        for sentinel in (-999.0, -99.0):
+            values = rng.normal(0, 1, 5000)
+            values[:50] = sentinel
+            low, high = auto_range([values], mode="robust")
+            assert low > -6
+            assert high < 6
+            assert auto_range([values])[0] == sentinel  # "auto" keeps them
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            pytest.param(np.random.default_rng(1).normal(0, 1, 20_000), id="gauss"),
+            pytest.param(np.random.default_rng(2).uniform(0, 1, 20_000), id="uniform"),
+            pytest.param(np.random.default_rng(3).exponential(30, 20_000), id="exponential"),
+            pytest.param(
+                np.concatenate(
+                    [
+                        np.random.default_rng(4).normal(-5, 0.5, 10_000),
+                        np.random.default_rng(5).normal(5, 0.5, 10_000),
+                    ]
+                ),
+                id="bimodal",
+            ),
+            pytest.param(np.random.default_rng(6).poisson(2, 20_000).astype(float), id="poisson"),
+            pytest.param(
+                np.random.default_rng(7).integers(0, 2, 20_000).astype(float), id="binary"
+            ),
+            pytest.param(np.repeat([0.0, 1.0, 2.0, 3.0], [9000, 700, 250, 50]), id="counts"),
+        ],
+    )
+    def test_robust_range_is_a_no_op_without_outliers(self, values: np.ndarray) -> None:
+        """These samples stay within the threshold and must have identical edges."""
+        assert auto_range([values], mode="robust") == auto_range([values])
+
+    def test_robust_range_never_extends_past_the_data(self) -> None:
+        rng = np.random.default_rng(0)
+        for values in (
+            rng.exponential(30, 20_000),  # strictly positive, long tail
+            rng.lognormal(3, 1, 20_000),
+            np.where(rng.random(20_000) < 0.8, 0.0, rng.exponential(0.3, 20_000)),
+        ):
+            low, high = auto_range([values], mode="robust")
+            assert low >= float(values.min()) >= 0.0  # no negative edge from the pad
+            assert high <= auto_range([values])[1]
+
+    @pytest.mark.parametrize(
+        ("arrays", "expected"),
+        [
+            ([np.zeros(100)], (-0.5, 0.5)),
+            ([np.array([42.0])], (37.8, 46.2)),
+            ([np.array([]), np.array([np.nan])], (0.0, 1.0)),
+            ([np.append(np.zeros(999), 500.0)], (-0.5, 0.5)),
+        ],
+    )
+    def test_robust_range_degenerate_spread(
+        self, arrays: list[np.ndarray], expected: tuple[float, float]
+    ) -> None:
+        """A zero median absolute deviation must not divide by zero."""
+        low, high = auto_range(arrays, mode="robust")
+        assert (low, high) == pytest.approx(expected)
+
+    def test_robust_range_and_a_distant_sample(self) -> None:
+        """Known property: the range is inferred from all samples at once.
+
+        A signal in the tail of this broad background is kept at both tested
+        yields. One tens of deviations away from a narrow bulk is rejected
+        even when its yield is a fifth of the background's.
+        """
+        rng = np.random.default_rng(0)
+        broad = rng.exponential(60, 100_000) + 50
+        for n in (1_000, 100_000):
+            signal = rng.normal(800, 25, n)
+            assert auto_range([broad, signal], mode="robust") == auto_range([broad, signal])
+
+        narrow = rng.normal(0, 1, 100_000)
+        signal = rng.normal(50, 1, 20_000)
+        assert auto_range([narrow, signal], mode="robust")[1] < 10
+        assert auto_range([narrow, signal])[1] > 50  # "auto" keeps it on the axis
 
     def test_resolve_int_bins_explicit_range(self) -> None:
         axis = resolve_axis(Variable("x", bins=10, range=(0.0, 5.0), unit="GeV"))

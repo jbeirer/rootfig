@@ -199,7 +199,8 @@ def histograms(
     """Fill one :class:`~rootfig.histograms.Histogram` per sample with shared binning.
 
     See :func:`plot` for the meaning of the arguments; this function stops
-    before drawing.
+    before drawing. An integer ``bins`` without a ``range`` infers one robustly
+    (``range="auto"`` for the full finite minimum and maximum).
     """
     samples = as_samples(data, tree=tree, labels=label)
     var = as_variable(variable, bins=bins, range=range)
@@ -225,6 +226,10 @@ def histogram(
     nonfinite: NonFinitePolicy = "drop",
 ) -> Hist:
     """Fill a single histogram and return it as a plain ``hist.Hist``.
+
+    See :func:`plot` for the arguments. An integer ``bins`` without a ``range``
+    infers one robustly (``range="auto"`` for the full finite minimum and
+    maximum).
 
     Examples
     --------
@@ -331,7 +336,12 @@ def plot(
         Binning: an ``int`` (range inferred from the data), ``(n, low, high)``,
         bin edges, or a ``hist`` axis. Overrides the ``Variable``'s binning.
     range
-        Range for integer ``bins``: ``(low, high)``, ``"auto"`` or ``"robust"``.
+        Range for integer ``bins``: ``(low, high)``, ``"robust"`` (the default)
+        or ``"auto"``. ``"robust"`` ignores values far from the bulk of the data,
+        so sentinels such as ``-999`` do not set the axis; they are not dropped
+        but land in the under/overflow, which ``flow`` shows. It agrees exactly
+        with ``"auto"`` - the full finite minimum and maximum - unless there is
+        something far out to reject.
     label
         Legend label(s) for samples given as plain files.
     observed
@@ -710,7 +720,9 @@ def plot2d(
     two bin counts, never a range; a range needs ``(n, low, high)``); per-axis
     ranges, labels and logarithmic scales (``logx``/``logy`` default to the
     variables' ``log`` flags) are best given through
-    :class:`~rootfig.model.Variable` objects.
+    :class:`~rootfig.model.Variable` objects. Each axis infers its range
+    robustly and independently; unlike the 1D plots there is no flow indicator,
+    so pass ``rf.Variable(x, range="auto")`` when the full extent matters.
     """
     sample = _single_sample(data, tree=tree)
     x_bins, y_bins = _split_bins(bins)
@@ -962,7 +974,9 @@ def efficiency(
     Wilson score intervals (``z`` standard deviations, effective entries for
     weighted samples; see :func:`rootfig.histograms.efficiency` for the
     treatment of negative weights). The :class:`~rootfig.histograms.Efficiency`
-    objects are returned in ``Plot.efficiencies``.
+    objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a
+    ``range`` infers one robustly, shared by numerator and denominator (see
+    :func:`plot`).
 
     Examples
     --------
@@ -1080,8 +1094,10 @@ def profile(
     and ``unit`` describe the x axis; ``logx``/``logy`` default to the
     variables' ``log`` flags. With negative weights a bin whose total weight
     is negative keeps its mean but has no error, and a bin whose weighted
-    variance is negative has no standard deviation (``nan``). The
-    :class:`~rootfig.histograms.Profile` objects are returned in ``Plot.profiles``.
+    variance is negative has no standard deviation (``nan``). An integer
+    ``bins`` without a ``range`` infers the x range robustly (see :func:`plot`).
+    The :class:`~rootfig.histograms.Profile` objects are returned in
+    ``Plot.profiles``.
 
     Examples
     --------

@@ -204,17 +204,21 @@ def log_axes(signal: rf.Sample, zjets: rf.Sample, diboson: rf.Sample) -> rf.Plot
     )
 
 
-@example("robust_range", "Automatic ranges: full versus robust", image_width="100%")
+@example(
+    "robust_range",
+    "Automatic ranges: robust by default, or the full extent",
+    image_width="100%",
+)
 def robust_range(signal: rf.Sample, zjets: rf.Sample) -> rf.Plot:
-    """Sentinels such as ``-999`` wreck an automatic range. ``range="robust"`` ignores far
-    outliers when choosing the range (nothing is removed from the data, they end up in the
-    underflow). Passing ``ax=`` draws into your own axes, so two rootfig plots share one
-    figure."""
+    """Sentinels such as ``-999`` wreck an automatic range, so an integer ``bins`` without an
+    explicit range infers one robustly: far outliers are ignored when choosing the axis
+    (nothing is removed from the data, they end up in the underflow, where the flow arrow
+    points at them). ``range="auto"`` asks for the full finite minimum and maximum instead.
+    For a distribution with nothing far out the two agree exactly. Passing ``ax=`` draws into
+    your own axes, so two rootfig plots share one figure."""
     _, (left, right) = plt.subplots(1, 2, figsize=(11, 4.2))
     rf.plot([signal, zjets], "lep_iso", bins=40, range="auto", ax=left, title='range="auto"')
-    return rf.plot(
-        [signal, zjets], "lep_iso", bins=40, range="robust", ax=right, title='range="robust"'
-    )
+    return rf.plot([signal, zjets], "lep_iso", bins=40, ax=right, title="default (robust)")
 
 
 @example("xbreak_ratio", "A broken x axis: peak and far tail without the empty middle")
