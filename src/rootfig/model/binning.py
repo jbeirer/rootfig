@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_RANGE",
     "ROBUST_COVERAGE_BUDGET",
+    "ROBUST_DISCRETE_VALUES",
+    "ROBUST_LADDER",
     "ROBUST_THRESHOLD",
     "Axis",
     "Bins",
@@ -46,10 +48,13 @@ RangeSpec: TypeAlias = tuple[float, float] | Literal["auto", "robust"] | None
 
 * ``(low, high)`` - explicit.
 * ``"robust"`` (default) - like ``"auto"`` but ignoring outliers far from the
-  bulk of the data (see :func:`auto_range`), so that sentinel values such as
-  ``-999`` do not dominate the range. The result is padded by 5 percent but
-  is clamped to the ``"auto"`` range, so it is identical to ``"auto"`` whenever
-  there is nothing to reject. Degenerate ranges are widened symmetrically.
+  bulk of the data and cutting the thin end of a tail (see :func:`auto_range`),
+  so that neither a sentinel such as ``-999`` nor a long tail dominates the
+  range. The result is padded by 5 percent but clamped to the ``"auto"`` range,
+  so it never reaches past the data; a sample with a hard edge or with fewer
+  than :data:`ROBUST_DISCRETE_VALUES` distinct values is left where ``"auto"``
+  puts it. Values outside land in the under/overflow. Degenerate ranges are
+  widened symmetrically.
 * ``"auto"`` - the finite minimum and maximum over all samples.
 """
 
@@ -212,8 +217,8 @@ def _padded(kept: np.ndarray, low: float, high: float) -> tuple[float, float]:
     """Pad the extent of ``kept`` by 5 percent of its span, clamped to ``(low, high)``.
 
     Clamping to the data keeps the padding from adding empty bins or giving a
-    positive variable a negative lower edge, and makes the padded range identical
-    to the ``"auto"`` one whenever there was nothing to reject.
+    positive variable a negative lower edge, and bounds every candidate range by
+    the extent of the data.
     """
     kept_low, kept_high = float(kept.min()), float(kept.max())
     pad = 0.05 * (kept_high - kept_low)

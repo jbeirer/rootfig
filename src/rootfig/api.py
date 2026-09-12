@@ -338,10 +338,11 @@ def plot(
     range
         Range for integer ``bins``: ``(low, high)``, ``"robust"`` (the default)
         or ``"auto"``. ``"robust"`` ignores values far from the bulk of the data,
-        so sentinels such as ``-999`` do not set the axis; they are not dropped
-        but land in the under/overflow, which ``flow`` shows. It agrees exactly
-        with ``"auto"`` - the full finite minimum and maximum - unless there is
-        something far out to reject.
+        so sentinels such as ``-999`` do not set the axis, and cuts the thin end
+        of a tail so a long one does not leave the rest of the distribution in a
+        corner of the axis. Nothing is dropped: those values land in the
+        under/overflow, which ``flow`` shows. Use ``"auto"`` for the full finite
+        minimum and maximum.
     label
         Legend label(s) for samples given as plain files.
     observed
