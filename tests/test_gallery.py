@@ -1,6 +1,6 @@
 """The gallery as an end-to-end and image-regression suite.
 
-Every example in ``examples/gallery.py`` is run against a freshly generated toy
+Every example in ``examples/gallery`` is run against a freshly generated toy
 dataset. With ``pytest --mpl`` the resulting figures are compared pixel-wise
 (RMS tolerance) against the PNGs in ``docs/images/gallery/``, which are also the
 images shown in the documentation. Without ``--mpl`` the examples still run, so
@@ -24,12 +24,16 @@ import pytest
 from matplotlib.figure import Figure
 
 ROOT = Path(__file__).resolve().parent.parent
-GALLERY_PY = ROOT / "examples" / "gallery.py"
+GALLERY_DIR = ROOT / "examples" / "gallery"
 BASELINE_DIR = ROOT / "docs" / "images" / "gallery"
 
 
 def load_gallery() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("rootfig_gallery", GALLERY_PY)
+    spec = importlib.util.spec_from_file_location(
+        "rootfig_gallery",
+        GALLERY_DIR / "__init__.py",
+        submodule_search_locations=[str(GALLERY_DIR)],
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)

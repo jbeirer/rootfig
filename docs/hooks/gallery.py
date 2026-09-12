@@ -1,13 +1,16 @@
-"""MkDocs hook that fills ``docs/gallery.md`` from ``examples/gallery.py``.
+"""MkDocs hook that fills ``docs/gallery.md`` from the ``examples/gallery`` package.
 
-Two markers are expanded when the page is rendered:
+Two kinds of marker are expanded when the page is rendered:
 
 ``<!-- gallery-setup -->``
-    the body of ``define()``: the samples, variables, cuts and style shared by
-    the examples;
-``<!-- gallery -->``
-    one section per registered example with its title, description, image
-    (``docs/images/gallery/<name>.png``) and the source of the example function.
+    the body of ``define()``: the samples, variables and style shared by the
+    examples;
+``<!-- gallery -->`` / ``<!-- gallery: name ... -->``
+    one section per example with its title, description, image
+    (``docs/images/gallery/<name>.png``) and the source of the example
+    function. A marker naming examples renders exactly those, so a few can be
+    shown before the setup section; a bare marker renders everything that no
+    earlier marker on the page has shown yet, in registration order.
 
 The gallery module is imported, never executed, so building the docs needs no
 data and draws nothing. Because the images are also the baselines of
@@ -17,21 +20,27 @@ data and draws nothing. Because the images are also the baselines of
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-GALLERY_PY = ROOT / "examples" / "gallery.py"
+GALLERY_DIR = ROOT / "examples" / "gallery"
 SETUP_MARKER = "<!-- gallery-setup -->"
-GALLERY_MARKER = "<!-- gallery -->"
+GALLERY_MARKER = re.compile(r"<!-- gallery(?::\s*(?P<names>[\w\s,]+?))?\s*-->")
 
 
 def _load_gallery() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("rootfig_gallery_docs", GALLERY_PY)
+    """Import ``examples/gallery`` as a package without putting ``examples/`` on ``sys.path``."""
+    spec = importlib.util.spec_from_file_location(
+        "rootfig_gallery_docs",
+        GALLERY_DIR / "__init__.py",
+        submodule_search_locations=[str(GALLERY_DIR)],
+    )
     if spec is None or spec.loader is None:
-        msg = f"cannot load {GALLERY_PY}"
+        msg = f"cannot load {GALLERY_DIR}"
         raise RuntimeError(msg)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -39,25 +48,43 @@ def _load_gallery() -> ModuleType:
     return module
 
 
-def render_sections(gallery: ModuleType) -> str:
-    """Markdown for every example: heading, description, image, code."""
-    parts: list[str] = []
-    for example in gallery.EXAMPLES:
-        code = gallery.body_source(example.func)
-        parts.append(
-            f"## {example.title}\n\n"
-            f"{example.description}\n\n"
-            f'![{example.title}](images/gallery/{example.name}.png){{ width="75%" }}\n\n'
-            f"```python\n{code}```\n"
-        )
-    return "\n".join(parts)
+def render_section(gallery: ModuleType, example: Any) -> str:
+    """Markdown for one example: heading, description, image, code."""
+    code = gallery.body_source(example.func)
+    return (
+        f"## {example.title}\n\n"
+        f"{example.description}\n\n"
+        f'![{example.title}](images/gallery/{example.name}.png){{ width="75%" }}\n\n'
+        f"```python\n{code}```\n"
+    )
+
+
+def expand_markers(markdown: str, gallery: ModuleType) -> str:
+    """Replace every gallery marker, each example going to the first marker that asks."""
+    shown: set[str] = set()
+    by_name = {example.name: example for example in gallery.EXAMPLES}
+
+    def replace(match: re.Match[str]) -> str:
+        names = match.group("names")
+        if names is None:
+            wanted = [ex.name for ex in gallery.EXAMPLES if ex.name not in shown]
+        else:
+            wanted = [name.strip() for name in names.replace(",", " ").split()]
+            unknown = [name for name in wanted if name not in by_name]
+            if unknown:
+                msg = f"unknown gallery example(s) {unknown} in {match.group(0)!r}"
+                raise ValueError(msg)
+        shown.update(wanted)
+        return "\n".join(render_section(gallery, by_name[name]) for name in wanted)
+
+    return GALLERY_MARKER.sub(replace, markdown)
 
 
 def on_page_markdown(markdown: str, **_: Any) -> str:
     """Expand the gallery markers (MkDocs ``on_page_markdown`` event)."""
-    if SETUP_MARKER not in markdown and GALLERY_MARKER not in markdown:
+    if SETUP_MARKER not in markdown and not GALLERY_MARKER.search(markdown):
         return markdown
     gallery = _load_gallery()
     setup = gallery.body_source(gallery.define, returns="omit")
     markdown = markdown.replace(SETUP_MARKER, f"```python\n{setup}```")
-    return markdown.replace(GALLERY_MARKER, render_sections(gallery))
+    return expand_markers(markdown, gallery)

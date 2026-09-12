@@ -89,7 +89,9 @@ f.Close()
 
 ## Figures and the gallery
 
-`examples/gallery.py` is both the showcase and the image-regression suite. Each
+The `examples/gallery` package is both the showcase and the image-regression
+suite: `__init__.py` holds the shared `define()` block and the examples, `data.py`
+writes the toy files and `registry.py` extracts the source shown in the docs. Each
 example is a small function returning a `Plot`; `docs/gallery.md` shows every
 figure next to that function's source (a MkDocs hook, `docs/hooks/gallery.py`),
 and `tests/test_gallery.py` renders all of them and, with `--mpl`, compares
@@ -97,7 +99,7 @@ them pixel-wise (pytest-mpl, RMS tolerance 2) against `docs/images/gallery/`.
 Those PNGs are therefore the documentation images *and* the baselines.
 
 ```bash
-MPLBACKEND=Agg uv run python examples/gallery.py          # look at examples/out/*.png
+MPLBACKEND=Agg uv run python examples/gallery             # look at examples/out/*.png
 uv run pytest tests/test_gallery.py --mpl                 # compare against the baselines
 uv run pytest tests/test_gallery.py --mpl-generate-path=docs/images/gallery   # accept changes
 ```
@@ -107,7 +109,11 @@ them by eye, and commit them with the code. CI compares on Linux only (fonts
 differ elsewhere) and, when a comparison fails, uploads an HTML report with
 baseline, result and difference images as the `mpl-results-*` artifact. To add
 an example, register a function with `@example(name, title)` and give it a
-docstring; the test suite fails until its baseline image exists.
+docstring; the test suite fails until its baseline image exists. Its parameters
+are attribute names of `Dataset`, and the hook prints only the body (blank lines
+and comments included), so write it as a user would. Put an object into
+`define()` — the *Setup* block of the docs page — only when several examples use
+it; anything a single example needs belongs in that example.
 
 ## Pull requests
 
