@@ -215,8 +215,8 @@ range avoids range inference.
   (including experiment styles that fix a white background). Colours set in
   `Style.rc`, background and text included, are applied after it and win, so
   such a style is not rendered dark. Data points and outlines follow the
-  style's `text.color`. Axes you pass with `ax=` keep the look they were made
-  with; create them inside `plt.style.context(rf.plotting.DARK_THEME)` to match.
+  style's `text.color`. Plain matplotlib inside the block matches too: axes
+  made with `plt.subplots()` for `ax=`, and text added to `Plot.ax`.
 - `text=` extra line(s) drawn with the experiment label.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).

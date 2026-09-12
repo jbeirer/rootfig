@@ -350,19 +350,22 @@ class TestPlot:
         )
         assert self._marker_colors(p) == {grey}
 
-    def test_dark_theme_into_axes_made_with_its_colours(
+    def test_dark_theme_covers_plain_matplotlib_in_the_block(
         self, signal_file: Path, background_file: Path
     ) -> None:
-        with plt.style.context(rf.plotting.DARK_THEME):
-            fig, ax = plt.subplots()
         mc = [rf.Sample(signal_file, tree="events", label="Signal")]
         observed = rf.Sample(background_file, tree="events", label="Data", entry_stop=1000)
+        before = dict(plt.rcParams)
         with rf.dark_theme():
+            fig, ax = plt.subplots()
             p = rf.plot(mc, "MET", observed=observed, bins=(20, 0, 200), ax=ax)
+            note = p.ax.text(0.5, 0.5, "hello")
         ink = to_rgba(rf.plotting.DARK_THEME["text.color"])
         assert self._marker_colors(p) == {ink}
+        assert to_rgba(note.get_color()) == ink
         assert to_rgba(ax.spines["left"].get_edgecolor()) == ink
         assert fig.get_facecolor()[3] == ax.get_facecolor()[3] == 0.0
+        assert dict(plt.rcParams) == before  # nothing leaks out of the block
         plt.close(fig)
 
     def test_stack_ratio_requires_data(self, signal_file: Path, background_file: Path) -> None:

@@ -137,20 +137,21 @@ _theme: ContextVar[Mapping[str, Any] | None] = ContextVar("rootfig_theme", defau
 
 @contextlib.contextmanager
 def dark_theme() -> Iterator[None]:
-    """Draw the figures made inside the block for a dark page.
+    """Draw everything made inside the block for a dark page.
 
-    :data:`DARK_THEME` is applied after the style sheet, so it also holds for
-    experiment styles that fix a white background (ATLAS, LHCb, ALICE, DUNE);
-    ``Style.rc`` still wins. The background is transparent, and
+    The block runs under :data:`DARK_THEME`, so figures, axes and artists made
+    with plain matplotlib (``plt.subplots()`` for ``ax=``, ``p.ax.text(...)``)
+    match. rootfig figures apply it again after their style sheet, so it also
+    holds for experiment styles that fix a white background (ATLAS, LHCb,
+    ALICE, DUNE); ``Style.rc`` still wins. The background is transparent, and
     :meth:`Plot.save <rootfig.Plot.save>` keeps it so, so one image suits any
     dark page.
-
-    Axes passed with ``ax=`` keep the look they were created with; create them
-    under the same colours, ``plt.style.context(rootfig.plotting.DARK_THEME)``.
     """
+    _activate_backend()  # outside the rc context, as in style_context
     token = _theme.set(DARK_THEME)
     try:
-        yield
+        with plt.style.context(dict(DARK_THEME)):
+            yield
     finally:
         _theme.reset(token)
 

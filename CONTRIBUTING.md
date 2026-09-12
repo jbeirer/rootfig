@@ -96,7 +96,9 @@ example is a small function returning a `Plot`; `docs/gallery.md` shows every
 figure next to that function's source (a MkDocs hook, `docs/hooks/gallery.py`),
 and `tests/test_gallery.py` renders all of them and, with `--mpl`, compares
 them pixel-wise (pytest-mpl, RMS tolerance 2) against `docs/images/gallery/`.
-Those PNGs are therefore the documentation images *and* the baselines.
+Each example is rendered twice, as shown and inside `rf.dark_theme()`, against
+`<name>.png` and `<name>-dark.png`; the docs pick one per palette. Those PNGs
+are therefore the documentation images *and* the baselines.
 
 ```bash
 MPLBACKEND=Agg uv run python examples/gallery             # look at examples/out/*.png
@@ -109,7 +111,7 @@ them by eye, and commit them with the code. CI compares on Linux only (fonts
 differ elsewhere) and, when a comparison fails, uploads an HTML report with
 baseline, result and difference images as the `mpl-results-*` artifact. To add
 an example, register a function with `@example(name, title)` and give it a
-docstring; the test suite fails until its baseline image exists. Its parameters
+docstring; the test suite fails until both of its baseline images exist. Its parameters
 are attribute names of `Dataset`, it runs inside the directory holding the toy
 files (so name them `"signal.root"`, never through a variable), and the hook
 prints only the body (blank lines and comments included) — write it as a user
