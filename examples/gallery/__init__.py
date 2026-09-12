@@ -239,7 +239,7 @@ def xbreak_ratio(
         logy=True,
         xbreak=(125, 195),
         style=atlas,
-        figsize=(7, 5.6),
+        figsize=(7, 7.03),
     )
 
 
