@@ -35,7 +35,7 @@ rf.plot("events.root", "Muon_pt", tree="events", selection="Muon_pt > 20", bins=
 
 These and a dozen more figures, each next to the code that made it, are in the
 [gallery](https://jbeirer.github.io/rootfig/gallery/). All of them come from
-[`examples/gallery.py`](examples/gallery.py), which writes toy ROOT files and
+[`examples/gallery`](examples/gallery/__init__.py), which writes toy ROOT files and
 draws every example in a few seconds; the same figures are pixel-compared in CI.
 
 ## Installation
