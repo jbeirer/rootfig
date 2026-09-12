@@ -356,7 +356,9 @@ def plot(
         others; ``("s/sqrt(b)", "Signal")`` names the signal sample.
     ratio_ylim, ratio_label, ratio_uncertainty
         Ratio panel range, y label, and uncertainty treatment
-        (``"propagate"`` or ``"numerator"`` with a reference band).
+        (``"propagate"`` or ``"numerator"`` with a reference band). The label is
+        shrunk, and if needed wrapped onto two lines, to fit the short panel;
+        pass a shorter ``ratio_label`` (``"Ratio"``) to keep it at full size.
     logx, logy
         Logarithmic axes. ``logx=None`` (default) follows the ``Variable``'s
         ``log`` flag; ``True``/``False`` override it.
@@ -654,7 +656,7 @@ def plot_histograms(
             if layout.ratio is not None and layout.ratio_right is not None:
                 apply_xbreak(layout.ratio, layout.ratio_right, *segments)
 
-        finalize_figure(layout.fig, layout.main)  # last: fonts and label anchoring
+        finalize_figure(layout.fig, layout.main, panels=layout.ratio_axes)  # last: fonts, labels
     result = Plot(
         fig=layout.fig,
         ax=layout.main,

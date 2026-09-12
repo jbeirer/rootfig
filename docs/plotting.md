@@ -79,7 +79,10 @@ the signal. The values are returned as a `Ratio` in `Plot.ratios`.
 
 `ratio_ylim` and
 `ratio_label` override the automatic range (at least 0.5 to 1.5, widened to
-cover the bulk of the points) and label (`Ratio to X` or `Data / MC`). The
+cover the bulk of the points) and label (`Ratio to X` or `Data / MC`). A
+rotated y label is bounded by the height of the short ratio panel, so a long
+one is shrunk and, if that is not enough, wrapped onto two lines; pass a
+shorter `ratio_label` such as `"Ratio"` to keep it at full size. The
 computed values are returned in `Plot.ratios` as
 [`Ratio`][rootfig.Ratio] objects (`values`, `errors`, `band`, `edges`).
 

@@ -24,6 +24,11 @@ from rootfig.errors import (
 )
 
 
+def ratio_ylabel(plot: Any) -> str:
+    """The ratio panel's y label, ignoring the wrapping that makes it fit the panel."""
+    return plot.ratio_ax.get_ylabel().replace("\n", " ")
+
+
 class TestLoad:
     def test_branches_and_expressions(
         self, signal_file_any_format: Path, signal_columns: dict[str, Any]
@@ -235,7 +240,7 @@ class TestPlot:
         assert len(p.ratios) == 1
         assert p.ax.get_ylabel() == "Normalised to unity"
         assert p.ratio_ax.get_xlabel() == "Muon_pt [GeV]"
-        assert p.ratio_ax.get_ylabel() == "Ratio to Signal"
+        assert ratio_ylabel(p) == "Ratio to Signal"
         for h in p.histograms:
             assert h.integral == pytest.approx(1.0)
         ratio = p.ratios[0]
@@ -249,7 +254,7 @@ class TestPlot:
             [signal_file, background_file], "MET", tree="events", bins=10, ratio="background"
         )
         assert p.ratio_ax is not None
-        assert p.ratio_ax.get_ylabel() == "Ratio to background"
+        assert ratio_ylabel(p) == "Ratio to background"
         with pytest.raises(ValueError, match="not one of"):
             rf.plot([signal_file, background_file], "MET", tree="events", bins=10, ratio="nope")
 
@@ -273,7 +278,7 @@ class TestPlot:
         assert p.histograms[2].is_data
         assert p.ax.get_yscale() == "log"
         assert p.ratio_ax is not None
-        assert p.ratio_ax.get_ylabel() == "Data / MC"
+        assert ratio_ylabel(p) == "Data / MC"
         legend_texts = [t.get_text() for t in p.ax.get_legend().get_texts()]
         assert legend_texts == ["Data", "Background", "Signal", "Stat. unc."]
         total = p.histograms[0].values() + p.histograms[1].values()
@@ -451,7 +456,7 @@ class TestRatioReference:
         assert len(p.ratios) == 1  # only the data appears in the panel
         np.testing.assert_allclose(p.ratios[0].values, [2.0, 2.0])  # data / A, not data / total
         assert p.ratio_ax is not None
-        assert p.ratio_ax.get_ylabel() == "Data / A"
+        assert ratio_ylabel(p) == "Data / A"
         stacked = rf.plot_histograms(
             [data, make(10.0, "A"), make(30.0, "B")], ratio=True, stack=True
         )
@@ -502,7 +507,7 @@ class TestBrokenAxis:
         assert len(p.axes) == 4
         assert p.ratio_ax.get_xlim() == (10.0, 50.0)
         assert p.ratio_ax_right.get_xlim() == (150.0, 240.0)
-        assert p.ratio_ax.get_ylabel() == "Ratio to signal"
+        assert ratio_ylabel(p) == "Ratio to signal"
         assert p.ratio_ax_right.get_ylabel() == ""
         assert p.ratio_ax_right.get_xlabel() == "MET"
         assert p.ax.get_xlabel() == p.ax_right.get_xlabel() == ""  # type: ignore[union-attr]
@@ -1051,7 +1056,7 @@ class TestEfficiencyProfileSignificance:
         bkg = rf.Sample(background_file, tree="events", label="B")
         p = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack=True, ratio="significance")
         assert p.ratio_ax is not None
-        assert p.ratio_ax.get_ylabel() == r"$S/\sqrt{B}$"
+        assert ratio_ylabel(p) == r"$S/\sqrt{B}$"
         assert len(p.ratios) == 1
         result = p.ratios[0]
         s = p.histograms[1].values()
@@ -1062,7 +1067,7 @@ class TestEfficiencyProfileSignificance:
             [sig, bkg], "MET", bins=(10, 0, 200), ratio=("s/sqrt(s+b)", "S"), ratio_label="Z"
         )
         assert p.ratio_ax is not None
-        assert p.ratio_ax.get_ylabel() == "Z"
+        assert ratio_ylabel(p) == "Z"
         with pytest.raises(ValueError, match="at least two"):
             rf.plot([sig], "MET", bins=(10, 0, 200), ratio="s/sqrt(b)")
         with pytest.raises(ValueError, match="is not one of"):

@@ -48,6 +48,12 @@ from rootfig.plotting import (
     use_style,
     ylabel_for,
 )
+from rootfig.plotting.figure import (
+    RATIO_LABEL_MIN_SCALE,
+    _balanced_wrap,
+    _renderer,
+    fit_ylabel,
+)
 from rootfig.plotting.style import pin_fonts
 from rootfig.selection import Columns
 
@@ -508,6 +514,89 @@ class TestDrawHistograms:
             fig, ax = plt.subplots()
             draw_histograms(mc_hists, ax, style=st, histtype="fill")
             draw_histograms(mc_hists, ax, style=st, stack=True)
+
+
+class TestFitYlabel:
+    """A lower panel's y label is bounded by the panel height, not the figure height."""
+
+    @staticmethod
+    def _panel(label: str, *, figsize: tuple[float, float] = (7.0, 7.0)) -> Axes:
+        layout = make_figure(Style(), ratio=True, figsize=figsize)
+        assert layout.ratio is not None
+        layout.ratio.set_ylabel(label, loc="center")
+        return layout.ratio
+
+    @staticmethod
+    def _overflow(ax: Axes) -> float:
+        renderer = _renderer(ax.figure)
+        label_height = ax.yaxis.label.get_window_extent(renderer).height
+        return float(label_height / ax.get_window_extent(renderer).height)
+
+    def test_short_label_is_untouched(self) -> None:
+        with style_context():
+            ax = self._panel("Data / MC")
+            before = ax.yaxis.label.get_fontsize()
+            fit_ylabel(ax)
+            assert ax.yaxis.label.get_fontsize() == before
+            assert ax.get_ylabel() == "Data / MC"
+        plt.close(ax.figure)
+
+    def test_long_label_is_shrunk_to_fit(self) -> None:
+        with style_context():
+            ax = self._panel("Ratio to Conformal seeding")
+            before = ax.yaxis.label.get_fontsize()
+            fit_ylabel(ax)
+            assert ax.yaxis.label.get_fontsize() < before
+            assert self._overflow(ax) <= 1.0
+        plt.close(ax.figure)
+
+    def test_wraps_only_when_shrinking_is_not_enough(self) -> None:
+        with style_context():
+            ax = self._panel("Ratio to Conformal seeding")
+            fit_ylabel(ax)
+            assert ax.get_ylabel() == "Ratio to\nConformal seeding"
+        plt.close(ax.figure)
+
+    def test_mathtext_is_never_wrapped(self) -> None:
+        with style_context():
+            ax = self._panel(r"$S/\sqrt{B}$ with a very long trailing description")
+            fit_ylabel(ax, min_scale=0.9)  # force the wrapping branch
+            assert "\n" not in ax.get_ylabel()
+        plt.close(ax.figure)
+
+    def test_floor_is_respected(self) -> None:
+        with style_context():
+            ax = self._panel("Ratio to Conformal seeding with ITk layout v2", figsize=(4, 3.2))
+            before = ax.yaxis.label.get_fontsize()
+            fit_ylabel(ax)  # cannot fit; must not shrink to nothing
+            assert ax.yaxis.label.get_fontsize() >= before * RATIO_LABEL_MIN_SCALE
+        plt.close(ax.figure)
+
+    def test_empty_label_and_missing_renderer_are_skipped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with style_context():
+            ax = self._panel("")  # the right segment of a broken axis
+            fit_ylabel(ax)
+            assert ax.get_ylabel() == ""
+
+            ax = self._panel("Ratio to Conformal seeding")
+            before = ax.yaxis.label.get_fontsize()
+            monkeypatch.setattr("rootfig.plotting.figure._renderer", lambda fig: None)
+            fit_ylabel(ax)
+            assert ax.yaxis.label.get_fontsize() == before
+        plt.close(ax.figure)
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Ratio to Conformal seeding", "Ratio to\nConformal seeding"),
+            ("Ratio", "Ratio"),
+            ("", ""),
+        ],
+    )
+    def test_balanced_wrap(self, text: str, expected: str) -> None:
+        assert _balanced_wrap(text) == expected
 
 
 class TestRatioPanel:

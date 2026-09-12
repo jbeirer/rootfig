@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import warnings
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 import matplotlib as mpl
@@ -25,6 +25,7 @@ from matplotlib.transforms import ScaledTranslation
 
 from rootfig.errors import RootfigWarning
 from rootfig.model.style import EXPERIMENT_STYLES, Style, StyleLike, as_style
+from rootfig.plotting.figure import fit_ylabel
 
 __all__ = [
     "DEFAULT_COLORS",
@@ -378,14 +379,22 @@ def pin_fonts(fig: Figure) -> None:
         )
 
 
-def finalize_figure(fig: Figure, ax: Axes) -> None:
+def finalize_figure(fig: Figure, ax: Axes, *, panels: Sequence[Axes] = ()) -> None:
     """Make ``fig`` render identically inside and outside its style context.
 
-    Call as the last drawing step: pins the fonts (see :func:`pin_fonts`) and then
-    anchors the experiment label (see :func:`align_experiment_label`), whose
-    point-based offset needs the final text metrics.
+    Call as the last drawing step: pins the fonts (see :func:`pin_fonts`), fits the
+    y label of each lower panel in ``panels`` (see
+    :func:`~rootfig.plotting.figure.fit_ylabel`) and then anchors the experiment
+    label (see :func:`align_experiment_label`), whose point-based offset needs the
+    final text metrics.
+
+    The order matters: fitting measures text, so it must follow the font pinning
+    that decides which font is drawn, and it changes the left margin, so it must
+    precede the label anchoring that reads the final axes geometry.
     """
     pin_fonts(fig)
+    for panel in panels:
+        fit_ylabel(panel)
     align_experiment_label(ax)
 
 
