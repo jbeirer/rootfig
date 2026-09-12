@@ -40,7 +40,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/jbeirer/rootfig"
-Documentation = "https://github.com/jbeirer/rootfig#readme"
+Documentation = "https://jbeirer.github.io/rootfig/"
 Repository = "https://github.com/jbeirer/rootfig"
 Issues = "https://github.com/jbeirer/rootfig/issues"
 
