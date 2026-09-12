@@ -3,6 +3,7 @@
 **Publication-quality figures straight from ROOT trees, without ROOT.**
 
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://jbeirer.github.io/rootfig/)
+[![DOI](https://zenodo.org/badge/1366702602.svg)](https://doi.org/10.5281/zenodo.22726311)
 [![CI](https://github.com/jbeirer/rootfig/actions/workflows/ci.yml/badge.svg)](https://github.com/jbeirer/rootfig/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jbeirer/rootfig/branch/main/graph/badge.svg)](https://codecov.io/gh/jbeirer/rootfig)
 [![PyPI](https://img.shields.io/pypi/v/rootfig.svg)](https://pypi.org/project/rootfig/)
