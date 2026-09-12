@@ -39,24 +39,14 @@ Start with a single distribution; add samples, weights, stacks and ratio
 panels as your analysis grows. Every plot gives you a matplotlib figure to
 customise and save.
 
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <a href="https://jbeirer.github.io/rootfig/gallery/#logarithmic-axes-with-log-spaced-bins"><img src="docs/images/gallery/log_axes.png" alt="Logarithmic axes with log-spaced bins" width="100%"></a>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <a href="https://jbeirer.github.io/rootfig/gallery/#a-broken-x-axis-peak-and-far-tail-without-the-empty-middle"><img src="docs/images/gallery/xbreak_ratio.png" alt="Broken x axis with a ratio panel" width="100%"></a>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <a href="https://jbeirer.github.io/rootfig/gallery/#a-correlation-matrix"><img src="docs/images/gallery/correlation.png" alt="A correlation matrix" width="100%"></a>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <a href="https://jbeirer.github.io/rootfig/gallery/#a-two-dimensional-histogram"><img src="docs/images/gallery/hist2d.png" alt="Two-dimensional histogram" width="100%"></a>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <a href="https://jbeirer.github.io/rootfig/gallery/#logarithmic-axes-with-log-spaced-bins"><img src="docs/images/gallery/log_axes.png" alt="Logarithmic axes with log-spaced bins" width="48%"></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-broken-x-axis-peak-and-far-tail-without-the-empty-middle"><img src="docs/images/gallery/xbreak_ratio.png" alt="Broken x axis with a ratio panel" width="48%"></a>
+</p>
+<p align="center">
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-correlation-matrix"><img src="docs/images/gallery/correlation.png" alt="A correlation matrix" width="48%"></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#a-two-dimensional-histogram"><img src="docs/images/gallery/hist2d.png" alt="Two-dimensional histogram" width="48%"></a>
+</p>
 
 **[Explore the gallery →](https://jbeirer.github.io/rootfig/gallery/)**
 See each figure alongside the code that makes it, from simple overlays to
