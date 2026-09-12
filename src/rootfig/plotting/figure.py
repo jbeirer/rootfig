@@ -272,7 +272,7 @@ def apply_xbreak(
         dx = d * scale * 0.6
         kwargs: dict[str, Any] = {
             "transform": axes.transAxes,
-            "color": "black",
+            "color": plt.rcParams["axes.edgecolor"],
             "clip_on": False,
             "linewidth": 1.0,
         }

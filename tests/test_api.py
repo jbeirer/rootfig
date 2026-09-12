@@ -11,6 +11,7 @@ import hist
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib.colors import to_rgba
 
 import rootfig as rf
 from rootfig.api import _split_bins
@@ -309,6 +310,32 @@ class TestPlot:
             expected = np.where(total > 0, p.histograms[2].values() / total, np.nan)
         ok = np.isfinite(expected)
         assert p.ratios[0].values[ok].tolist() == pytest.approx(expected[ok].tolist())
+
+    def test_dark_theme_overrides_experiment_style(
+        self, signal_file: Path, background_file: Path
+    ) -> None:
+        mc = [rf.Sample(signal_file, tree="events", label="Signal")]
+        observed = rf.Sample(background_file, tree="events", label="Data", entry_stop=1000)
+
+        def marker_colors(p: rf.Plot) -> set[Any]:
+            axes = [p.ax, p.ratio_ax]
+            return {
+                tuple(to_rgba(ln.get_color()))
+                for ax in axes
+                for ln in ax.lines
+                if ln.get_marker() == "o"
+            }
+
+        kwargs: dict[str, Any] = {"observed": observed, "bins": (20, 0, 200), "ratio": True}
+        with rf.dark_theme():
+            dark = rf.plot(mc, "MET", style="ATLAS", stack=True, **kwargs)
+        ink = to_rgba(rf.plotting.DARK_THEME["text.color"])
+        assert marker_colors(dark) == {ink}
+        assert dark.fig.get_facecolor()[3] == 0.0  # transparent despite ATLAS's white
+        assert to_rgba(dark.ax.xaxis.label.get_color()) == ink
+        light = rf.plot(mc, "MET", style="ATLAS", stack=True, **kwargs)
+        assert marker_colors(light) == {to_rgba("black")}
+        assert light.fig.get_facecolor() == to_rgba("white")
 
     def test_stack_ratio_requires_data(self, signal_file: Path, background_file: Path) -> None:
         with pytest.raises(ValueError, match="observed"):

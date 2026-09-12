@@ -18,6 +18,7 @@
 ::: rootfig.ratio
 ::: rootfig.log_bins
 ::: rootfig.use_style
+::: rootfig.dark_theme
 
 ## Descriptions
 

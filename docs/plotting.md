@@ -208,6 +208,10 @@ range avoids range inference.
 - `legend=False` or a location string such as `"upper left"`.
 - `style=` an experiment name or a [`Style`][rootfig.Style]; see
   [Samples, variables, cuts and styles](composable.md).
+- `with rf.dark_theme():` draws the figures made inside the block for a dark
+  page — light ink on a transparent background, applied on top of any style
+  (including experiment styles that fix a white background). Data points and
+  outlines follow the style's `text.color`.
 - `text=` extra line(s) drawn with the experiment label.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).

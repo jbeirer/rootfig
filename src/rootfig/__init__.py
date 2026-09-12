@@ -50,7 +50,7 @@ from rootfig.histograms import (
     significance,
 )
 from rootfig.model import Cut, Sample, Style, Variable, log_bins
-from rootfig.plotting import Plot, use_style
+from rootfig.plotting import Plot, dark_theme, use_style
 
 __version__ = "0.3.0"
 
@@ -80,6 +80,7 @@ __all__ = [
     "__version__",
     "correlation",
     "cutflow",
+    "dark_theme",
     "efficiency",
     "evaluate",
     "histogram",

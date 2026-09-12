@@ -79,6 +79,7 @@ from rootfig.plotting import (
     finalize_figure,
     finish_axes,
     fold_flow_bins,
+    foreground,
     label_flow_bins,
     legend_location,
     make_figure,
@@ -648,7 +649,7 @@ def plot_histograms(
                     axis,
                     style=st,
                     uncertainty=uncertainty,
-                    colors=[color_of.get(id(h), h.color or "black") for h in numerators],
+                    colors=[color_of.get(id(h), h.color or foreground()) for h in numerators],
                     ylim=ratio_ylim,
                     ylabel=ratio_label if index == 0 else "",
                 )

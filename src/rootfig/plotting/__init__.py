@@ -28,12 +28,15 @@ from rootfig.plotting.points import draw_efficiencies, draw_profiles
 from rootfig.plotting.ratio import draw_ratio_panel, draw_significance_panel, ratio_ylim
 from rootfig.plotting.result import Plot
 from rootfig.plotting.style import (
+    DARK_THEME,
     DEFAULT_COLORS,
     ROOTFIG_STYLE,
     add_experiment_label,
     align_experiment_label,
     color_cycle,
+    dark_theme,
     finalize_figure,
+    foreground,
     legend_location,
     resolve_rc,
     style_context,
@@ -41,6 +44,7 @@ from rootfig.plotting.style import (
 )
 
 __all__ = [
+    "DARK_THEME",
     "DATA_STYLE",
     "DEFAULT_COLORS",
     "ROOTFIG_STYLE",
@@ -57,6 +61,7 @@ __all__ = [
     "apply_xbreak",
     "break_segments",
     "color_cycle",
+    "dark_theme",
     "draw_correlation",
     "draw_efficiencies",
     "draw_hist2d",
@@ -68,6 +73,7 @@ __all__ = [
     "finalize_figure",
     "finish_axes",
     "fold_flow_bins",
+    "foreground",
     "label_flow_bins",
     "legend_location",
     "make_figure",

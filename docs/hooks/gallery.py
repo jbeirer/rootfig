@@ -6,11 +6,13 @@ Two kinds of marker are expanded when the page is rendered:
     the body of ``define()``: the samples, variables and style shared by the
     examples;
 ``<!-- gallery -->`` / ``<!-- gallery: name ... -->``
-    one section per example with its title, description, image
-    (``docs/images/gallery/<name>.png``) and the source of the example
-    function. A marker naming examples renders exactly those, so a few can be
-    shown before the setup section; a bare marker renders everything that no
-    earlier marker on the page has shown yet, in registration order.
+    one section per example with its title, description, images
+    (``docs/images/gallery/<name>.png``, and ``<name>-dark.png`` for the dark
+    palette, switched by Material's ``#only-light``/``#only-dark``) and the
+    source of the example function. A marker naming examples renders exactly
+    those, so a few can be shown before the setup section; a bare marker
+    renders everything that no earlier marker on the page has shown yet, in
+    registration order.
 
 The gallery module is imported, never executed, so building the docs needs no
 data and draws nothing. Because the images are also the baselines of
@@ -55,15 +57,14 @@ def _load_gallery(name: str = "rootfig_gallery_docs") -> ModuleType:
 
 
 def render_section(gallery: ModuleType, example: Any) -> str:
-    """Markdown for one example: heading, description, image, code."""
+    """Markdown for one example: heading, description, light and dark image, code."""
     code = gallery.body_source(example.func)
-    return (
-        f"## {example.title}\n\n"
-        f"{example.description}\n\n"
-        f"![{example.title}](images/gallery/{example.name}.png)"
-        f'{{ width="{example.image_width}" }}\n\n'
-        f"```python\n{code}```\n"
+    images = "".join(
+        f"![{example.title}](images/gallery/{example.name}{suffix}.png#only-{theme})"
+        f'{{ width="{example.image_width}" }}\n'
+        for suffix, theme in (("", "light"), ("-dark", "dark"))
     )
+    return f"## {example.title}\n\n{example.description}\n\n{images}\n```python\n{code}```\n"
 
 
 def expand_markers(markdown: str, gallery: ModuleType) -> str:
