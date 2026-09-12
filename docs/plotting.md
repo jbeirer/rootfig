@@ -213,10 +213,14 @@ range avoids range inference.
 - `with rf.dark_theme():` draws the figures made inside the block for a dark
   page — light ink on a transparent background, applied on top of any style
   (including experiment styles that fix a white background). Colours set in
-  `Style.rc`, background and text included, are applied after it and win, so
-  such a style is not rendered dark. Data points and outlines follow the
-  style's `text.color`. Plain matplotlib inside the block matches too: axes
-  made with `plt.subplots()` for `ax=`, and text added to `Plot.ax`.
+  `Style.rc`, background and text included, are applied after it and win for
+  the figures and axes rootfig creates, so such a style is not rendered dark.
+  Data points and outlines follow the style's `text.color`. Plain matplotlib
+  inside the block matches too: axes made with `plt.subplots()` for `ax=`, text
+  added to `Plot.ax`, and `fig.savefig()` keeps the transparent background.
+  Axes passed with `ax=` keep the properties they were created with (their
+  background, frame and ticks), so a `Style.rc` passed to that plot colours
+  only what rootfig draws into them.
 - `text=` extra line(s) drawn with the experiment label.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).

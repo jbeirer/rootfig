@@ -129,6 +129,9 @@ DARK_THEME: Mapping[str, Any] = {
     "patch.edgecolor": _DARK_INK,
     "hatch.color": _DARK_INK,
     "grid.color": "#30363d",
+    # take the figure's own (transparent) colour when saved, whatever the global setting
+    "savefig.facecolor": "auto",
+    "savefig.edgecolor": "auto",
 }
 """Colours applied by :func:`dark_theme`: light ink on a transparent background."""
 
