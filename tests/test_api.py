@@ -698,6 +698,34 @@ class TestNotebookDisplay:
         assert matplotlib.is_interactive() is before
 
 
+class TestFontLogging:
+    """Drawing and saving must not spam matplotlib's findfont warnings."""
+
+    @pytest.mark.parametrize("experiment", [None, "ATLAS", "CMS", "LHCb"])
+    def test_no_findfont_warnings_on_draw_and_save(
+        self,
+        signal_file: Path,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        experiment: str | None,
+    ) -> None:
+        import logging
+
+        plot = rf.plot(signal_file, "MET", tree="events", style=rf.Style(experiment=experiment))
+        # the warnings are emitted at draw time, i.e. after the style context has ended
+        with caplog.at_level(logging.WARNING, logger="matplotlib.font_manager"):
+            plot.fig.canvas.draw()
+            plot.save(tmp_path / "f.png")
+            plot.save(tmp_path / "f.pdf")  # a different findfont caller than Agg
+        plot.close()
+        missing = [
+            record
+            for record in caplog.records
+            if record.msg == "findfont: Font family %r not found."
+        ]
+        assert missing == []
+
+
 class TestFigureShape:
     """Every plot type fits its canvas and is saved at exactly ``figsize`` (no cropping)."""
 
