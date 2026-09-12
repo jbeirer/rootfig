@@ -13,7 +13,8 @@ All options below are keyword arguments of [`rf.plot`][rootfig.plot] (and of
   the given order (first sample at the bottom) and draws a hatched band for
   the statistical uncertainty of the total.
 - **Data**: samples with `is_data=True` (or passed as `observed=...`) are
-  black points with error bars, drawn on top and never stacked.
+  points with error bars, drawn on top and never stacked, in the style's text
+  colour (black by default) unless the sample sets `color`.
 - `errorbars=True` adds statistical error bars to non-data histograms.
 
 ## Luminosity
@@ -210,8 +211,11 @@ range avoids range inference.
   [Samples, variables, cuts and styles](composable.md).
 - `with rf.dark_theme():` draws the figures made inside the block for a dark
   page — light ink on a transparent background, applied on top of any style
-  (including experiment styles that fix a white background). Data points and
-  outlines follow the style's `text.color`.
+  (including experiment styles that fix a white background). Colours set in
+  `Style.rc`, background and text included, are applied after it and win, so
+  such a style is not rendered dark. Data points and outlines follow the
+  style's `text.color`. Axes you pass with `ax=` keep the look they were made
+  with; create them inside `plt.style.context(rf.plotting.DARK_THEME)` to match.
 - `text=` extra line(s) drawn with the experiment label.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).

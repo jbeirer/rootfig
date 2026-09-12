@@ -48,7 +48,7 @@ def draw_ratio_panel(
         (error bars carry the numerator's; the reference uncertainty is a band).
     colors
         One colour per numerator; defaults to the numerator's own colour or the
-        style cycle (black for data).
+        style cycle (``text.color`` for data).
     ylim
         Vertical range; defaults to :data:`DEFAULT_RATIO_YLIM` expanded to cover
         the points.

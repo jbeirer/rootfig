@@ -241,7 +241,7 @@ def draw_histograms(
 ) -> Drawn:
     """Draw ``histograms`` on ``ax``.
 
-    Histograms flagged ``is_data`` are always drawn as black points with error
+    Histograms flagged ``is_data`` are always drawn as points with error
     bars on top; the others are overlaid (default) or stacked.
 
     Parameters

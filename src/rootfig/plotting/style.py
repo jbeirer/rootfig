@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 from cycler import cycler
 from matplotlib.axes import Axes
+from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties, findfont, fontManager
 from matplotlib.offsetbox import AnchoredText
@@ -140,8 +141,12 @@ def dark_theme() -> Iterator[None]:
 
     :data:`DARK_THEME` is applied after the style sheet, so it also holds for
     experiment styles that fix a white background (ATLAS, LHCb, ALICE, DUNE);
-    ``Style.rc`` still wins. The background stays transparent when the figure is
-    saved, so one image suits any dark page.
+    ``Style.rc`` still wins. The background is transparent, so one image suits
+    any dark page; saving keeps it so while ``savefig.facecolor`` is ``"auto"``
+    (matplotlib's default), which takes the figure's own colour.
+
+    Axes passed with ``ax=`` keep the look they were created with; create them
+    under the same colours, ``plt.style.context(rootfig.plotting.DARK_THEME)``.
     """
     token = _theme.set(DARK_THEME)
     try:
@@ -151,8 +156,13 @@ def dark_theme() -> Iterator[None]:
 
 
 def foreground() -> str:
-    """Return the ink colour of the active style (``text.color``) for points and outlines."""
-    return str(mpl.rcParams["text.color"])
+    """Return the ink colour of the active style (``text.color``) for points and outlines.
+
+    A colour name or hex string is returned as set; an RGB(A) tuple, which the
+    rcParam also accepts, is converted to hex so it stays usable as a string.
+    """
+    color = mpl.rcParams["text.color"]
+    return color if isinstance(color, str) else to_hex(color, keep_alpha=True)
 
 
 def _mplhep_style(name: str) -> Mapping[str, Any] | None:
