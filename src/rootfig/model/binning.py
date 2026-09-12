@@ -52,10 +52,10 @@ RangeSpec: TypeAlias = tuple[float, float] | Literal["auto", "robust"] | None
   so that neither a sentinel such as ``-999`` nor a long tail dominates the
   range. The result is padded by 5 percent but clamped to the ``"auto"`` range,
   so it never reaches past the data. Each sample is charged separately for the
-  values a cut would take off its axis, and a sample with fewer than
-  :data:`ROBUST_DISCRETE_VALUES` distinct values keeps every one of them.
-  Values outside land in the under/overflow. Degenerate ranges are widened
-  symmetrically.
+  entries and the weight a cut would take off its axis, and a sample with fewer
+  than :data:`ROBUST_DISCRETE_VALUES` distinct values keeps every value that
+  survived the outlier rejection. Values outside land in the under/overflow.
+  Degenerate ranges are widened symmetrically.
 * ``"auto"`` - the finite minimum and maximum over all samples.
 """
 
@@ -182,6 +182,7 @@ def auto_range(
     arrays: Sequence[np.ndarray],
     *,
     mode: Literal["auto", "robust"] = "auto",
+    weights: Sequence[np.ndarray | None] | None = None,
 ) -> tuple[float, float]:
     """Choose a histogram range covering the finite values of all ``arrays``.
 
@@ -194,17 +195,43 @@ def auto_range(
     :data:`ROBUST_COVERAGE_BUDGET`, which cuts a long thin tail that the
     distance threshold alone keeps. Each candidate is padded by 5 percent of its
     span and clamped to the ``"auto"`` range, so the result never reaches past
-    the data or past the first step. The budget is charged per sample, and a
-    categorical sample (fewer than :data:`ROBUST_DISCRETE_VALUES` distinct
-    values) gets none, so none of its values is ever cut. Use
+    the data or past the first step. The budget is charged per sample, against
+    entries and weight alike, and a categorical sample (fewer than
+    :data:`ROBUST_DISCRETE_VALUES` distinct values) gets none, so the tightening
+    takes no value off its axis - the outlier rejection still applies to it. Use
     ``mode="auto"`` to retain the full finite extent. If MAD is zero, the mean
     absolute deviation from the median is used instead. A degenerate range (all
     values equal) is widened symmetrically; if there are no finite values at
     all, ``(0.0, 1.0)`` is returned.
+
+    Parameters
+    ----------
+    arrays
+        Flat arrays of values, one per sample.
+    mode
+        ``"auto"`` for the full finite extent, ``"robust"`` to reject outliers
+        and cut a thin tail.
+    weights
+        Fill weights aligned with ``arrays`` (``None`` per sample, or in place
+        of the whole sequence, for unweighted data). ``"robust"`` charges its
+        budget against the weight a cut would take off the axis as well as the
+        entries, so rare high-weight entries are not treated as negligible.
     """
-    values = [np.asarray(a, dtype=float).ravel() for a in arrays if len(a)]
-    finite = [v[np.isfinite(v)] for v in values]
-    finite = [v for v in finite if v.size]
+    if weights is None:
+        weights = [None] * len(arrays)
+    paired = [
+        (np.asarray(a, dtype=float).ravel(), None if w is None else np.asarray(w).ravel())
+        for a, w in zip(arrays, weights, strict=True)
+        if len(a)
+    ]
+    kept_weights: list[np.ndarray | None] = []
+    finite: list[np.ndarray] = []
+    for v, w in paired:
+        mask = np.isfinite(v)
+        if not mask.any():
+            continue
+        finite.append(v[mask])
+        kept_weights.append(None if w is None else w[mask])
     if not finite:
         return (0.0, 1.0)
     combined = np.concatenate(finite)
@@ -212,7 +239,7 @@ def auto_range(
     span = high - low
     high = high + (span * 1e-3 if span > 0 else 0.0)
     if mode == "robust":
-        low, high = _robust_range(finite, combined, low, high)
+        low, high = _robust_range(finite, kept_weights, combined, low, high)
     if not high > low:
         width = abs(low) * 0.1 if low != 0 else 0.5
         low, high = low - width, high + width
@@ -231,13 +258,37 @@ def _padded(kept: np.ndarray, low: float, high: float) -> tuple[float, float]:
     return max(kept_low - pad, low), min(kept_high + pad, high)
 
 
-def _outside(samples: Sequence[np.ndarray], low: float, high: float) -> np.ndarray:
-    """Fraction of each sample's values that ``(low, high)`` leaves out of the view."""
-    return np.array([float(((v < low) | (v > high)).mean()) for v in samples])
+def _outside(
+    samples: Sequence[np.ndarray],
+    weights: Sequence[np.ndarray | None],
+    low: float,
+    high: float,
+) -> np.ndarray:
+    """Measure what ``(low, high)`` leaves out of the view, per sample.
+
+    Row 0 is the fraction of each sample's entries, row 1 the fraction of its
+    total ``|weight|``. A rare entry can carry a large share of a histogram's
+    content, so both have to stay within budget for a cut to be cheap.
+    """
+    entries, content = [], []
+    for values, weight in zip(samples, weights, strict=True):
+        gone = (values < low) | (values > high)
+        entries.append(float(gone.mean()))
+        if weight is None:
+            content.append(entries[-1])
+        else:
+            magnitude = np.abs(weight)
+            total = float(magnitude.sum())
+            content.append(float(magnitude[gone].sum() / total) if total > 0 else entries[-1])
+    return np.array([entries, content])
 
 
 def _robust_range(
-    samples: Sequence[np.ndarray], values: np.ndarray, low: float, high: float
+    samples: Sequence[np.ndarray],
+    weights: Sequence[np.ndarray | None],
+    values: np.ndarray,
+    low: float,
+    high: float,
 ) -> tuple[float, float]:
     """Reject outliers, then cut a long tail as far as the coverage budget allows.
 
@@ -255,10 +306,16 @@ def _robust_range(
     cheap. Charging each sample for its own losses costs such a cut the whole
     sample, so the walk stops before it.
 
-    A categorical sample gets a budget of zero, so no step may take a value off
-    its axis. This too is decided per sample: pooled with a continuous one it
-    would look continuous, and its rarest category — a single entry among a
-    thousand — would be cheap enough to cut.
+    A categorical sample gets a budget of zero, so no step of the walk may take a
+    value off its axis; the outlier rejection that set ``best`` still applies to
+    it, and can have rejected a sufficiently distant category already. This too
+    is decided per sample: pooled with a continuous one it would look
+    continuous, and its rarest category - a single entry among a thousand -
+    would be cheap enough to cut.
+
+    Both the entries and the ``|weight|`` they carry have to stay within the
+    budget, since a handful of high-weight entries can be most of what a
+    histogram draws while being a rounding error in the count.
     """
     best = _padded(_reject_outliers(values, ROBUST_LADDER[0]), low, high)
     budgets = np.array(
@@ -269,12 +326,12 @@ def _robust_range(
     )
     if not budgets.any():  # nothing may be cut: no walk to take
         return best
-    outside = _outside(samples, *best)
+    outside = _outside(samples, weights, *best)
     for threshold in ROBUST_LADDER[1:]:
         candidate = _padded(_reject_outliers(values, threshold), low, high)
         if candidate[0] < best[0] or candidate[1] > best[1]:
             break  # an emptied selection falls back to every value: stop widening
-        if np.any(_outside(samples, *candidate) - outside > budgets):
+        if np.any(_outside(samples, weights, *candidate) - outside > budgets):
             break
         best = candidate
     return best
@@ -312,6 +369,7 @@ def resolve_axis(
     data: Sequence[np.ndarray] = (),
     *,
     name: str = "x",
+    weights: Sequence[np.ndarray | None] | None = None,
 ) -> Axis:
     """Turn a :class:`Variable`'s binning into a concrete ``hist`` axis.
 
@@ -326,6 +384,9 @@ def resolve_axis(
     name
         Axis name stored in the histogram. A ready-made ``hist`` axis keeps its
         own name.
+    weights
+        Fill weights aligned with ``data``, passed on to :func:`auto_range` so
+        an inferred range accounts for the content a cut would remove.
 
     Raises
     ------
@@ -354,7 +415,7 @@ def resolve_axis(
                 raise BinningError(msg)
             requested = DEFAULT_RANGE if variable.range is None else variable.range
             mode: Literal["auto", "robust"] = "robust" if requested == "robust" else "auto"
-            low, high = auto_range(data, mode=mode)
+            low, high = auto_range(data, mode=mode, weights=weights)
         return hist.axis.Regular(bins, low, high, name=name, label=label)
     if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):
         n, low, high = bins

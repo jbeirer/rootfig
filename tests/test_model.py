@@ -245,6 +245,34 @@ class TestBinning:
         samples = [rng.exponential(30, 20_000), rng.exponential(30, 20_000)]
         assert auto_range(samples, mode="robust")[1] < auto_range(samples)[1]
 
+    def test_robust_range_charges_the_budget_against_the_weights(self) -> None:
+        """Rare entries carrying most of the content are not a cheap cut.
+
+        The cluster is 0.25 percent of the entries -- inside the budget -- but
+        carries most of the ``|weight|``, so the range must keep it. Unweighted,
+        the same values are a thin tail and are cut.
+        """
+        rng = np.random.default_rng(0)
+        values = np.r_[rng.normal(0, 1, 20_000), rng.normal(8, 0.2, 50)]
+        weights = np.r_[np.ones(20_000), np.full(50, 1000.0)]
+        low, high = auto_range([values], mode="robust", weights=[weights])
+        assert high > 8.0
+        kept = (values >= low) & (values <= high)
+        assert weights[kept].sum() / weights.sum() >= 1.0 - ROBUST_COVERAGE_BUDGET
+        assert auto_range([values], mode="robust")[1] < 8.0  # unweighted: a thin tail
+
+    def test_robust_range_weights_are_optional_and_per_sample(self) -> None:
+        """``None`` weights fall back to counting entries, per sample."""
+        rng = np.random.default_rng(0)
+        plain = rng.normal(0, 1, 20_000)
+        heavy = np.r_[rng.normal(0, 1, 5_000), rng.normal(9, 0.2, 20)]
+        unweighted = auto_range([plain, heavy], mode="robust")
+        assert auto_range([plain, heavy], mode="robust", weights=None) == unweighted
+        assert auto_range([plain, heavy], mode="robust", weights=[None, None]) == unweighted
+        # weighting only the second sample keeps its far cluster on the axis
+        weights = [None, np.r_[np.ones(5_000), np.full(20, 5000.0)]]
+        assert auto_range([plain, heavy], mode="robust", weights=weights)[1] > 9.0
+
     def test_robust_range_keeps_categorical_values(self) -> None:
         """A rare category is a bin of its own, not empty space at the edge."""
         counts = np.repeat([0.0, 1.0, 2.0, 3.0], [9000, 700, 250, 50])

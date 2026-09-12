@@ -1124,7 +1124,12 @@ def profile(
         )
         for s in samples
     ]
-    axis = resolve_axis(var_x, [c.arrays[0] for c in columns], name=var_x.safe_name)
+    axis = resolve_axis(
+        var_x,
+        [c.arrays[0] for c in columns],
+        name=var_x.safe_name,
+        weights=[c.weights for c in columns],
+    )
     edges = np.asarray(axis.edges, dtype=float)
     profiles = [
         profile_of(
