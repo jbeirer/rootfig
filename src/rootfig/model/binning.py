@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_RANGE",
+    "ROBUST_COVERAGE_BUDGET",
     "ROBUST_THRESHOLD",
     "Axis",
     "Bins",
@@ -140,7 +141,31 @@ ROBUST_THRESHOLD = 30.0
 """Modified z-score (in units of the median absolute deviation) beyond which values are
 ignored by ``range="robust"``. This is a distance threshold, not a sentinel detector:
 physical tails (including log-normal and Student-t samples) can exceed it, and
-sentinels are rejected only when sufficiently far from the bulk of the data."""
+sentinels are rejected only when sufficiently far from the bulk of the data.
+
+It is the widest range ``"robust"`` will produce: a sentinel far from the bulk is
+rejected here, and :data:`ROBUST_COVERAGE_BUDGET` may then tighten the result
+further, never past it."""
+
+ROBUST_COVERAGE_BUDGET = 0.005
+"""Fraction of the entries ``range="robust"`` may move out of the view to cut a tail.
+
+:data:`ROBUST_THRESHOLD` measures a distance from the bulk, so a tail that reaches
+far but thins out smoothly stays inside it and leaves the interesting part of the
+distribution in a small corner of the axis. Starting from that range, the threshold
+is tightened along :data:`ROBUST_LADDER` for as long as the entries leaving the view
+stay within this budget of the entries already outside it."""
+
+ROBUST_LADDER = (30.0, 20.0, 15.0, 12.0, 10.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0)
+"""Thresholds tried by ``range="robust"``, widest first. Tightening stops at the first
+one that would cost more than :data:`ROBUST_COVERAGE_BUDGET`."""
+
+ROBUST_DISCRETE_VALUES = 20
+"""Number of distinct values below which a sample counts as categorical.
+
+Counts, flags and small multiplicities have no tail to cut: every value is a
+category of its own, and dropping the rarest ones loses a bin rather than empty
+space. Such samples are left at :data:`ROBUST_THRESHOLD`."""
 
 
 def auto_range(
@@ -153,13 +178,18 @@ def auto_range(
     ``mode="auto"`` uses the overall minimum and maximum, with the upper edge
     nudged up so the maximum value lands inside the last bin. ``mode="robust"``
     first discards outliers whose modified z-score (``0.6745 * |x - median| /
-    MAD``) exceeds :data:`ROBUST_THRESHOLD`, and pads the result by 5 percent
-    of its span, clamped to the ``"auto"`` range. This can reject both sentinels
-    and physical tails; use ``mode="auto"`` to retain the full finite extent.
-    If MAD is zero, the mean absolute deviation from the median is used instead.
-    The two modes agree exactly when nothing is rejected. A degenerate
-    range (all values equal) is widened symmetrically; if there are no finite
-    values at all, ``(0.0, 1.0)`` is returned.
+    MAD``) exceeds :data:`ROBUST_THRESHOLD`, which rejects sentinels and other
+    values far from the bulk. It then tightens the threshold along
+    :data:`ROBUST_LADDER` while the entries leaving the view stay within
+    :data:`ROBUST_COVERAGE_BUDGET`, which cuts a long thin tail that the
+    distance threshold alone keeps. Each candidate is padded by 5 percent of its
+    span and clamped to the ``"auto"`` range, so the result never reaches past
+    the data or past the first step. Categorical samples (fewer than
+    :data:`ROBUST_DISCRETE_VALUES` distinct values) are not tightened. Use
+    ``mode="auto"`` to retain the full finite extent. If MAD is zero, the mean
+    absolute deviation from the median is used instead. A degenerate range (all
+    values equal) is widened symmetrically; if there are no finite values at
+    all, ``(0.0, 1.0)`` is returned.
     """
     values = [np.asarray(a, dtype=float).ravel() for a in arrays if len(a)]
     finite = [v[np.isfinite(v)] for v in values]
@@ -171,17 +201,59 @@ def auto_range(
     span = high - low
     high = high + (span * 1e-3 if span > 0 else 0.0)
     if mode == "robust":
-        kept = _reject_outliers(combined)
-        kept_low, kept_high = float(kept.min()), float(kept.max())
-        pad = 0.05 * (kept_high - kept_low)
-        # Clamped to the data: padding past it would add empty bins, could give a
-        # positive variable a negative lower edge, and would make "robust" differ
-        # from "auto" even when there is no outlier to reject.
-        low, high = max(kept_low - pad, low), min(kept_high + pad, high)
+        low, high = _robust_range(combined, low, high)
     if not high > low:
         width = abs(low) * 0.1 if low != 0 else 0.5
         low, high = low - width, high + width
     return (low, high)
+
+
+def _padded(kept: np.ndarray, low: float, high: float) -> tuple[float, float]:
+    """Pad the extent of ``kept`` by 5 percent of its span, clamped to ``(low, high)``.
+
+    Clamping to the data keeps the padding from adding empty bins or giving a
+    positive variable a negative lower edge, and makes the padded range identical
+    to the ``"auto"`` one whenever there was nothing to reject.
+    """
+    kept_low, kept_high = float(kept.min()), float(kept.max())
+    pad = 0.05 * (kept_high - kept_low)
+    return max(kept_low - pad, low), min(kept_high + pad, high)
+
+
+def _robust_range(values: np.ndarray, low: float, high: float) -> tuple[float, float]:
+    """Reject outliers, then cut a long tail as far as the coverage budget allows.
+
+    ``(low, high)`` is the ``"auto"`` range, which bounds the result. The first
+    step of :data:`ROBUST_LADDER` is :data:`ROBUST_THRESHOLD` and sets that bound;
+    later steps are accepted only while they push no more than
+    :data:`ROBUST_COVERAGE_BUDGET` of the entries out of the view beyond what the
+    first step already did, and the first step that costs more ends the walk.
+    """
+    best = _padded(_reject_outliers(values, ROBUST_LADDER[0]), low, high)
+    if _distinct_values_below(values, ROBUST_DISCRETE_VALUES):
+        return best
+    outside = float(((values < best[0]) | (values > best[1])).mean())
+    for threshold in ROBUST_LADDER[1:]:
+        candidate = _padded(_reject_outliers(values, threshold), low, high)
+        if candidate[0] < best[0] or candidate[1] > best[1]:
+            break  # an emptied selection falls back to every value: stop widening
+        cost = float(((values < candidate[0]) | (values > candidate[1])).mean())
+        if cost - outside > ROBUST_COVERAGE_BUDGET:
+            break
+        best = candidate
+    return best
+
+
+def _distinct_values_below(values: np.ndarray, limit: int) -> bool:
+    """Whether ``values`` takes fewer than ``limit`` distinct values.
+
+    A strided probe answers the common continuous case without sorting the whole
+    array; only a sample that looks categorical is counted exactly.
+    """
+    step = max(1, values.size // (4 * limit))
+    if np.unique(values[::step]).size >= limit:
+        return False
+    return bool(np.unique(values).size < limit)
 
 
 def _reject_outliers(values: np.ndarray, threshold: float = ROBUST_THRESHOLD) -> np.ndarray:

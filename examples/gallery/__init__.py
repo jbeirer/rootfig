@@ -125,15 +125,16 @@ def quick() -> rf.Plot:
 @example("overlay_ratio", "Several samples, normalised, with a ratio panel")
 def overlay_ratio() -> rf.Plot:
     """A ``{label: file}`` mapping gives one histogram per sample with a binning shared by
-    all. ``normalize=True`` scales each to unit area and ``ratio=True`` adds a panel with
-    every sample divided by the first, uncertainties propagated."""
+    all. An integer ``bins`` infers the range from every sample at once, cutting the thin
+    end of the tail. ``normalize=True`` scales each to unit area and ``ratio=True`` adds a
+    panel with every sample divided by the first, uncertainties propagated."""
     return rf.plot(
         {"Signal": "signal.root", "Z + jets": "background.root"},
         "Muon_pt",
         tree="events",
         selection="Muon_isTight and abs(Muon_eta) < 2.5",
         weight="weight",
-        bins=(40, 0, 400),
+        bins=40,
         unit="GeV",
         normalize=True,
         ratio=True,
@@ -211,11 +212,11 @@ def log_axes(signal: rf.Sample, zjets: rf.Sample, diboson: rf.Sample) -> rf.Plot
 )
 def robust_range(signal: rf.Sample, zjets: rf.Sample) -> rf.Plot:
     """Sentinels such as ``-999`` wreck an automatic range, so an integer ``bins`` without an
-    explicit range infers one robustly: far outliers are ignored when choosing the axis
-    (nothing is removed from the data, they end up in the underflow, where the flow arrow
-    points at them). ``range="auto"`` asks for the full finite minimum and maximum instead.
-    For a distribution with nothing far out the two agree exactly. Passing ``ax=`` draws into
-    your own axes, so two rootfig plots share one figure."""
+    explicit range infers one robustly: far outliers are ignored when choosing the axis, and
+    the thin end of a tail is cut as long as few entries leave the view (nothing is removed
+    from the data, it ends up in the flow bins, where the arrows point at it).
+    ``range="auto"`` asks for the full finite minimum and maximum instead. Passing ``ax=``
+    draws into your own axes, so two rootfig plots share one figure."""
     _, (left, right) = plt.subplots(1, 2, figsize=(11, 4.2))
     rf.plot([signal, zjets], "lep_iso", bins=40, range="auto", ax=left, title='range="auto"')
     return rf.plot([signal, zjets], "lep_iso", bins=40, ax=right, title="default (robust)")

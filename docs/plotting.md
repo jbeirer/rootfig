@@ -114,16 +114,23 @@ rf.plot("events.root", "d0_significance", bins=50, range=(-5, 5))  # explicit
     and `rf.summarize` are computed before binning, so means and entry counts
     cover the full sample whichever range is used.
 
-Outliers are rejected by their modified z-score (`0.6745 * |x - median| / MAD`),
-with a threshold of 30. If MAD is zero, the mean absolute deviation from the
-median is used instead. The result is padded by 5 percent, clamped to the
-`"auto"` range (whose upper edge is nudged above the maximum to include it).
-Degenerate ranges are widened symmetrically. Whenever no values exceed the
-threshold, the two modes give *exactly* the same edges. The threshold cannot
-distinguish sentinels from valid data. Cases where you may want `range="auto"`:
+This happens in two steps. Outliers are rejected by their modified z-score
+(`0.6745 * |x - median| / MAD`), with a threshold of 30, which removes sentinels
+and anything else far from the bulk. The threshold is then tightened while no
+more than 0.5 percent of the entries leave the view, which cuts a tail that
+reaches far but thins out smoothly — the kind a distance threshold keeps and
+that leaves the interesting part of the distribution in a corner of the axis.
+A sample with fewer than 20 distinct values is categorical, has no tail to cut
+and is left at the first step. If MAD is zero, the mean absolute deviation from
+the median is used instead. Every candidate is padded by 5 percent and clamped
+to the `"auto"` range (whose upper edge is nudged above the maximum to include
+it), so the range never reaches past the data. Degenerate ranges are widened
+symmetrically. The threshold cannot distinguish sentinels from valid data.
+Cases where you may want `range="auto"`:
 
 - a distribution with a long tail (log-normal, Student-t, or an invariant mass
-  with a continuum) can have valid tail entries pushed into the flow bins;
+  with a continuum) has valid tail entries pushed into the flow bins — this is
+  what the second step is for, so `"auto"` is the way to see the whole tail;
 - a sparse discrete distribution can lose rare valid values from the visible
   range, for example the ones in a binary sample with 999 zeros and one one;
 - a sample sitting tens of deviations away from a narrow bulk is treated as an
@@ -137,12 +144,28 @@ Inferring a robust range requires additional median and deviation calculations
 over the combined samples, with additional time and memory costs. An explicit
 range avoids range inference.
 
+!!! tip "The plot is mostly empty space"
+
+    The inferred range cuts a thin tail, but only as far as its coverage
+    budget allows. A distribution whose tail carries more than that — a heavy
+    Student-t, a steeply falling spectrum over several decades — still spreads
+    the axis over bins holding a fraction of a percent of the peak. Three ways
+    out, in order of how often they are what you want:
+
+    - `range=(a, b)` around the core. Nothing is lost: entries outside go to
+      the flow bins, where `flow="hint"` (the default) marks them with arrows
+      and `flow="sum"` folds them into the edge bins.
+    - `logy=True`, which makes the tail visible instead of hiding it.
+    - `xbreak=(a, b)` to cut the empty middle out and keep both ends, with
+      `range="auto"` or an explicit range so the break lies inside the axis.
+
 ## Axes
 
 - `logx`, `logy`: logarithmic scales. Log-spaced bins: `bins=rf.log_bins(n, low, high)`.
 - `xlim`, `ylim`: limits; `ylim=(None, 1e4)` keeps the automatic lower value.
-  Automatic y limits leave room for the legend and label (a factor 1.45 in
-  linear scale, 30 in log scale).
+  Automatic y limits add a small margin above the tallest bin (a factor 1.2 in
+  linear scale, 12 in log scale) and then raise it further as the drawn
+  legend, label, statistics box and text lines need.
 - `xbreak=(a, b)`: cut the range between `a` and `b` out of the x axis and
   draw the two remaining segments side by side with break marks, sharing the
   y axis (and the ratio panel, if any). Useful for a peak plus a far tail or
@@ -162,9 +185,11 @@ range avoids range inference.
 - `xlabel`, `ylabel`, `unit`, `title`. The title sits above the axes, where
   the CMS-style label is also drawn; with such a style prefer `text=`.
 - Automatic y limits leave room for the legend, the experiment label, the
-  statistics box and `text` lines: the upper limit is raised until none of
-  them covers a histogram (the legend picks a free upper corner). A `ylim`
-  with an explicit upper value switches this off.
+  statistics box and `text` lines: a small fixed margin is added above the
+  tallest bin, and the upper limit is then raised until none of them covers a
+  histogram (the legend picks a free upper corner). Room is only made for
+  what is actually drawn, so a plot without annotations keeps the margin.
+  A `ylim` with an explicit upper value switches this off.
 
 ## Legend, labels, text and statistics
 

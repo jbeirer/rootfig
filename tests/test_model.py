@@ -26,6 +26,7 @@ from rootfig.model import (
     log_bins,
     resolve_axis,
 )
+from rootfig.model.binning import ROBUST_COVERAGE_BUDGET
 
 
 class TestCut:
@@ -151,9 +152,7 @@ class TestBinning:
     @pytest.mark.parametrize(
         "values",
         [
-            pytest.param(np.random.default_rng(1).normal(0, 1, 20_000), id="gauss"),
             pytest.param(np.random.default_rng(2).uniform(0, 1, 20_000), id="uniform"),
-            pytest.param(np.random.default_rng(3).exponential(30, 20_000), id="exponential"),
             pytest.param(
                 np.concatenate(
                     [
@@ -170,9 +169,51 @@ class TestBinning:
             pytest.param(np.repeat([0.0, 1.0, 2.0, 3.0], [9000, 700, 250, 50]), id="counts"),
         ],
     )
-    def test_robust_range_is_a_no_op_without_outliers(self, values: np.ndarray) -> None:
-        """These samples stay within the threshold and must have identical edges."""
+    def test_robust_range_is_a_no_op_without_a_tail(self, values: np.ndarray) -> None:
+        """Nothing to reject and nothing to cut: these must have identical edges.
+
+        The distributions with a hard edge end where the data ends, and the
+        categorical ones are excluded from tightening by their value count.
+        """
         assert auto_range([values], mode="robust") == auto_range([values])
+
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
+            pytest.param(np.random.default_rng(1).normal(0, 1, 20_000), (-3.3, 3.3), id="gauss"),
+            pytest.param(
+                np.random.default_rng(3).exponential(30, 20_000), (0.0, 159.0), id="exponential"
+            ),
+            pytest.param(
+                np.where(
+                    np.random.default_rng(8).random(100_000) < 0.06,
+                    np.random.default_rng(9).normal(0, 4, 100_000),
+                    np.random.default_rng(10).normal(0, 1, 100_000),
+                ),
+                (-6.9, 6.9),
+                id="gaussian-core-with-tails",
+            ),
+        ],
+    )
+    def test_robust_range_cuts_a_thin_tail_within_the_budget(
+        self, values: np.ndarray, expected: tuple[float, float]
+    ) -> None:
+        """A tail the distance threshold keeps is cut while few entries leave the view."""
+        low, high = auto_range([values], mode="robust")
+        full_low, full_high = auto_range([values])
+        assert (low, high) == pytest.approx(expected, abs=0.5)
+        assert full_low <= low  # tightened, never widened
+        assert high < full_high
+        outside = float(((values < low) | (values > high)).mean())
+        assert outside <= ROBUST_COVERAGE_BUDGET
+
+    def test_robust_range_keeps_categorical_values(self) -> None:
+        """A rare category is a bin of its own, not empty space at the edge."""
+        counts = np.repeat([0.0, 1.0, 2.0, 3.0], [9000, 700, 250, 50])
+        assert auto_range([counts], mode="robust")[1] == auto_range([counts])[1]
+        # the same shape spread over enough distinct values is tightened
+        spread = np.repeat(np.linspace(0.0, 30.0, 30), [1000] * 10 + [50] * 19 + [1])
+        assert auto_range([spread], mode="robust")[1] < auto_range([spread])[1]
 
     def test_robust_range_never_extends_past_the_data(self) -> None:
         rng = np.random.default_rng(0)

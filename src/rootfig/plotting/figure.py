@@ -320,11 +320,17 @@ def finish_axes(
     ylim: tuple[float | None, float | None] | None,
     logx: bool,
     logy: bool,
-    headroom: float = 1.45,
-    log_headroom: float = 30.0,
+    headroom: float = 1.20,
+    log_headroom: float = 12.0,
     ymin_linear: Literal["zero", "auto"] = "zero",
 ) -> None:
     """Apply labels, scales and limits, leaving headroom for legends and labels.
+
+    ``headroom`` is a small fixed margin above the tallest bin: enough to keep the
+    histogram off the top spine, not enough to reserve space for artists that may
+    not be there. Room for a legend, an experiment label, a statistics box or a
+    text line is made afterwards by :func:`raise_ylim_above`, which measures the
+    drawn artists and raises the limit only as far as they actually need.
 
     Parameters
     ----------
@@ -455,7 +461,7 @@ def raise_ylim_above(
     heights: np.ndarray,
     logy: bool,
     floating: Sequence[Artist] = (),
-    margin: float = 1.05,
+    margin: float = 1.08,
 ) -> None:
     """Raise the upper y limit of ``axes`` until ``obstacles`` clear the histograms.
 
