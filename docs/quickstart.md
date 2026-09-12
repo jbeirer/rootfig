@@ -19,6 +19,11 @@ the weight (nothing else), evaluates them, fills a `hist.Hist` and draws it.
 If the file contains exactly one tree you can leave `tree` out. The file can
 also be a glob (`"run_*.root"`), a list of files, or `"file.root:tree"`.
 
+A bare `bins=50` infers the range from the data, ignoring far outliers so that
+sentinel values such as `-999` do not set the axis; pass `range=(low, high)` to
+be explicit or `range="auto"` for the full extent (see
+[Binning and range](plotting.md#binning-and-range)).
+
 The return value is a [`Plot`][rootfig.Plot] with `fig`, `ax`, `hists` and a
 `save()` method:
 

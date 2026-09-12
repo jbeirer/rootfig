@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from rootfig.model.variables import Variable
 
 __all__ = [
+    "DEFAULT_RANGE",
     "ROBUST_THRESHOLD",
     "Axis",
     "Bins",
@@ -43,11 +44,16 @@ RangeSpec: TypeAlias = tuple[float, float] | Literal["auto", "robust"] | None
 """How to choose the histogram range when ``bins`` is an integer.
 
 * ``(low, high)`` - explicit.
-* ``"auto"`` (default) - the finite minimum and maximum over all samples.
-* ``"robust"`` - like ``"auto"`` but ignoring outliers far from the bulk of
-  the data (see :func:`auto_range`), padded by 5 percent; useful when
-  sentinel values such as ``-999`` would otherwise dominate the range.
+* ``"robust"`` (default) - like ``"auto"`` but ignoring outliers far from the
+  bulk of the data (see :func:`auto_range`), so that sentinel values such as
+  ``-999`` do not dominate the range. The result is padded by 5 percent but
+  is clamped to the ``"auto"`` range, so it is identical to ``"auto"`` whenever
+  there is nothing to reject. Degenerate ranges are widened symmetrically.
+* ``"auto"`` - the finite minimum and maximum over all samples.
 """
+
+DEFAULT_RANGE: RangeSpec = "robust"
+"""Range inference used when a :class:`~rootfig.model.Variable` does not ask for one."""
 
 
 # --------------------------------------------------------------------------------------
@@ -130,10 +136,11 @@ def _edges_from(bins: Any) -> np.ndarray:
     return edges
 
 
-ROBUST_THRESHOLD = 10.0
+ROBUST_THRESHOLD = 30.0
 """Modified z-score (in units of the median absolute deviation) beyond which values are
-ignored by ``range="robust"``. Generous enough to keep physical tails, strict enough to
-drop sentinel values such as ``-999``."""
+ignored by ``range="robust"``. This is a distance threshold, not a sentinel detector:
+physical tails (including log-normal and Student-t samples) can exceed it, and
+sentinels are rejected only when sufficiently far from the bulk of the data."""
 
 
 def auto_range(
@@ -146,11 +153,13 @@ def auto_range(
     ``mode="auto"`` uses the overall minimum and maximum, with the upper edge
     nudged up so the maximum value lands inside the last bin. ``mode="robust"``
     first discards outliers whose modified z-score (``0.6745 * |x - median| /
-    MAD``) exceeds :data:`ROBUST_THRESHOLD`, which removes sentinel values such
-    as ``-999`` without trimming ordinary tails, and pads the result by 5
-    percent of its span. A degenerate range (all values equal) is widened
-    symmetrically; if there are no finite values at all, ``(0.0, 1.0)`` is
-    returned.
+    MAD``) exceeds :data:`ROBUST_THRESHOLD`, and pads the result by 5 percent
+    of its span, clamped to the ``"auto"`` range. This can reject both sentinels
+    and physical tails; use ``mode="auto"`` to retain the full finite extent.
+    If MAD is zero, the mean absolute deviation from the median is used instead.
+    The two modes agree exactly when nothing is rejected. A degenerate
+    range (all values equal) is widened symmetrically; if there are no finite
+    values at all, ``(0.0, 1.0)`` is returned.
     """
     values = [np.asarray(a, dtype=float).ravel() for a in arrays if len(a)]
     finite = [v[np.isfinite(v)] for v in values]
@@ -158,15 +167,17 @@ def auto_range(
     if not finite:
         return (0.0, 1.0)
     combined = np.concatenate(finite)
+    low, high = float(combined.min()), float(combined.max())
+    span = high - low
+    high = high + (span * 1e-3 if span > 0 else 0.0)
     if mode == "robust":
         kept = _reject_outliers(combined)
-        low, high = float(kept.min()), float(kept.max())
-        pad = 0.05 * (high - low)
-        low, high = low - pad, high + pad
-    else:
-        low, high = float(combined.min()), float(combined.max())
-        span = high - low
-        high = high + (span * 1e-3 if span > 0 else 0.0)
+        kept_low, kept_high = float(kept.min()), float(kept.max())
+        pad = 0.05 * (kept_high - kept_low)
+        # Clamped to the data: padding past it would add empty bins, could give a
+        # positive variable a negative lower edge, and would make "robust" differ
+        # from "auto" even when there is no outlier to reject.
+        low, high = max(kept_low - pad, low), min(kept_high + pad, high)
     if not high > low:
         width = abs(low) * 0.1 if low != 0 else 0.5
         low, high = low - width, high + width
@@ -202,7 +213,8 @@ def resolve_axis(
         The variable whose ``bins`` and ``range`` are interpreted.
     data
         Flat arrays of values (one per sample) used to infer the range when
-        ``bins`` is an integer and ``range`` is ``"auto"``/``"robust"``.
+        ``bins`` is an integer and ``range`` is ``"auto"``/``"robust"`` or left
+        unset (which uses :data:`DEFAULT_RANGE`).
     name
         Axis name stored in the histogram. A ready-made ``hist`` axis keeps its
         own name.
@@ -232,7 +244,8 @@ def resolve_axis(
                     "pass range=(low, high) or bins=(n, low, high)"
                 )
                 raise BinningError(msg)
-            mode: Literal["auto", "robust"] = "robust" if variable.range == "robust" else "auto"
+            requested = DEFAULT_RANGE if variable.range is None else variable.range
+            mode: Literal["auto", "robust"] = "robust" if requested == "robust" else "auto"
             low, high = auto_range(data, mode=mode)
         return hist.axis.Regular(bins, low, high, name=name, label=label)
     if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):

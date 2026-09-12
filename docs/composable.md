@@ -61,14 +61,16 @@ What to histogram and how to present it.
 ```python
 pt = rf.Variable("Muon_pt", bins=(50, 0, 200), label=r"$p_T^{\mu}$", unit="GeV")
 met = rf.Variable(
-    "MET / 1000", bins=40, range="robust", label=r"$E_T^{miss}$", unit="TeV", log=True, name="met"
+    "MET / 1000", bins=40, range="auto", label=r"$E_T^{miss}$", unit="TeV", log=True, name="met"
 )
 ```
 
-- `bins`: an `int` (range from the data), `(n, low, high)`, a sequence of
-  edges (e.g. `rf.log_bins(30, 1, 1000)`), or a `hist.axis.Regular`/`Variable`.
-- `range`: `(low, high)`, `"auto"` (finite min/max over all samples) or
-  `"robust"` (ignores far outliers such as `-999` sentinels).
+- `bins`: an `int` (range inferred from the data), `(n, low, high)`, a sequence
+  of edges (e.g. `rf.log_bins(30, 1, 1000)`), or a `hist.axis.Regular`/`Variable`.
+- `range`: `(low, high)`, `"robust"` (the default: ignores far outliers such as
+  `-999` sentinels, which then land in the under/overflow) or `"auto"` (the
+  finite min/max over all samples). See
+  [Binning and range](plotting.md#binning-and-range).
 - `label` and `unit` form the axis label `label [unit]`; the unit also appears
   in the automatic y label (`Events / 4 GeV`).
 - `name` is used for file names by `Plot.save(directory)`; it must be a plain
