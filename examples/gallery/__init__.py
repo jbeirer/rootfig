@@ -14,6 +14,7 @@ registry and the source extraction in :mod:`.registry`.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,7 +36,6 @@ __all__ = [
     "example",
     "main",
     "make_dataset",
-    "toy_files",
 ]
 
 DEFAULT_OUT = Path(__file__).resolve().parents[1] / "out"
@@ -43,14 +43,8 @@ DEFAULT_OUT = Path(__file__).resolve().parents[1] / "out"
 
 @dataclass
 class Dataset:
-    """Everything the examples refer to: files, samples, variables, a style and the output
-    directory."""
+    """The objects shared by the examples; the toy files are named by relative path."""
 
-    signal_file: Path
-    background_file: Path
-    diboson_file: Path
-    data_file: Path
-    out: Path
     signal: rf.Sample
     zjets: rf.Sample
     diboson: rf.Sample
@@ -62,29 +56,18 @@ class Dataset:
     atlas: rf.Style
 
 
-def toy_files(out: Path) -> dict[str, Path]:
-    """The four toy files in ``out``, keyed as :func:`define` takes them."""
-    return {
-        "signal_file": out / "signal.root",
-        "background_file": out / "background.root",
-        "diboson_file": out / "diboson.root",
-        "data_file": out / "data.root",
-    }
-
-
-def define(
-    out: Path, signal_file: Path, background_file: Path, diboson_file: Path, data_file: Path
-) -> Dataset:
+def define() -> Dataset:
     """Describe the samples, variables and style that more than one example needs.
 
     The body of this function is the *Setup* section of ``docs/gallery.md``, so it
     stays deliberately small: anything only one example uses is defined in that
-    example instead.
+    example instead. Examples run inside the directory holding the toy files
+    (see :meth:`Example.run`), hence the bare file names.
     """
-    signal = rf.Sample(signal_file, tree="events", label="Signal", weight="weight", scale=0.03)
-    zjets = rf.Sample(background_file, tree="events", label="Z + jets", weight="weight")
-    diboson = rf.Sample(diboson_file, tree="events", label="Diboson", weight="weight", scale=0.15)
-    data = rf.Sample(data_file, tree="events", label="Data", is_data=True)
+    signal = rf.Sample("signal.root", tree="events", label="Signal", weight="weight", scale=0.03)
+    zjets = rf.Sample("background.root", tree="events", label="Z + jets", weight="weight")
+    diboson = rf.Sample("diboson.root", tree="events", label="Diboson", weight="weight", scale=0.15)
+    data = rf.Sample("data.root", tree="events", label="Data", is_data=True)
     mc = [zjets, diboson, signal]  # stacked bottom to top
 
     pt = rf.Variable("Muon_pt", bins=(30, 0, 300), label=r"$p_T^{\mu}$", unit="GeV")
@@ -94,11 +77,6 @@ def define(
     atlas = rf.Style(experiment="ATLAS", status="Internal", lumi=140, com=13.6)
 
     return Dataset(
-        signal_file=signal_file,
-        background_file=background_file,
-        diboson_file=diboson_file,
-        data_file=data_file,
-        out=out,
         signal=signal,
         zjets=zjets,
         diboson=diboson,
@@ -112,23 +90,29 @@ def define(
 
 
 def make_dataset(out: Path) -> Dataset:
-    """Write the toy files into ``out`` and return the :class:`Dataset` describing them."""
+    """Write the toy files into ``out`` and return the shared :class:`Dataset`.
+
+    ``define()`` names the files by bare relative path and a ``Sample`` checks that
+    its files exist, so it runs inside ``out`` — as the examples do later.
+    """
     write_dataset(out)
-    return define(out, **toy_files(out))
+    with contextlib.chdir(out):
+        return define()
 
 
 # --------------------------------------------------------------------------------------
-# Examples. Parameters are Dataset attributes; bodies are what a user would write.
+# Examples. Parameters are Dataset attributes; bodies are what a user would write in the
+# directory holding the toy files.
 # --------------------------------------------------------------------------------------
 
 
 @example("quick", "The one-liner")
-def quick(signal_file: Path) -> rf.Plot:
+def quick() -> rf.Plot:
     """A file, a branch, a selection and a binning. rootfig reads only the branches it
     needs, applies the cut to each muon and draws the result with sensible defaults.
     ``xlabel`` and ``unit`` dress the axes (a ``Variable`` does the same, reusably)."""
     return rf.plot(
-        signal_file,
+        "signal.root",
         "Muon_pt",
         tree="events",
         selection="Muon_pt > 20",
@@ -139,12 +123,12 @@ def quick(signal_file: Path) -> rf.Plot:
 
 
 @example("overlay_ratio", "Several samples, normalised, with a ratio panel")
-def overlay_ratio(signal_file: Path, background_file: Path) -> rf.Plot:
+def overlay_ratio() -> rf.Plot:
     """A ``{label: file}`` mapping gives one histogram per sample with a binning shared by
     all. ``normalize=True`` scales each to unit area and ``ratio=True`` adds a panel with
     every sample divided by the first, uncertainties propagated."""
     return rf.plot(
-        {"Signal": signal_file, "Z + jets": background_file},
+        {"Signal": "signal.root", "Z + jets": "background.root"},
         "Muon_pt",
         tree="events",
         selection="Muon_isTight and abs(Muon_eta) < 2.5",
@@ -379,17 +363,15 @@ def correlation(signal: rf.Sample) -> rf.Plot:
 
 
 @example("luminosity", "Cross sections and a luminosity instead of hand-made scale factors")
-def luminosity(
-    signal_file: Path, background_file: Path, diboson_file: Path, mll: rf.Variable
-) -> rf.Plot:
+def luminosity(mll: rf.Variable) -> rf.Plot:
     """Samples carrying ``xsec`` (and ``ngen``, here the number of entries) are scaled to
     expected yields with ``lumi=``: weights are multiplied by ``xsec * lumi / ngen``. Units
     may be given in the strings; the luminosity also lands in the label. Any experiment name
     works in a ``Style``, with GeV and ab^-1 where a lepton collider needs them."""
     # the same three toy files, this time as e+e- processes with a cross section each
-    zh = rf.Sample(signal_file, tree="events", label="ZH", weight="weight", xsec="0.2 pb")
-    ww = rf.Sample(background_file, tree="events", label="WW", weight="weight", xsec="16.4 pb")
-    zz = rf.Sample(diboson_file, tree="events", label="ZZ", weight="weight", xsec="1.4 pb")
+    zh = rf.Sample("signal.root", tree="events", label="ZH", weight="weight", xsec="0.2 pb")
+    ww = rf.Sample("background.root", tree="events", label="WW", weight="weight", xsec="16.4 pb")
+    zz = rf.Sample("diboson.root", tree="events", label="ZZ", weight="weight", xsec="1.4 pb")
     fcc = rf.Style(experiment="FCC-ee", status="Simulation", com="240 GeV")
 
     return rf.plot(
@@ -425,22 +407,23 @@ def profile(signal: rf.Sample, zjets: rf.Sample, met: rf.Variable) -> rf.Plot:
 
 
 @example("many_plots", "Many plots in a loop, saved by variable name")
-def many_plots(mc: list[rf.Sample], data: rf.Sample, atlas: rf.Style, out: Path) -> rf.Plot:
+def many_plots(mc: list[rf.Sample], data: rf.Sample, atlas: rf.Style) -> rf.Plot:
     """The typical analysis script: a list of variables, one call each, saved to a directory.
-    ``Plot.save`` names the file after the variable and can write several formats at once."""
+    Given a directory (created if needed), ``Plot.save`` names the file after the variable;
+    ``formats`` writes several at once."""
     selection = rf.Cut("count(Muon_isTight) >= 1") & "nJet >= 1"
     variables = [
         rf.Variable("MET", bins=(40, 0, 400), label=r"$E_T^{miss}$", unit="GeV"),
         rf.Variable("nMuon", bins=(7, -0.5, 6.5), label=r"$N_{\mu}$"),
         rf.Variable("Muon_phi", bins=(32, -3.2, 3.2), label=r"$\phi^{\mu}$", unit="rad"),
     ]
-    plots = out / "plots"
-    plots.mkdir(exist_ok=True)
     for variable in variables:
         p = rf.plot(
             mc, variable, observed=data, selection=selection, stack=True, ratio=True, style=atlas
         )
-        p.save(plots, formats=["pdf", "png"])  # plots/MET.pdf, plots/MET.png, plots/nMuon.pdf ...
+        p.save(
+            "plots/", formats=["pdf", "png"]
+        )  # plots/MET.pdf, plots/MET.png, plots/nMuon.pdf ...
     return p
 
 
@@ -451,23 +434,25 @@ def many_plots(mc: list[rf.Sample], data: rf.Sample, atlas: rf.Style, out: Path)
 
 def main(out: Path = DEFAULT_OUT) -> None:
     """Write the toy dataset and every example figure into ``out``."""
+    out = out.resolve()  # the examples run inside it; keep saving here after they return
     dataset = make_dataset(out)
     for number, ex in enumerate(EXAMPLES, start=1):
-        plot = ex.run(dataset)
+        plot = ex.run(dataset, cwd=out)
         plot.save(out / f"{number:02d}_{ex.name}.png", dpi=150)
         plot.close()
         print(f"{number:02d}_{ex.name}.png  {ex.title}")
 
-    # things that are not figures
-    print()
-    print(rf.summarize(dataset.mc, ["MET", "Muon_pt"], selection="nMuon > 0"))
-    print()
-    print(
-        rf.cutflow(
-            dataset.mc,
-            ["nMuon >= 2", rf.Cut("MET > 50", label="MET > 50 GeV"), "any(Jet_btag > 0.8)"],
+    # things that are not figures; like the examples, they read the toy files by bare name
+    with contextlib.chdir(out):
+        print()
+        print(rf.summarize(dataset.mc, ["MET", "Muon_pt"], selection="nMuon > 0"))
+        print()
+        print(
+            rf.cutflow(
+                dataset.mc,
+                ["nMuon >= 2", rf.Cut("MET > 50", label="MET > 50 GeV"), "any(Jet_btag > 0.8)"],
+            )
         )
-    )
-    events = rf.load(dataset.signal, ["MET", "count(Muon_pt)"], selection="nJet >= 2")
+        events = rf.load(dataset.signal, ["MET", "count(Muon_pt)"], selection="nJet >= 2")
     print(f"\n{len(events)} signal events with >= 2 jets; fields {events.fields}")
     print(f"\nfigures written to {out}")

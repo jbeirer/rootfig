@@ -1,7 +1,7 @@
 """The example registry and the source extraction used by the documentation.
 
 Each example is a plain function decorated with :func:`example`. Its parameters
-are names of ``Dataset`` attributes (files, samples, variables, style), so the
+are names of ``Dataset`` attributes (samples, variables, style), so the
 body reads exactly like user code; :func:`body_source` returns that body for
 ``docs/gallery.md``.
 """
@@ -9,10 +9,12 @@ body reads exactly like user code; :func:`body_source` returns that body for
 from __future__ import annotations
 
 import ast
+import contextlib
 import inspect
 import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import rootfig as rf
@@ -31,10 +33,15 @@ class Example:
         """The function's docstring, dedented."""
         return inspect.cleandoc(self.func.__doc__ or "")
 
-    def run(self, dataset: Any) -> rf.Plot:
-        """Call the example with the attributes of ``dataset`` (a ``Dataset``) it asks for."""
+    def run(self, dataset: Any, cwd: Path) -> rf.Plot:
+        """Call the example inside ``cwd`` with the attributes of ``dataset`` it asks for.
+
+        ``cwd`` is the directory holding the toy files, so the examples name them
+        with bare relative paths (``"signal.root"``) exactly as a user would.
+        """
         names = inspect.signature(self.func).parameters
-        return self.func(**{name: getattr(dataset, name) for name in names})
+        with contextlib.chdir(cwd):
+            return self.func(**{name: getattr(dataset, name) for name in names})
 
 
 EXAMPLES: list[Example] = []

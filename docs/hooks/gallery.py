@@ -32,18 +32,24 @@ SETUP_MARKER = "<!-- gallery-setup -->"
 GALLERY_MARKER = re.compile(r"<!-- gallery(?::\s*(?P<names>[\w\s,]+?))?\s*-->")
 
 
-def _load_gallery() -> ModuleType:
-    """Import ``examples/gallery`` as a package without putting ``examples/`` on ``sys.path``."""
+def _load_gallery(name: str = "rootfig_gallery_docs") -> ModuleType:
+    """Import ``examples/gallery`` as a fresh package, without ``examples/`` on ``sys.path``.
+
+    Every call re-executes the package (``mkdocs serve`` renders the page on each
+    rebuild), so its submodules are evicted from ``sys.modules`` first: a cached
+    ``registry`` would keep its ``EXAMPLES`` list and the re-run decorators would
+    register every example a second time.
+    """
+    for cached in [m for m in sys.modules if m == name or m.startswith(f"{name}.")]:
+        del sys.modules[cached]
     spec = importlib.util.spec_from_file_location(
-        "rootfig_gallery_docs",
-        GALLERY_DIR / "__init__.py",
-        submodule_search_locations=[str(GALLERY_DIR)],
+        name, GALLERY_DIR / "__init__.py", submodule_search_locations=[str(GALLERY_DIR)]
     )
     if spec is None or spec.loader is None:
         msg = f"cannot load {GALLERY_DIR}"
         raise RuntimeError(msg)
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 

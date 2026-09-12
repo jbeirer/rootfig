@@ -110,10 +110,12 @@ differ elsewhere) and, when a comparison fails, uploads an HTML report with
 baseline, result and difference images as the `mpl-results-*` artifact. To add
 an example, register a function with `@example(name, title)` and give it a
 docstring; the test suite fails until its baseline image exists. Its parameters
-are attribute names of `Dataset`, and the hook prints only the body (blank lines
-and comments included), so write it as a user would. Put an object into
-`define()` — the *Setup* block of the docs page — only when several examples use
-it; anything a single example needs belongs in that example.
+are attribute names of `Dataset`, it runs inside the directory holding the toy
+files (so name them `"signal.root"`, never through a variable), and the hook
+prints only the body (blank lines and comments included) — write it as a user
+would. Put an object into `define()` — the *Setup* block of the docs page — only
+when several examples use it; anything a single example needs belongs in that
+example.
 
 ## Pull requests
 

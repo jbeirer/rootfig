@@ -3,16 +3,17 @@
 Every figure on this page is made by
 [`examples/gallery`](https://github.com/jbeirer/rootfig/blob/main/examples/gallery/__init__.py).
 The script writes a toy dataset (three simulated processes and one "observed"
-sample with muons, jets and event-level quantities, as `TTree`s) and runs all
-examples in a few seconds:
+sample with muons, jets and event-level quantities, as `TTree`s) into a
+directory and runs all examples there in a few seconds:
 
 ```bash
-python examples/gallery               # figures end up in examples/out/
+python examples/gallery               # everything ends up in examples/out/
 ```
 
 The code next to each figure is the source of that example, and the image is
 the reference picture the test suite compares against, so what you see is what
-the current release draws. Every example assumes
+the current release draws. File names such as `signal.root` are those toy
+files, relative to that directory, and every example assumes
 
 ```python
 import rootfig as rf
@@ -22,18 +23,16 @@ import rootfig as rf
 
 ## Setup
 
-Plain strings, paths and `(bins, low, high)` tuples are accepted everywhere, as
-the one-liner shows. Once you draw more than one plot it pays to name the
-pieces: `Sample`, `Variable`, `Cut` and `Style` are small frozen dataclasses
-(see [Samples, variables, cuts and styles](composable.md)). The rest of this
-page shares four samples, three variables and one style, defined once:
+Plain strings and `(bins, low, high)` tuples are accepted everywhere, as the
+one-liner shows. Once you draw more than one plot it pays to name the pieces:
+`Sample`, `Variable`, `Cut` and `Style` are small frozen dataclasses (see
+[Samples, variables, cuts and styles](composable.md)). The rest of this page
+shares four samples, three variables and one style, defined once:
 
 <!-- gallery-setup -->
 
-`signal_file`, `background_file`, `diboson_file` and `data_file` are the toy
-files written by the script and `out` is the directory they live in. Anything a
-single example needs is defined inside that example, so every block below is
-complete given the names above (plus `matplotlib.pyplot as plt` and
+Anything a single example needs is defined inside that example, so every block
+below is complete given the names above (plus `matplotlib.pyplot as plt` and
 `numpy as np` where they appear).
 
 <!-- gallery -->
