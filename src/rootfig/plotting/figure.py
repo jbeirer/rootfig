@@ -25,6 +25,7 @@ __all__ = [
     "apply_xbreak",
     "break_segments",
     "finish_axes",
+    "fit_ylabel",
     "make_figure",
     "ylabel_for",
 ]
@@ -34,6 +35,9 @@ AxesLike: TypeAlias = Axes | tuple[Axes, Axes] | Sequence[Axes] | None
 
 RATIO_HEIGHT_FRACTION = 0.3
 """Height of the ratio panel relative to the main panel."""
+
+RATIO_LABEL_MIN_SCALE = 0.6
+"""Smallest y label size of a lower panel, relative to the style's label size."""
 
 BREAK_GAP = 0.04
 LAYOUT_PAD = 0.04  # inches between the canvas edge and the outermost artist
@@ -365,6 +369,70 @@ def _renderer(fig: Any) -> Any:
         return get()
     private = getattr(fig, "_get_renderer", None)
     return private() if callable(private) else None
+
+
+def _balanced_wrap(text: str) -> str:
+    """Break ``text`` at the space that leaves the two lines most even in length."""
+    words = text.split()
+    if len(words) < 2:
+        return text
+    split = min(
+        range(1, len(words)),
+        key=lambda i: abs(len(" ".join(words[:i])) - len(" ".join(words[i:]))),
+    )
+    return " ".join(words[:split]) + "\n" + " ".join(words[split:])
+
+
+def fit_ylabel(
+    ax: Axes, *, min_scale: float = RATIO_LABEL_MIN_SCALE, fraction: float = 0.98
+) -> None:
+    """Shrink (and if necessary wrap) the y label of ``ax`` until it fits the panel.
+
+    A rotated y label is bounded by the *height* of its axes, and a lower panel is
+    a fraction of the main one, so a label inherited at the main panel's size —
+    ``"Ratio to <sample>"`` is easily twice as tall as the ratio panel — runs into
+    the panel above and off the canvas. Constrained layout does not help: it
+    reserves width for a y label, never height.
+
+    The label is measured against the drawn panel and shrunk to fit, down to
+    ``min_scale`` of its current size; if that is not enough it is wrapped onto
+    two lines (never mathtext, which must not be broken) and shrunk again. A very
+    long label in a very short panel stops at the floor rather than becoming
+    unreadable. A label that already fits is left untouched, as is a figure whose
+    backend cannot measure artists.
+    """
+    label = ax.yaxis.label
+    text = label.get_text()
+    fig = ax.get_figure(root=True)
+    if not text or fig is None:
+        return
+    fig.canvas.draw()  # constrained layout sizes the axes at draw time
+    renderer = _renderer(fig)
+    if renderer is None:
+        return
+
+    def size() -> float:
+        # get_fontsize() may be a named size ("large"); ask for the resolved points
+        return float(label.get_fontproperties().get_size_in_points())
+
+    def overflow() -> float:
+        available = ax.get_window_extent(renderer).height * fraction
+        if available <= 0:  # pragma: no cover - degenerate axes
+            return 0.0
+        return float(label.get_window_extent(renderer).height / available)
+
+    floor = size() * min_scale
+    over = overflow()
+    if over <= 1.0:
+        return
+    if size() / over >= floor:
+        label.set_fontsize(size() / over)
+        return
+    if "$" not in text:
+        label.set_text(_balanced_wrap(text))
+        over = overflow()
+    if over > 1.0:
+        label.set_fontsize(max(size() / over, floor))
 
 
 def overlay_artists(ax: Axes, legend: Artist | None) -> list[Artist]:
