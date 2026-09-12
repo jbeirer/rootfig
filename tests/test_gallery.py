@@ -21,10 +21,12 @@ import contextlib
 import importlib.util
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import matplotlib.pyplot as plt
 import pytest
 from matplotlib.figure import Figure
 
@@ -57,7 +59,16 @@ def load_gallery(name: str = "rootfig_gallery") -> ModuleType:
 gallery = load_gallery()
 EXAMPLES = list(gallery.EXAMPLES)
 SAVEFIG = {"dpi": 150}  # as Plot.save: constrained layout, no cropping
-THEMES = {"": contextlib.nullcontext, "-dark": rf.dark_theme}  # baseline suffix -> context
+
+
+@contextlib.contextmanager
+def dark() -> Iterator[None]:
+    """``rf.dark_theme()``, plus its colours for figures an example makes itself for ``ax=``."""
+    with plt.style.context(rf.plotting.DARK_THEME), rf.dark_theme():
+        yield
+
+
+THEMES = {"": contextlib.nullcontext, "-dark": dark}  # baseline suffix -> context
 
 
 @pytest.fixture(scope="module")

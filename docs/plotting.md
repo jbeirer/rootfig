@@ -185,7 +185,8 @@ range avoids range inference.
   a sentinel region. The right segment is `Plot.ax_right`
   (`Plot.ratio_ax_right`). Not available together with `ax=` or `flow="show"`.
 
-  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio.png){ width="60%" }
+  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio.png#only-light){ width="60%" }
+  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio-dark.png#only-dark){ width="60%" }
 - `flow`: how under/overflow is shown (this is where entries outside an
   inferred [range](#binning-and-range) end up), `"hint"` (small arrows, default),
   `"show"` (extra bins labelled `<low` / `>high`, added on a side as soon as any

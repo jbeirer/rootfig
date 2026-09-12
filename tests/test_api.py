@@ -324,12 +324,12 @@ class TestPlot:
         kwargs: dict[str, Any] = {"observed": observed, "bins": (20, 0, 200), "ratio": True}
         with rf.dark_theme():
             dark = rf.plot(mc, "MET", style="ATLAS", stack=True, **kwargs)
-            classic = rf.plot(mc, "MET", style="classic", **kwargs)  # sets savefig.facecolor
         ink = to_rgba(rf.plotting.DARK_THEME["text.color"])
         assert self._marker_colors(dark) == {ink}
         assert dark.fig.get_facecolor()[3] == 0.0  # transparent despite ATLAS's white
         assert to_rgba(dark.ax.xaxis.label.get_color()) == ink
-        (saved,) = classic.save(tmp_path / "classic.png")
+        with plt.rc_context({"savefig.facecolor": "white"}):  # global state at save time
+            (saved,) = dark.save(tmp_path / "dark.png")
         assert plt.imread(saved)[0, :, 3].max() == 0.0  # the top row is background only
         light = rf.plot(mc, "MET", style="ATLAS", stack=True, **kwargs)
         assert self._marker_colors(light) == {to_rgba("black")}

@@ -141,9 +141,9 @@ def dark_theme() -> Iterator[None]:
 
     :data:`DARK_THEME` is applied after the style sheet, so it also holds for
     experiment styles that fix a white background (ATLAS, LHCb, ALICE, DUNE);
-    ``Style.rc`` still wins. The background is transparent, so one image suits
-    any dark page; saving keeps it so while ``savefig.facecolor`` is ``"auto"``
-    (matplotlib's default), which takes the figure's own colour.
+    ``Style.rc`` still wins. The background is transparent, and
+    :meth:`Plot.save <rootfig.Plot.save>` keeps it so, so one image suits any
+    dark page.
 
     Axes passed with ``ax=`` keep the look they were created with; create them
     under the same colours, ``plt.style.context(rootfig.plotting.DARK_THEME)``.
