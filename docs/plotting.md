@@ -106,14 +106,13 @@ rf.plot("events.root", "d0_significance", bins=50, range="auto")  # full extent
 rf.plot("events.root", "d0_significance", bins=50, range=(-5, 5))  # explicit
 ```
 
-!!! note "Behaviour change"
+!!! note "Rejected values are not discarded"
 
-    An integer `bins` now uses `range="robust"`. Far outliers such as
-    `-999` sentinels no longer set the axis. They are **not removed from the
-    data**: they go to the under/overflow, shown by the flow arrows
-    (`flow="show"` turns them into visible bins, `flow="sum"` folds them into
-    the edge bins). Statistics boxes and `rf.summarize` are computed before
-    binning, so means and entry counts are unaffected either way.
+    A value outside the range is **not removed from the data**: it goes to the
+    under/overflow, shown by the flow arrows (`flow="show"` turns them into
+    visible bins, `flow="sum"` folds them into the edge bins). Statistics boxes
+    and `rf.summarize` are computed before binning, so means and entry counts
+    cover the full sample whichever range is used.
 
 Outliers are rejected by their modified z-score (`0.6745 * |x - median| / MAD`),
 with a threshold of 30. If MAD is zero, the mean absolute deviation from the
