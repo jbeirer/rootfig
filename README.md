@@ -45,7 +45,7 @@ customise and save.
   <a href="https://jbeirer.github.io/rootfig/gallery/#a-broken-x-axis-peak-and-far-tail-without-the-empty-middle"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery/xbreak_ratio-dark.png"><img src="docs/images/gallery/xbreak_ratio.png" alt="Broken x axis with a ratio panel" width="46%"></picture></a>
 </p>
 <p align="center">
-  <a href="https://jbeirer.github.io/rootfig/gallery/#a-correlation-matrix"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery/correlation-dark.png"><img src="docs/images/gallery/correlation.png" alt="A correlation matrix" width="46%"></picture></a>
+  <a href="https://jbeirer.github.io/rootfig/gallery/#cross-sections-and-a-luminosity-instead-of-hand-made-scale-factors"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery/luminosity-dark.png"><img src="docs/images/gallery/luminosity.png" alt="FCC-ee stack scaled to luminosity with a significance panel" width="46%"></picture></a>
   &nbsp;&nbsp;
   <a href="https://jbeirer.github.io/rootfig/gallery/#a-two-dimensional-histogram"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery/hist2d-dark.png"><img src="docs/images/gallery/hist2d.png" alt="Two-dimensional histogram" width="46%"></picture></a>
 </p>
