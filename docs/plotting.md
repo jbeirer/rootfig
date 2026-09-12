@@ -134,6 +134,10 @@ computed values are returned in `Plot.ratios` as
   later renders exactly the layout that was computed, in the style's fonts.
 - `Plot.fig`, `Plot.ax`, `Plot.ratio_ax` are plain matplotlib objects;
   `Plot.histograms` wrap the `hist.Hist` objects with labels and statistics.
+- In a notebook the figure is displayed automatically — it is a pyplot figure,
+  flushed by the inline backend at the end of the cell, so `%matplotlib inline`
+  is not needed. End the call with `;` to hide the `Plot` repr, and use
+  `Plot.close()` in loops that make many figures.
 
 ## 2D histograms and correlations
 

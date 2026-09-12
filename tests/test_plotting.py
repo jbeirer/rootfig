@@ -101,6 +101,38 @@ class TestStyle:
             assert isinstance(st, Style)
         assert matplotlib.rcParams["font.size"] == before
 
+    def test_context_activates_backend_before_applying_rcparams(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # matplotlib activates its backend on the first pyplot call. In Jupyter that
+        # sets interactive mode; if it happened inside the rc context it would be
+        # rolled back on exit and inline display would stop working (see _activate_backend).
+        seen: list[float] = []
+
+        def fake_draw_if_interactive() -> None:
+            seen.append(matplotlib.rcParams["font.size"])
+            matplotlib.interactive(True)
+
+        monkeypatch.setattr(plt, "_backend_mod", None, raising=False)
+        monkeypatch.setattr(plt, "draw_if_interactive", fake_draw_if_interactive)
+        monkeypatch.setitem(matplotlib.rcParams, "interactive", False)
+        before = matplotlib.rcParams["font.size"]
+
+        with style_context(Style(rc={"font.size": 33})):
+            pass
+
+        assert seen == [before]  # ran outside the context, on the unstyled rcParams
+        assert matplotlib.is_interactive()  # and its change survived the rollback
+
+    def test_context_skips_activation_once_backend_is_resolved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = []
+        monkeypatch.setattr(plt, "draw_if_interactive", lambda: calls.append(1))
+        with style_context():
+            pass
+        assert calls == []  # conftest already resolved the backend
+
     def test_use_style_is_global(self) -> None:
         before = dict(matplotlib.rcParams)
         try:

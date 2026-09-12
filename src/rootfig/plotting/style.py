@@ -153,9 +153,26 @@ def resolve_rc(style: Style) -> list[Mapping[str, Any] | str]:
     return sheets
 
 
+def _activate_backend() -> None:
+    """Import and activate the pyplot backend, if that has not happened yet.
+
+    matplotlib resolves its backend lazily, on the first pyplot call. In Jupyter
+    that activation sets ``matplotlib.interactive(True)`` and the inline
+    backend's rcParams. If it happened inside :func:`style_context`, the
+    surrounding :func:`matplotlib.pyplot.style.context` would restore the
+    pre-activation snapshot on exit and turn interactive mode back off, which
+    stops the inline backend from displaying anything for the rest of the
+    session. Resolving the backend first keeps those changes outside the
+    context. Creates no figure and is a no-op for non-GUI backends.
+    """
+    if getattr(plt, "_backend_mod", None) is None:
+        plt.draw_if_interactive()
+
+
 @contextlib.contextmanager
 def style_context(style: StyleLike = None) -> Iterator[Style]:
     """Temporarily apply ``style``'s rcParams; yields the resolved :class:`Style`."""
+    _activate_backend()
     resolved = as_style(style)
     sheets: Any = resolve_rc(resolved)
     with plt.style.context(sheets):
