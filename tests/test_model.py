@@ -190,7 +190,7 @@ class TestBinning:
                     np.random.default_rng(9).normal(0, 4, 100_000),
                     np.random.default_rng(10).normal(0, 1, 100_000),
                 ),
-                (-6.9, 6.9),
+                (-5.8, 5.8),
                 id="gaussian-core-with-tails",
             ),
         ],
@@ -206,6 +206,21 @@ class TestBinning:
         assert high < full_high
         outside = float(((values < low) | (values > high)).mean())
         assert outside <= ROBUST_COVERAGE_BUDGET
+
+    @pytest.mark.parametrize("n", [100_000, 10_000, 1_000, 500, 200, 50])
+    def test_robust_range_keeps_a_small_distant_sample(self, n: int) -> None:
+        """A signal far from a large background survives however few entries it has.
+
+        The budget is charged per sample: measured against the pooled entries a
+        signal of a few hundred beside a background of a hundred thousand would be
+        under budget even when cut away completely.
+        """
+        rng = np.random.default_rng(0)
+        background = rng.exponential(60, 100_000) + 50
+        signal = rng.normal(800, 25, n)
+        low, high = auto_range([background, signal], mode="robust")
+        kept = float(((signal >= low) & (signal <= high)).mean())
+        assert kept >= 1.0 - ROBUST_COVERAGE_BUDGET
 
     def test_robust_range_keeps_categorical_values(self) -> None:
         """A rare category is a bin of its own, not empty space at the edge."""

@@ -117,11 +117,13 @@ rf.plot("events.root", "d0_significance", bins=50, range=(-5, 5))  # explicit
 This happens in two steps. Outliers are rejected by their modified z-score
 (`0.6745 * |x - median| / MAD`), with a threshold of 30, which removes sentinels
 and anything else far from the bulk. The threshold is then tightened while no
-more than 0.5 percent of the entries leave the view, which cuts a tail that
+more than 1 percent of any one sample leaves the view, which cuts a tail that
 reaches far but thins out smoothly — the kind a distance threshold keeps and
 that leaves the interesting part of the distribution in a corner of the axis.
 A sample with fewer than 20 distinct values is categorical, has no tail to cut
-and is left at the first step. If MAD is zero, the mean absolute deviation from
+and is left at the first step. The budget is charged per sample rather than over
+the pooled entries, so a small signal sitting far from a large background keeps
+its own place on the axis instead of being cut as a rounding error. If MAD is zero, the mean absolute deviation from
 the median is used instead. Every candidate is padded by 5 percent and clamped
 to the `"auto"` range (whose upper edge is nudged above the maximum to include
 it), so the range never reaches past the data. Degenerate ranges are widened

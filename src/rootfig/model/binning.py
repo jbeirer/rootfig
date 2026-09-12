@@ -152,14 +152,18 @@ It is the widest range ``"robust"`` will produce: a sentinel far from the bulk i
 rejected here, and :data:`ROBUST_COVERAGE_BUDGET` may then tighten the result
 further, never past it."""
 
-ROBUST_COVERAGE_BUDGET = 0.005
-"""Fraction of the entries ``range="robust"`` may move out of the view to cut a tail.
+ROBUST_COVERAGE_BUDGET = 0.01
+"""Fraction of a sample ``range="robust"`` may move out of the view to cut a tail.
 
 :data:`ROBUST_THRESHOLD` measures a distance from the bulk, so a tail that reaches
 far but thins out smoothly stays inside it and leaves the interesting part of the
 distribution in a small corner of the axis. Starting from that range, the threshold
 is tightened along :data:`ROBUST_LADDER` for as long as the entries leaving the view
-stay within this budget of the entries already outside it."""
+stay within this budget of the entries already outside it.
+
+Every sample is charged for its own losses, never the pooled entries: one binning
+is shared by all samples of a plot, and a small sample far from a large one stays a
+small fraction of the pooled values however much of it is cut."""
 
 ROBUST_LADDER = (30.0, 20.0, 15.0, 12.0, 10.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0)
 """Thresholds tried by ``range="robust"``, widest first. Tightening stops at the first
@@ -206,7 +210,7 @@ def auto_range(
     span = high - low
     high = high + (span * 1e-3 if span > 0 else 0.0)
     if mode == "robust":
-        low, high = _robust_range(combined, low, high)
+        low, high = _robust_range(finite, combined, low, high)
     if not high > low:
         width = abs(low) * 0.1 if low != 0 else 0.5
         low, high = low - width, high + width
@@ -225,25 +229,39 @@ def _padded(kept: np.ndarray, low: float, high: float) -> tuple[float, float]:
     return max(kept_low - pad, low), min(kept_high + pad, high)
 
 
-def _robust_range(values: np.ndarray, low: float, high: float) -> tuple[float, float]:
+def _outside(samples: Sequence[np.ndarray], low: float, high: float) -> np.ndarray:
+    """Fraction of each sample's values that ``(low, high)`` leaves out of the view."""
+    return np.array([float(((v < low) | (v > high)).mean()) for v in samples])
+
+
+def _robust_range(
+    samples: Sequence[np.ndarray], values: np.ndarray, low: float, high: float
+) -> tuple[float, float]:
     """Reject outliers, then cut a long tail as far as the coverage budget allows.
 
     ``(low, high)`` is the ``"auto"`` range, which bounds the result. The first
     step of :data:`ROBUST_LADDER` is :data:`ROBUST_THRESHOLD` and sets that bound;
     later steps are accepted only while they push no more than
-    :data:`ROBUST_COVERAGE_BUDGET` of the entries out of the view beyond what the
-    first step already did, and the first step that costs more ends the walk.
+    :data:`ROBUST_COVERAGE_BUDGET` out of the view beyond what the first step
+    already did, and the first step that costs more ends the walk.
+
+    The budget is spent per sample, not over the pooled values. One binning is
+    shared by every sample of a plot, and a small sample far from a large one is
+    a small *fraction* of the pooled entries however much of it is cut: measured
+    that way, a signal of a few hundred entries beside a background of a hundred
+    thousand could be moved into the overflow in its entirety and still look
+    cheap. Charging each sample for its own losses costs such a cut the whole
+    sample, so the walk stops before it.
     """
     best = _padded(_reject_outliers(values, ROBUST_LADDER[0]), low, high)
     if _distinct_values_below(values, ROBUST_DISCRETE_VALUES):
         return best
-    outside = float(((values < best[0]) | (values > best[1])).mean())
+    outside = _outside(samples, *best)
     for threshold in ROBUST_LADDER[1:]:
         candidate = _padded(_reject_outliers(values, threshold), low, high)
         if candidate[0] < best[0] or candidate[1] > best[1]:
             break  # an emptied selection falls back to every value: stop widening
-        cost = float(((values < candidate[0]) | (values > candidate[1])).mean())
-        if cost - outside > ROBUST_COVERAGE_BUDGET:
+        if np.any(_outside(samples, *candidate) - outside > ROBUST_COVERAGE_BUDGET):
             break
         best = candidate
     return best
