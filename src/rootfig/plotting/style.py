@@ -343,8 +343,11 @@ def pin_fonts(fig: Figure) -> None:
     it, uncached) and logs a ``findfont: Font family 'X' not found.`` warning for
     each miss, so pinning a font that is absent means hundreds of log lines per
     figure for no benefit: the first family that resolves is the one used.
+    Fully unavailable family lists warn once per distinct expanded list per call.
     """
     resolved = _generic_font_lists()
+    missing: dict[tuple[str, ...], None] = {}
+    fallback = fontManager.defaultFamily["ttf"]
 
     def concrete(families: Any) -> list[str]:
         names = [families] if isinstance(families, str) else list(families)
@@ -355,14 +358,7 @@ def pin_fonts(fig: Figure) -> None:
         available = [name for name in unique if _font_is_available(name)]
         if available:
             return available
-        fallback = fontManager.defaultFamily["ttf"]
-        warnings.warn(
-            f"none of the requested fonts are installed ({', '.join(unique)}); "
-            f"falling back to {fallback!r}. Install one of them, or set another "
-            "via Style(rc={'font.sans-serif': [...]}), to control the figure's font.",
-            RootfigWarning,
-            stacklevel=2,
-        )
+        missing[tuple(unique)] = None
         return [fallback]
 
     for text in fig.findobj(Text):
@@ -371,6 +367,15 @@ def pin_fonts(fig: Figure) -> None:
     for axes in fig.axes:
         # tick labels are re-created on every draw; give them the family explicitly
         axes.tick_params(axis="both", which="both", labelfontfamily=tick_family)
+
+    for families in missing:
+        warnings.warn(
+            f"none of the requested fonts are installed ({', '.join(families)}); "
+            f"falling back to {fallback!r}. Install one of them, or set another "
+            "via Style(rc={'font.sans-serif': [...]}), to control the figure's font.",
+            RootfigWarning,
+            stacklevel=2,
+        )
 
 
 def finalize_figure(fig: Figure, ax: Axes) -> None:

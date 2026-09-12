@@ -162,14 +162,33 @@ class TestStyle:
             assert layout.main.xaxis.label.get_fontfamily() == ["Tex Gyre Termes"]
         plt.close(layout.fig)
 
-    def test_pin_fonts_falls_back_when_nothing_is_installed(self) -> None:
-        with style_context(Style(rc={"font.sans-serif": ["No Such Font XYZ"]})):
+    @pytest.mark.parametrize("rc_key", ["font.family", "font.sans-serif"])
+    def test_pin_fonts_falls_back_when_nothing_is_installed(self, rc_key: str) -> None:
+        with style_context(Style(rc={rc_key: ["No Such Font XYZ"]})):
             layout = make_figure(Style(), ratio=False)
             layout.main.set_xlabel("x")
-            with pytest.warns(RootfigWarning, match="none of the requested fonts"):
+            with pytest.warns(RootfigWarning, match="none of the requested fonts") as caught:
                 pin_fonts(layout.fig)
-            assert layout.main.xaxis.label.get_fontfamily() == ["DejaVu Sans"]
+            assert len(caught) == 1
+            assert layout.main.xaxis.label.get_fontfamily() == [
+                font_manager.fontManager.defaultFamily["ttf"]
+            ]
         plt.close(layout.fig)
+
+    def test_pin_fonts_warns_once_per_missing_configuration_per_call(self) -> None:
+        with style_context(Style(rc={"font.family": ["No Such Font XYZ"]})):
+            # Each figure should report its missing configurations independently.
+            for _ in range(2):
+                layout = make_figure(Style(), ratio=False)
+                for y in (0.3, 0.6):
+                    layout.main.text(0.5, y, "label", fontfamily=["Another Missing Font XYZ"])
+                with pytest.warns(RootfigWarning, match="none of the requested fonts") as caught:
+                    pin_fonts(layout.fig)
+                assert len(caught) == 2
+                messages = [str(warning.message) for warning in caught]
+                assert sum("(No Such Font XYZ)" in message for message in messages) == 1
+                assert sum("(Another Missing Font XYZ)" in message for message in messages) == 1
+                plt.close(layout.fig)
 
     def test_use_style_is_global(self) -> None:
         before = dict(matplotlib.rcParams)
