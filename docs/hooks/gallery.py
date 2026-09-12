@@ -60,7 +60,8 @@ def render_section(gallery: ModuleType, example: Any) -> str:
     return (
         f"## {example.title}\n\n"
         f"{example.description}\n\n"
-        f'![{example.title}](images/gallery/{example.name}.png){{ width="75%" }}\n\n'
+        f"![{example.title}](images/gallery/{example.name}.png)"
+        f'{{ width="{example.image_width}" }}\n\n'
         f"```python\n{code}```\n"
     )
 

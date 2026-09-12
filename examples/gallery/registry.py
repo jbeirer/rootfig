@@ -27,6 +27,7 @@ class Example:
     name: str
     title: str
     func: Callable[..., rf.Plot]
+    image_width: str = "75%"
 
     @property
     def description(self) -> str:
@@ -47,11 +48,13 @@ class Example:
 EXAMPLES: list[Example] = []
 
 
-def example(name: str, title: str) -> Callable[[Callable[..., rf.Plot]], Callable[..., rf.Plot]]:
+def example(
+    name: str, title: str, *, image_width: str = "75%"
+) -> Callable[[Callable[..., rf.Plot]], Callable[..., rf.Plot]]:
     """Register a gallery example."""
 
     def register(func: Callable[..., rf.Plot]) -> Callable[..., rf.Plot]:
-        EXAMPLES.append(Example(name, title, func))
+        EXAMPLES.append(Example(name, title, func, image_width=image_width))
         return func
 
     return register

@@ -204,7 +204,7 @@ def log_axes(signal: rf.Sample, zjets: rf.Sample, diboson: rf.Sample) -> rf.Plot
     )
 
 
-@example("robust_range", "Automatic ranges: full versus robust")
+@example("robust_range", "Automatic ranges: full versus robust", image_width="100%")
 def robust_range(signal: rf.Sample, zjets: rf.Sample) -> rf.Plot:
     """Sentinels such as ``-999`` wreck an automatic range. ``range="robust"`` ignores far
     outliers when choosing the range (nothing is removed from the data, they end up in the
