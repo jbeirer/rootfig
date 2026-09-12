@@ -347,15 +347,16 @@ def arrays() -> rf.Plot:
 def hist2d(signal: rf.Sample, met: rf.Variable) -> rf.Plot:
     """``rf.plot2d`` fills a 2D histogram of one sample; both variables must have the same
     structure (both per-event here). ``logz`` and ``cmap`` control the colour scale."""
-    return rf.plot2d(
+    p = rf.plot2d(
         signal,
         rf.Variable("sum(Jet_pt)", bins=(40, 0, 800), label=r"$H_T$", unit="GeV"),
         met,
         selection="nJet >= 2",
         logz=True,
         cmap="magma",
-        zlabel="Events",
     )
+    p.fig.axes[-1].set_ylabel("")  # Omit the colour-bar title in this gallery layout.
+    return p
 
 
 @example("correlation", "A correlation matrix")
