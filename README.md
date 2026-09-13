@@ -176,6 +176,21 @@ uv run mypy
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
+## Citation
+
+If `rootfig` is useful in your research, please cite it:
+
+```bibtex
+@software{rootfig,
+  author = {Beirer, Joshua Falco},
+  doi = {10.5281/zenodo.22726311},
+  license = {MIT},
+  title = {{rootfig}},
+  url = {https://github.com/jbeirer/rootfig},
+  year = {2026}
+}
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
