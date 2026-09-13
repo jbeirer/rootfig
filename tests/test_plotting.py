@@ -19,6 +19,7 @@ from matplotlib.text import Text
 from rootfig.errors import RootfigWarning
 from rootfig.histograms import Histogram, fill, summarize
 from rootfig.model import Style
+from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
     DEFAULT_COLORS,
     ROOTFIG_STYLE,
@@ -31,6 +32,7 @@ from rootfig.plotting import (
     apply_xbreak,
     break_segments,
     color_cycle,
+    correlation_figsize,
     draw_correlation,
     draw_hist2d,
     draw_histograms,
@@ -246,6 +248,28 @@ class TestStyle:
         assert len(ax.artists) == 1
         add_experiment_label(ax, Style(), has_data=False)
         assert len(ax.artists) == 1
+
+    @pytest.mark.parametrize("experiment", [*EXPERIMENT_STYLES, "FCC-ee"])
+    def test_text_lines_stay_inside_the_frame(self, experiment: str) -> None:
+        # mplhep turns supp= into "Supplementary" in the label and, for a label above the
+        # frame, into a note rotated along the frame's right edge
+        style = Style(
+            experiment=experiment, status="Internal", lumi=140, com=13.6, text=["one", "two"]
+        )
+        with style_context(style):
+            fig, ax = plt.subplots()
+            add_experiment_label(ax, style, has_data=False)
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            texts = [t for t in fig.findobj(Text) if t.get_text()]
+            assert not any("Supplementary" in t.get_text() for t in texts)
+            assert "Simulation Internal" in {t.get_text() for t in texts}
+            [lines] = [t for t in texts if t.get_text() == "one\ntwo"]
+            assert lines.get_rotation() == 0
+            box, frame = lines.get_window_extent(renderer), ax.get_window_extent(renderer)
+            assert frame.x0 <= box.x0 < box.x1 <= frame.x1
+            assert frame.y0 <= box.y0 < box.y1 <= frame.y1
+        plt.close(fig)
 
 
 class TestFigure:
@@ -932,6 +956,15 @@ class TestCorrelationFormat:
         draw_correlation(matrix, ["a", "b"], ax)
         assert "1.00" in {t.get_text() for t in ax.texts}
         plt.close("all")
+
+    def test_figsize_grows_with_variables_and_the_style(self) -> None:
+        with style_context():
+            assert correlation_figsize(2) == pytest.approx((4.5 * 1.15, 4.5))
+            assert correlation_figsize(5) == pytest.approx((6.25 * 1.15, 6.25))
+        with style_context("CMS"):
+            scale = matplotlib.rcParams["figure.figsize"][0] / 7.0
+            assert scale > 1
+            assert correlation_figsize(5) == pytest.approx((6.25 * 1.15 * scale, 6.25 * scale))
 
 
 class TestExperimentLabelEnergy:

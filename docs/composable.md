@@ -114,8 +114,12 @@ neutral = rf.Style(
   given.
 - `base` can be any mplhep or matplotlib style name (`"ATLAS"`, `"ggplot"`,
   ...) or a mapping of rcParams; `rc` adds overrides on top; `colors` replaces
-  the colour cycle. `label_loc` is mplhep's label position (0 above the axes,
-  1 to 4 inside the corners), overriding the experiment's convention.
+  the colour cycle. `label_loc` overrides the experiment's convention: 0 puts
+  the experiment and secondary text above the frame; 3 puts the experiment
+  above and secondary text inside; 1, 2, and 4 put both inside. Luminosity stays
+  above for locations 0–3 and inside for 4. 2D histograms and correlation
+  matrices default to location 0; only `label_loc=1`, `2`, or `4` moves the
+  experiment inside the frame.
 - The centre-of-mass energy and luminosity appear only when `com`/`lumi` are
   given; nothing is invented for you.
 - `legend` is `True`, `False` or a location string; `legend_kwargs` are

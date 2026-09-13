@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import warnings
 from pathlib import Path
 from typing import Any
@@ -9,9 +10,11 @@ from typing import Any
 import awkward as ak
 import hist
 import matplotlib.pyplot as plt
+import mplhep as hep
 import numpy as np
 import pytest
 from matplotlib.colors import to_rgba
+from matplotlib.font_manager import FontProperties
 
 import rootfig as rf
 from rootfig.api import _split_bins
@@ -23,6 +26,9 @@ from rootfig.errors import (
     SelectionError,
     SourceError,
 )
+from rootfig.model.style import EXPERIMENT_STYLES
+from rootfig.plotting import add_experiment_label, align_experiment_label, style_context
+from rootfig.plotting.style import LABEL_MIN_SCALE
 
 
 def ratio_ylabel(plot: Any) -> str:
@@ -921,6 +927,193 @@ class TestFigureShape:
         legend = p.ax.get_legend()
         assert legend is not None
         assert legend.get_texts()[0].get_fontname() == p.ax.yaxis.label.get_fontname()
+
+    @pytest.mark.parametrize("experiment", EXPERIMENT_STYLES)
+    def test_experiment_labels_fit_in_every_style(
+        self, signal_file: Path, background_file: Path, experiment: str
+    ) -> None:
+        # A full label on the plots that squeeze it: a colour bar narrows the axes, a matrix
+        # leaves no room inside the frame, a broken axis splits it.
+        style = rf.Style(experiment=experiment, status="Preliminary", lumi=138, com=13.6)
+        samples = [signal_file, background_file]
+        plots = [
+            rf.plot2d(signal_file, "MET", "nMuon", tree="events", style=style),
+            rf.correlation(signal_file, ["MET", "nMuon", "event"], tree="events", style=style),
+            rf.plot(samples, "MET", tree="events", ratio=True, xbreak=(40, 60), style=style),
+        ]
+        for p in plots:
+            p.fig.canvas.draw()
+            renderer = p.fig.canvas.get_renderer()  # type: ignore[attr-defined]
+            texts = self._label_texts(p)
+            assert texts
+            boxes = [t.get_window_extent(renderer) for t in texts]
+            canvas = p.fig.bbox.padded(1)
+            for box in boxes:
+                assert canvas.contains(box.x0, box.y0), experiment
+                assert canvas.contains(box.x1, box.y1), experiment
+            for index, box in enumerate(boxes):
+                for other in boxes[index + 1 :]:
+                    shared = min(box.y1, other.y1) - max(box.y0, other.y0)
+                    if shared > 0.5 * min(box.height, other.height):  # one line: side by side
+                        assert box.x1 <= other.x0 or other.x1 <= box.x0, experiment
+        name = next(t for t in plots[0].ax.texts if isinstance(t, hep.label.ExpLabel))
+        frame = plots[0].ax.get_window_extent(renderer)
+        assert name.get_window_extent(renderer).y0 >= frame.y1  # 2D: above the bins
+
+    @staticmethod
+    def _label_texts(p: rf.Plot) -> list[Any]:
+        axes = [p.ax] if p.ax_right is None else [p.ax, p.ax_right]
+        kinds = (hep.label.ExpLabel, hep.label.ExpText, hep.label.LumiText)
+        return [t for a in axes for t in a.texts if isinstance(t, kinds) and t.get_text()]
+
+    def test_label_line_above_a_narrow_frame_shrinks(self, signal_file: Path) -> None:
+        cms = rf.Style(experiment="CMS", status="Preliminary", lumi=138, com=13.6)
+        wide = rf.plot(signal_file, "MET", tree="events", style=cms)
+        narrow = rf.plot2d(signal_file, "MET", "nMuon", tree="events", style=cms)
+        [wide_name] = [t for t in wide.ax.texts if isinstance(t, hep.label.ExpLabel)]
+        [narrow_name] = [t for t in narrow.ax.texts if isinstance(t, hep.label.ExpLabel)]
+        assert narrow_name.get_fontsize() < wide_name.get_fontsize()
+        # an explicit position inside the frame is kept for 2D plots too
+        inside = rf.plot2d(signal_file, "MET", "nMuon", tree="events", style=cms.with_(label_loc=1))
+        inside.fig.canvas.draw()
+        renderer = inside.fig.canvas.get_renderer()  # type: ignore[attr-defined]
+        [name] = [t for t in inside.ax.texts if isinstance(t, hep.label.ExpLabel)]
+        assert name.get_window_extent(renderer).y1 <= inside.ax.get_window_extent(renderer).y1
+
+    def test_broken_axis_luminosity_ends_the_right_segment(
+        self, signal_file: Path, background_file: Path
+    ) -> None:
+        samples = [signal_file, background_file]
+        for experiment in ("CMS", "LHCb"):  # label above the frame, and inside it
+            style = rf.Style(experiment=experiment, status="Preliminary", lumi=9, com=13.6)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", UserWarning)  # "constrained_layout not applied"
+                p = rf.plot(samples, "MET", tree="events", xbreak=(40, 60), style=style)
+                p.fig.canvas.draw()
+            assert p.ax_right is not None
+            [lumi] = [t for t in p.ax_right.texts if isinstance(t, hep.label.LumiText)]
+            renderer = p.fig.canvas.get_renderer()  # type: ignore[attr-defined]
+            right_end = p.ax_right.get_window_extent(renderer).x1
+            assert lumi.get_window_extent(renderer).x1 == pytest.approx(right_end, abs=2)
+
+    def test_correlation_title_yields_to_an_experiment_label(self, signal_file: Path) -> None:
+        variables = ["MET", "nMuon"]
+        plain = rf.correlation(signal_file, variables, tree="events")
+        assert plain.ax.get_title().endswith(": correlation")
+        cms = rf.correlation(signal_file, variables, tree="events", style="CMS")
+        assert cms.ax.get_title() == ""
+        assert any(isinstance(t, hep.label.ExpLabel) for t in cms.ax.texts)
+        titled = rf.correlation(signal_file, variables, tree="events", style="CMS", title="Mine")
+        assert titled.ax.get_title() == "Mine"
+
+    @staticmethod
+    def _shown_boxes(p: rf.Plot) -> dict[str, Any]:
+        """Boxes of the label texts and the title in the figure as saved."""
+        p.fig.savefig(io.BytesIO(), format="png")
+        p.fig.canvas.draw()
+        renderer = p.fig.canvas.get_renderer()  # type: ignore[attr-defined]
+        texts = {f"{type(t).__name__}{i}": t for i, t in enumerate(TestFigureShape._label_texts(p))}
+        if p.ax.get_title():
+            texts["title"] = p.ax.title
+        return {name: text.get_window_extent(renderer) for name, text in texts.items()}
+
+    @staticmethod
+    def _assert_apart_on_canvas(p: rf.Plot, boxes: dict[str, Any], *, pairs: str = "all") -> None:
+        canvas = p.fig.bbox.padded(1)
+        for name, box in boxes.items():
+            assert canvas.contains(box.x0, box.y0), name
+            assert canvas.contains(box.x1, box.y1), name
+        names = list(boxes)
+        for index, name in enumerate(names):
+            for other in names[index + 1 :]:
+                if pairs == "title" and "title" not in (name, other):
+                    continue
+                assert not boxes[name].padded(-1).overlaps(boxes[other].padded(-1)), (name, other)
+
+    @pytest.mark.parametrize("title", ["Mine", "A longer explicit title"])
+    @pytest.mark.parametrize(
+        "style",
+        [
+            rf.Style(experiment="CMS", status="Preliminary", lumi=138, com=13.6),
+            rf.Style(experiment="ATLAS", status="Internal", lumi=140, com=13.6),
+            rf.Style(experiment="ATLAS", status="Internal", lumi=140, com=13.6, label_loc=4),
+        ],
+        ids=["CMS", "ATLAS", "ATLAS-inside"],
+    )
+    def test_titles_clear_experiment_labels(
+        self, signal_columns: dict[str, Any], style: rf.Style, title: str
+    ) -> None:
+        # 2D plots and matrices put the label above the frame, where the title goes too
+        plots = [
+            rf.plot2d(signal_columns, "MET", "nMuon", style=style, title=title),
+            rf.correlation(signal_columns, ["MET", "nMuon", "event"], style=style, title=title),
+        ]
+        with style_context(style):
+            title_size = FontProperties(size=plt.rcParams["axes.titlesize"]).get_size_in_points()
+        for p in plots:
+            assert p.ax.get_title() == title
+            assert p.ax.title.get_fontsize() == pytest.approx(title_size)  # lifted, not restyled
+            # mplhep stacks the lines of a label inside the frame its own way: check the title
+            pairs = "title" if style.label_loc is not None else "all"
+            self._assert_apart_on_canvas(p, self._shown_boxes(p), pairs=pairs)
+
+    @pytest.mark.parametrize("width", [4, 6, 8])
+    def test_label_fits_narrow_frames_and_aligning_again_keeps_it(
+        self, signal_columns: dict[str, Any], width: float
+    ) -> None:
+        cms = rf.Style(experiment="CMS", status="Preliminary", lumi=138, com=13.6)
+        with style_context(cms):  # the sizes mplhep gives the label where it has room
+            fig, ax = plt.subplots(figsize=(20, 6))
+            add_experiment_label(ax, cms, has_data=False)
+            full = {type(t): t.get_fontsize() for t in ax.texts}
+            plt.close(fig)
+        p = rf.plot2d(signal_columns, "MET", "nMuon", style=cms, figsize=(width, 4))
+        boxes = self._shown_boxes(p)
+        self._assert_apart_on_canvas(p, boxes)
+        texts = self._label_texts(p)
+        sizes = [text.get_fontsize() for text in texts]
+        for text, size in zip(texts, sizes, strict=True):
+            assert size >= LABEL_MIN_SCALE * full[type(text)] - 0.01, type(text).__name__
+        align_experiment_label(p.ax)  # as a user may, or another finalisation
+        assert [text.get_fontsize() for text in texts] == pytest.approx(sizes, rel=0.01)
+        again = self._shown_boxes(p)
+        for name, box in boxes.items():
+            np.testing.assert_allclose(again[name].extents, box.extents, atol=2, err_msg=name)
+
+    @pytest.mark.parametrize("location", ["left", "center", "right"])
+    def test_title_location_and_padding_survive_outer_rcparams(
+        self, signal_columns: dict[str, Any], location: str
+    ) -> None:
+        cms = rf.Style(
+            experiment="CMS",
+            status="Preliminary",
+            lumi=138,
+            com=13.6,
+            rc={
+                "axes.titlelocation": location,
+                "axes.titlepad": 18,
+                "axes.titlesize": 24,
+                "axes.titley": 1.0,
+                "axes.titlecolor": "purple",
+                "axes.titleweight": "bold",
+            },
+        )
+        with plt.rc_context({"axes.titlelocation": "left", "axes.titlepad": 2, "axes.titley": 1.5}):
+            p = rf.correlation(signal_columns, ["MET", "nMuon", "event"], style=cms, title="Mine")
+            for _ in range(2):
+                p.fig.savefig(io.BytesIO(), format="png")
+                p.fig.canvas.draw()
+                renderer = p.fig.canvas.get_renderer()
+                titles = [p.ax._left_title, p.ax.title, p.ax._right_title]
+                [title] = [t for t in titles if t.get_text()]
+                assert p.ax.get_title(loc=location) == "Mine"
+                assert title.get_fontsize() == 24
+                assert title.get_position()[1] == 1.0
+                assert title.get_color() == "purple"
+                assert title.get_fontweight() == "bold"
+                label_top = max(t.get_window_extent(renderer).y1 for t in self._label_texts(p))
+                assert title.get_window_extent(renderer).y0 >= label_top + 18 / 72 * p.fig.dpi - 1
+                align_experiment_label(p.ax)
 
     def test_user_axes_are_cropped_tight(self, signal_file: Path, tmp_path: Path) -> None:
         # A figure the user made has no layout engine; keep the tight bounding box there.

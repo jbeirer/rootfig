@@ -1,7 +1,7 @@
 """Rendering histograms with matplotlib and mplhep."""
 
 from rootfig.plotting.annotations import add_legend, add_stats_box, add_text
-from rootfig.plotting.correlation import draw_correlation
+from rootfig.plotting.correlation import correlation_figsize, draw_correlation
 from rootfig.plotting.figure import (
     AxesLike,
     Layout,
@@ -61,6 +61,7 @@ __all__ = [
     "apply_xbreak",
     "break_segments",
     "color_cycle",
+    "correlation_figsize",
     "dark_theme",
     "draw_correlation",
     "draw_efficiencies",
