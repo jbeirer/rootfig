@@ -221,9 +221,9 @@ range avoids range inference.
   Axes passed with `ax=` keep the properties they were created with (their
   background, frame and ticks), so a `Style.rc` passed to that plot colours
   only what rootfig draws into them.
-- `text=` extra line(s) drawn with the experiment label: below it when the
-  label is inside the frame, in the upper left corner inside the frame when the
-  label sits above it (CMS, DUNE).
+- `text=` extra line(s) drawn inside the frame: in the upper left corner for
+  `label_loc=0` (the CMS and DUNE default), below the secondary text for the
+  split layout `label_loc=3`, and below the label for locations 1, 2, and 4.
 - A label line above the frame (experiment name, status, luminosity) that does
   not fit the width of the axes, next to a colour bar or over a broken x axis,
   is shrunk to fit, down to 60% of its original font size. If that is still too
@@ -263,7 +263,10 @@ rf.correlation(sample, ["MET", "nJet", "HT"], selection="nJet >= 2", percent=Tru
 map, default `viridis`), `colorbar=False`, `zlabel` (default `Events` or the
 normalisation), `normalize`, `title`, `text`, `style`, `figsize`, `ax`, `save`.
 The figure has the same size as a 1D plot; the colour bar takes its space from
-the axes. The bins fill the frame, so an experiment label goes above it.
+the axes. For 2D histograms and correlation matrices, `label_loc` defaults to
+0, with the experiment and secondary text above the frame. Location 3 splits
+them: experiment above, secondary text inside. Only `label_loc=1`, `2`, or `4`
+moves both inside. Luminosity remains above for locations 0–3 and inside for 4.
 
 `rf.correlation` options: `labels` (tick labels, default the variable labels),
 `percent=True` (integer percentages instead of two-decimal coefficients),
@@ -272,8 +275,9 @@ the axes. The bins fill the frame, so an experiment label goes above it.
 `figsize` the figure grows with the number of variables, in proportion to the
 style's figure width, so the larger fonts of experiment styles keep their
 cells readable. It is titled
-`"<sample>: correlation"`; with an experiment style the experiment label takes
-that place above the matrix, and an explicit `title` is shown either way.
+`"<sample>: correlation"`; with an experiment style the experiment label replaces
+that automatic title, using the placement described above. An explicit `title`
+is shown either way.
 
 Both variables of a 2D histogram (and all variables of a correlation matrix)
 must share their structure: all per-event, or all per-object from the same
