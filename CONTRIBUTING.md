@@ -90,34 +90,43 @@ f.Close()
 ## Figures and the gallery
 
 The `examples/gallery` package is both the showcase and the image-regression
-suite: `__init__.py` holds the shared `define()` block and the examples, `data.py`
-writes the toy files and `registry.py` extracts the source shown in the docs. Each
-example is a small function returning a `Plot`; `docs/gallery.md` shows every
-figure next to that function's source (a MkDocs hook, `docs/hooks/gallery.py`),
-and `tests/test_gallery.py` renders all of them and, with `--mpl`, compares
+suite: `__init__.py` holds the shared `define()` block, the `STYLES` and the
+examples, `data.py` writes the toy files and `registry.py` extracts the source
+shown in the docs. Each example is a small function returning a `Plot`. The
+MkDocs hook `docs/hooks/gallery.py` turns them into the gallery: an overview
+(`docs/gallery/index.md`, a card per example, section by section) and a
+generated page per example with its figure and complete code, one tab per
+style. `tests/test_gallery.py` renders all of them and, with `--mpl`, compares
 them pixel-wise (pytest-mpl, RMS tolerance 2) against `docs/images/gallery/`.
-Each example is rendered twice, as shown and inside `rf.dark_theme()`, against
-`<name>.png` and `<name>-dark.png`; the docs pick one per palette. Those PNGs
-are therefore the documentation images *and* the baselines.
+An example whose function takes a `style` is rendered in every entry of
+`STYLES` (the neutral default, ATLAS, CMS, LHCb, ALICE, DUNE) as
+`<name>-<style>.png`, `<name>.png` for the default; every rendering is made
+twice, as shown and inside `rf.dark_theme()` (`-dark`), and the docs pick one
+per palette. Those PNGs are therefore the documentation images *and* the
+baselines. The experiment styles are drawn only when images are compared or
+generated, and `-n auto` runs that on every core.
 
 ```bash
-MPLBACKEND=Agg uv run python examples/gallery             # look at examples/out/*.png
-uv run pytest tests/test_gallery.py --mpl                 # compare against the baselines
-uv run pytest tests/test_gallery.py --mpl-generate-path=docs/images/gallery   # accept changes
+MPLBACKEND=Agg uv run python examples/gallery               # look at examples/out/*.png
+MPLBACKEND=Agg uv run python examples/gallery --style CMS   # ... in another style
+uv run pytest tests/test_gallery.py --mpl -n auto           # compare against the baselines
+uv run pytest tests/test_gallery.py -n auto --mpl-generate-path=docs/images/gallery   # accept changes
 ```
 
 After any visual change: regenerate the baselines, open the PNGs and check
 them by eye, and commit them with the code. CI compares on Linux only (fonts
 differ elsewhere) and, when a comparison fails, uploads an HTML report with
 baseline, result and difference images as the `mpl-results-*` artifact. To add
-an example, register a function with `@example(name, title)` and give it a
-docstring; the test suite fails until both of its baseline images exist. Its parameters
-are attribute names of `Dataset`, it runs inside the directory holding the toy
-files (so name them `"signal.root"`, never through a variable), and the hook
-prints only the body (blank lines and comments included) — write it as a user
-would. Put an object into `define()` — the *Setup* block of the docs page — only
-when several examples use it; anything a single example needs belongs in that
-example.
+an example, register a function with `@example(name, title, section=...)` and
+give it a docstring; the test suite fails until its baseline images exist. Its
+parameters are attribute names of `Dataset`, plus `style` when the figure should
+be shown in every style (pass it on as `style=style`; leave it out when a style
+is the point of the example or the figure goes into axes of your own). It runs
+inside the directory holding the toy files (so name them `"signal.root"`, never
+through a variable), and the hook prints only the body (blank lines and
+comments included) — write it as a user would. Put an object into `define()` —
+the *Setup* block of the example pages — only when several examples use it;
+anything a single example needs belongs in that example.
 
 ## Pull requests
 

@@ -1,0 +1,58 @@
+/* The gallery pages built by docs/hooks/gallery.py, for what Material has no feature for.
+   Only Material's colour variables are used, so both palettes work, and images never get
+   a display rule: Material hides the image of the other palette with display: none. */
+
+/* Overview: section titles between the grids, set like a heading without joining the
+   table of contents and the search index (there is one copy per style tab). */
+.md-typeset .gallery-section {
+  margin: 1.8em 0 0.8em;
+  color: var(--md-default-fg-color--light);
+  font-size: 1.25em;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.md-typeset .gallery-overview .tabbed-block > .gallery-section:first-child {
+  margin-top: 1em;
+}
+
+/* Three cards per row on a desktop, fewer on narrow screens; columns keep their width in
+   sections with fewer cards. */
+.md-typeset .gallery-cards {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
+}
+
+/* Every thumbnail fills the same box, whatever the proportions of its figure. */
+.md-typeset .gallery-cards img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  vertical-align: top;
+}
+
+/* The title is the card's only link, and it covers the whole card. */
+.md-typeset .gallery-cards > ul > li {
+  position: relative;
+}
+
+.md-typeset .gallery-cards a {
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset .gallery-cards a::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+}
+
+.md-typeset .gallery-cards > ul > li:hover a,
+.md-typeset .gallery-cards a:focus-visible {
+  color: var(--md-accent-fg-color);
+}
+
+/* Example pages: figures (centred by Material) use the full width of a small screen. */
+@media screen and (max-width: 44.984375em) {
+  .md-typeset .gallery-figure img {
+    width: 100%;
+  }
+}

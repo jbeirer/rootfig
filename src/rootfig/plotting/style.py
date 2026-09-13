@@ -12,6 +12,7 @@ import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from contextvars import ContextVar
 from typing import Any
+from weakref import WeakKeyDictionary
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -268,29 +269,45 @@ def color_cycle(n: int, style: Style | None = None) -> list[str]:
     return [colors[i % len(colors)] for i in range(n)]
 
 
-def add_experiment_label(ax: Axes, style: Style, *, has_data: bool) -> None:
-    """Draw the experiment label and/or free text described by ``style`` on ``ax``."""
+def add_experiment_label(
+    ax: Axes,
+    style: Style,
+    *,
+    has_data: bool,
+    above: bool = False,
+    right: Axes | None = None,
+) -> None:
+    """Draw the experiment label and/or free text described by ``style`` on ``ax``.
+
+    ``above=True`` puts an experiment label above the frame unless
+    ``style.label_loc`` is set, for plots whose data fill the frame (2D
+    histograms, matrices) and so leave no room for a label inside it. ``right``
+    is the right segment of a broken x axis: the luminosity text that belongs
+    above the right end of the frame is placed above that segment's end.
+    """
     if not style.has_label:
         return
     text_lines = list(style.text_lines)
     simulation = (not has_data) if style.simulation is None else style.simulation
     status_words = (style.status or "").split()
     if "Simulation" in status_words:
-        # mplhep adds the word itself for simulation; avoid "Simulation Simulation"
+        # the word comes from the data flag, once, wherever the status mentions it
         status_words.remove("Simulation")
         simulation = True
     status = " ".join(status_words)
+    header = " ".join(part for part in ["Simulation" if simulation else "", status] if part)
     lumi = style.lumi_parts
     com = style.com_parts
     if style.experiment:
-        supplementary = "\n".join(text_lines) if text_lines else None
         helper = getattr(hep, style.experiment.lower(), None)
         label_fn = getattr(helper, "label", None) if helper is not None else None
-        loc = style.label_loc if style.label_loc is not None else _default_label_loc(style)
+        label_loc = 0 if style.label_loc is None and above else style.label_loc
+        loc = label_loc if label_loc is not None else _default_label_loc(style)
         kwargs: dict[str, Any] = {
             "exp": style.experiment,
-            "text": status,
-            "data": not simulation,
+            # The finished words after the experiment name. mplhep would build them from
+            # text= and data=, but it also prefixes "Supplementary" whenever supp= is set.
+            "llabel": header,
             "ax": ax,
             # mplhep defaults to 13 TeV when com is left out; pass None to omit the energy
             "com": None if com is None else f"{com[0]} {com[1]}".strip(),
@@ -303,38 +320,57 @@ def add_experiment_label(ax: Axes, style: Style, *, has_data: bool) -> None:
             else:
                 # mplhep hard-codes fb^-1; build the whole luminosity line ourselves
                 kwargs["rlabel"] = _lumi_line(lumi, com, atlas_style=loc == 4)
-        if style.label_loc is not None:
-            kwargs["loc"] = style.label_loc
-        if supplementary:
-            kwargs["supp"] = supplementary
+        if label_loc is not None:
+            kwargs["loc"] = label_loc
+        if text_lines and loc != 0:
+            # below the label, inside the frame
+            kwargs["supp"] = "\n".join(text_lines)
         if callable(label_fn):
             # mplhep's per-experiment helpers apply that experiment's conventions.
             kwargs.pop("exp", None)
             label_fn(**kwargs)
         else:
             hep.label.exp_label(**kwargs)
-        align_experiment_label(ax)
+        if text_lines and loc == 0:
+            # With the label above the frame mplhep would turn supp= into a note rotated
+            # along the frame's right edge; the lines belong inside, like any free text.
+            _add_text_block(ax, text_lines)
+        if right is not None:
+            for text in [t for t in ax.texts if _is_lumi_above(t)]:
+                # moved to the right segment's axes, so the layout reserves room there
+                text.remove()
+                text.set_transform(right.transAxes)
+                text.set_clip_on(False)
+                right.add_artist(text)
+        align_experiment_label(ax, right=right)
         return
     # No experiment: draw status/lumi/energy/text as a plain block of text.
-    lines: list[str] = []
-    header = " ".join(part for part in ["Simulation" if simulation else "", status] if part)
-    if header:
-        lines.append(header)
+    lines = [header] if header else []
     energy = f"$\\sqrt{{s}} = {com[0]}$ {com[1]}".strip() if com is not None else ""
     lumi_text = f"{lumi[0]} $\\mathrm{{{lumi[1]}}}$" if lumi is not None else ""
     if energy or lumi_text:
         lines.append(", ".join(part for part in [energy, lumi_text] if part))
     lines.extend(text_lines)
     if lines:
-        box = AnchoredText(
-            "\n".join(lines),
-            loc="upper left",
-            frameon=False,
-            prop={"fontsize": mpl.rcParams["legend.fontsize"]},
-            pad=0.3,
-            borderpad=0.6,
-        )
-        ax.add_artist(box)
+        _add_text_block(ax, lines)
+
+
+def _add_text_block(ax: Axes, lines: Sequence[str]) -> None:
+    """Draw ``lines`` as one left-aligned block in the upper left corner inside the frame."""
+    box = AnchoredText(
+        "\n".join(lines),
+        loc="upper left",
+        frameon=False,
+        prop={"fontsize": mpl.rcParams["legend.fontsize"]},
+        pad=0.3,
+        borderpad=0.6,
+    )
+    ax.add_artist(box)
+
+
+def _is_lumi_above(text: Text) -> bool:
+    """Whether ``text`` is mplhep's luminosity text on the line above the frame."""
+    return isinstance(text, hep.label.LumiText) and text.get_position()[1] >= 1.0
 
 
 def _default_label_loc(style: Style) -> int:
@@ -439,42 +475,76 @@ def pin_fonts(fig: Figure) -> None:
         )
 
 
-def finalize_figure(fig: Figure, ax: Axes, *, panels: Sequence[Axes] = ()) -> None:
-    """Make ``fig`` render identically inside and outside its style context.
+def finalize_figure(fig: Figure, *, panels: Sequence[Axes] = ()) -> None:
+    """Fix what the figure's look depends on while its style context is still active.
 
-    Call as the last drawing step: pins the fonts (see :func:`pin_fonts`), fits the
-    y label of each lower panel in ``panels`` (see
-    :func:`~rootfig.plotting.figure.fit_ylabel`) and then anchors the experiment
-    label (see :func:`align_experiment_label`), whose point-based offset needs the
-    final text metrics.
-
-    The order matters: fitting measures text, so it must follow the font pinning
-    that decides which font is drawn, and it changes the left margin, so it must
-    precede the label anchoring that reads the final axes geometry.
+    Call as the last drawing step inside the style context: pins the fonts (see
+    :func:`pin_fonts`) and fits the y label of each lower panel in ``panels`` (see
+    :func:`~rootfig.plotting.figure.fit_ylabel`), which measures text and so must
+    follow the font pinning that decides which font is drawn. The experiment label
+    is anchored afterwards, outside the context (see :func:`align_experiment_label`).
     """
     pin_fonts(fig)
     for panel in panels:
         fit_ylabel(panel)
-    align_experiment_label(ax)
 
 
 LABEL_WORD_GAP_EM = 0.5
 """Horizontal gap, in units of the status text's font size, between the experiment
 name and the status word (mplhep places them nearly touching)."""
 
+LABEL_LUMI_GAP_EM = 1.0
+"""Smallest horizontal gap, in units of the status text's font size, between the
+words after the experiment name and the luminosity text on the line above the frame."""
 
-def align_experiment_label(ax: Axes) -> None:
+LABEL_MIN_SCALE = 0.6
+"""Smallest size of the label texts above the frame shrunk to fit its width, relative to
+the sizes mplhep gave them."""
+
+LABEL_FIT_PASSES = 3
+"""Most draws :func:`align_experiment_label` makes to fit a label to a layout that
+changes as the label does."""
+
+_label_sizes: WeakKeyDictionary[Text, float] = WeakKeyDictionary()
+_title_pads: WeakKeyDictionary[Text, float] = WeakKeyDictionary()
+
+
+def _original_size(text: Text) -> float:
+    """Return the font size ``text`` had before its first fit, from which every fit starts."""
+    if text not in _label_sizes:
+        _label_sizes[text] = float(text.get_fontproperties().get_size_in_points())
+    return _label_sizes[text]
+
+
+def _is_stacked(text: Text) -> bool:
+    """Whether a luminosity text has a line of its own above the label line."""
+    axes = text.axes
+    return axes is not None and text.get_transform() is not axes.transAxes
+
+
+def align_experiment_label(ax: Axes, *, right: Axes | None = None) -> None:
     """Anchor mplhep's experiment label to the finished figure.
 
     mplhep positions the status word ("Simulation", "Internal", ...) as an axes
     fraction computed when the label is drawn, and shifts a label above the axes
     right by the width of the y axis' scientific-notation offset text measured at
     that moment. Both go stale once the axes are resized (constrained layout) or
-    the y scale changes (a log axis has no offset text). Call this after all
-    drawing: it puts a label above the axes flush with the frame unless an offset
-    text is really shown, and places the status word a fixed gap after the
-    experiment name with a point-based offset, so it stays put at any axes size.
-    Does nothing when ``ax`` carries no mplhep label.
+    the y scale changes (a log axis has no offset text). This puts a label above
+    the axes flush with the frame unless an offset text is really shown, fits the
+    line above the frame to its width (see :func:`_fit_label_line`), lifts the
+    title above the label texts over the frame (see :func:`_clear_title`), and
+    places the status word a fixed gap after the experiment name with a point-based
+    offset, so it stays put at any axes size.
+
+    Call it on the finished figure once its style context has ended, as rootfig's
+    plotting functions do: tick labels and colour bars are laid out when the figure
+    is drawn, from the rcParams active then, so only that layout is the one the
+    figure is shown with. Fitting the label changes the layout in turn, so the
+    figure is drawn and measured again, up to :data:`LABEL_FIT_PASSES` times, until
+    nothing changes. Sizes follow from the texts' original sizes, so aligning again
+    leaves the label as it is. ``right`` is the right segment of a broken x axis,
+    which carries the luminosity text (see :func:`add_experiment_label`). Does
+    nothing when ``ax`` carries no mplhep label.
     """
     exp_txt = next((t for t in ax.texts if isinstance(t, hep.label.ExpLabel)), None)
     if exp_txt is None:
@@ -482,25 +552,39 @@ def align_experiment_label(ax: Axes) -> None:
     fig = ax.get_figure(root=True)
     if fig is None:  # pragma: no cover
         return
+    texts = [*ax.texts, *(right.texts if right is not None else ())]
+    x_exp, y_exp = exp_txt.get_position()
+    above = y_exp >= 1.0 and exp_txt.get_horizontalalignment() == "left"  # mplhep loc 0/3
+    suffix = next((t for t in ax.texts if isinstance(t, hep.label.ExpText) and t.get_text()), None)
+    lumi = next((t for t in texts if _is_lumi_above(t) and t.get_text()), None)
     # The status word and the luminosity text can be wider than a small axes. Left in the
     # layout, constrained layout would shrink the axes to make room for them until it
     # collapses; the short experiment name stays in and reserves the space above the axes.
-    for text in ax.texts:
-        if isinstance(text, hep.label.ExpText | hep.label.LumiText):
+    # A name inside the frame reserves nothing up there, so a luminosity text above the
+    # frame then stays in the layout, which it cannot collapse on its own, and so does one
+    # on a line of its own (see _fit_label_line).
+    for text in texts:
+        if isinstance(text, hep.label.ExpText) or (
+            above and _is_lumi_above(text) and not _is_stacked(text)
+        ):
             text.set_in_layout(False)
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
-    x_exp, y_exp = exp_txt.get_position()
-    above = y_exp >= 1.0 and exp_txt.get_horizontalalignment() == "left"  # mplhep loc 0/3
-    if above:
-        x_exp = 0.0
-        offset_text = ax.yaxis.offsetText
-        if offset_text.get_visible() and offset_text.get_text():
-            width = offset_text.get_window_extent(renderer).width
-            x_exp = 1.1 * width / ax.get_window_extent(renderer).width
-        exp_txt.set_position((x_exp, y_exp))
-    suffix = next((t for t in ax.texts if isinstance(t, hep.label.ExpText)), None)
-    if suffix is None or not suffix.get_text():
+    for _ in range(LABEL_FIT_PASSES):
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
+        if above:
+            x_exp = 0.0
+            offset_text = ax.yaxis.offsetText
+            if offset_text.get_visible() and offset_text.get_text():
+                width = offset_text.get_window_extent(renderer).width
+                x_exp = 1.1 * width / ax.get_window_extent(renderer).width
+            exp_txt.set_position((x_exp, y_exp))
+        fitted = above and lumi is not None and _fit_label_line(exp_txt, suffix, lumi, renderer)
+        if not (_clear_title(ax, texts, renderer) or fitted):
+            break
+    else:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
+    if suffix is None:
         return
     exp_box = exp_txt.get_window_extent(renderer)
     suffix_box = suffix.get_window_extent(renderer)
@@ -516,6 +600,93 @@ def align_experiment_label(ax: Axes) -> None:
     suffix.set_transform(
         ax.transAxes + ScaledTranslation(offset_pt / 72.0, 0.0, fig.dpi_scale_trans)
     )
+
+
+def _fit_label_line(name: Text, status: Text | None, lumi: Text, renderer: Any) -> bool:
+    """Fit the label line above the frame to the frame's width; return whether it changed.
+
+    The experiment name, the status word after it and the luminosity text at the
+    right end share that line, and a narrow axes (a colour bar takes its share)
+    leaves too little room for all three. The texts are measured as if at their
+    original sizes (see :func:`_original_size`) and shrunk by one common factor
+    until they fit. A line that would need less than :data:`LABEL_MIN_SCALE` gives
+    the luminosity text a line of its own above the others instead, at that
+    smallest size and in the layout, so constrained layout reserves the height
+    (unless the text is wider than its axes, which only tiny figures make it).
+    """
+    fig = name.get_figure(root=True)
+    axes = lumi.axes
+    if fig is None or axes is None:  # pragma: no cover
+        return False
+    words = [name] if status is None or status.get_position()[1] < 1.0 else [name, status]
+    parts = [*words, lumi]
+    current = {text: float(text.get_fontproperties().get_size_in_points()) for text in parts}
+
+    def at_original(text: Text, pixels: float) -> float:
+        # text extents are proportional to the font size
+        return pixels * _original_size(text) / current[text]
+
+    em = _original_size(words[-1]) / 72.0 * fig.dpi
+    words_width = sum(at_original(t, t.get_window_extent(renderer).width) for t in words)
+    words_width += (len(words) - 1) * LABEL_WORD_GAP_EM * em
+    lumi_width = at_original(lumi, lumi.get_window_extent(renderer).width)
+    name_height = at_original(name, name.get_window_extent(renderer).height)
+    together = words_width + LABEL_LUMI_GAP_EM * em + lumi_width
+    available = float(lumi.get_window_extent(renderer).x1 - name.get_window_extent(renderer).x0)
+    stacked = together * LABEL_MIN_SCALE > available
+    # stacked lines keep the smallest size, so a label never grows as its axes narrow
+    scale = LABEL_MIN_SCALE if stacked else min(1.0, available / together)
+    changed = stacked != _is_stacked(lumi)
+    for text in parts:
+        size = _original_size(text) * scale
+        if abs(size - current[text]) > 0.01 * _original_size(text):
+            text.set_fontsize(size)
+            changed = True
+    if stacked:
+        lift = ScaledTranslation(0.0, name_height * scale / fig.dpi, fig.dpi_scale_trans)
+        lumi.set_transform(axes.transAxes + lift)
+    else:
+        lumi.set_transform(axes.transAxes)
+    # wider than its axes, it would make constrained layout collapse them (see above)
+    lumi.set_in_layout(stacked and lumi_width * scale <= axes.get_window_extent(renderer).width)
+    return changed
+
+
+def _clear_title(ax: Axes, texts: Sequence[Text], renderer: Any) -> bool:
+    """Lift the title of ``ax`` above the label texts over its frame; return whether it moved.
+
+    A label above the frame (CMS and DUNE, 2D plots, correlation matrices, and the
+    luminosity of LHCb and ALICE) shares that space with the title, so the title
+    goes above the highest of those texts, the style's title pad apart. It stays in
+    the layout, which then reserves room for both.
+    """
+    fig = ax.get_figure(root=True)
+    # Matplotlib's title artists and shared offset are not exposed in its type stubs.
+    all_titles = (ax.title, ax._left_title, ax._right_title)  # type: ignore[attr-defined]
+    titles = [title for title in all_titles if title.get_text()]
+    label = [
+        text
+        for text in texts
+        if isinstance(text, hep.label.ExpLabel | hep.label.ExpText | hep.label.LumiText)
+        and text.get_text()
+        and text.get_position()[1] >= 1.0
+    ]
+    if fig is None or not titles or not label:
+        return False
+    # Read the pad from the axes, not the current rcParams: this also runs after
+    # leaving the style context. Keep the original gap across repeated fits.
+    current_pad = float(ax.titleOffsetTrans.transform((0, 0))[1])  # type: ignore[attr-defined]
+    pad_pt = _title_pads.setdefault(ax.title, current_pad / fig.dpi * 72.0)
+    pad_px = pad_pt / 72.0 * fig.dpi
+    bottom = max(text.get_window_extent(renderer).y1 for text in label) + pad_px
+    lift = bottom - min(title.get_window_extent(renderer).y0 for title in titles)
+    if lift <= 1.0:
+        return False
+    # All three title locations share this offset. Moving it preserves the
+    # existing artists, their styles and explicit positions without set_title's
+    # rcParam defaults selecting or restyling another title.
+    ax._set_title_offset_trans((current_pad + lift) / fig.dpi * 72.0)  # type: ignore[attr-defined]
+    return True
 
 
 def legend_location(style: Style) -> str | None:

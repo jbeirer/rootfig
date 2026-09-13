@@ -9,8 +9,11 @@ theme:
   name: material
   features:
     - navigation.sections
+    - navigation.indexes      # the Gallery section opens its overview
+    - navigation.footer       # previous/next page, e.g. from example to example
     - navigation.top
     - content.code.copy
+    - content.tabs.link       # choosing a style in one tab set switches all of them
     - search.suggest
   palette:
     - scheme: default
@@ -27,7 +30,7 @@ theme:
 nav:
   - Home: index.md
   - Quick start: quickstart.md
-  - Gallery: gallery.md
+  - Gallery: gallery/index.md  # docs/hooks/gallery.py adds a page per example, by section
   - Expressions and selections: expressions.md
   - Samples, variables, cuts and styles: composable.md
   - Plotting options: plotting.md
@@ -41,13 +44,26 @@ markdown_extensions:
       permalink: true
   - pymdownx.highlight
   - pymdownx.superfences
+  - pymdownx.blocks.tab:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.blocks.details
+  - pymdownx.blocks.html
   - attr_list
+
+extra_css:
+  - stylesheets/gallery.css
 
 exclude_docs: |
   hooks/
 
 hooks:
   - docs/hooks/gallery.py
+
+watch:
+  - examples/gallery
 
 plugins:
   - search

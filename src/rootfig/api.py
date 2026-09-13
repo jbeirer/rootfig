@@ -65,9 +65,11 @@ from rootfig.plotting import (
     add_experiment_label,
     add_legend,
     add_stats_box,
+    align_experiment_label,
     apply_xbreak,
     break_segments,
     color_cycle,
+    correlation_figsize,
     draw_correlation,
     draw_efficiencies,
     draw_hist2d,
@@ -562,7 +564,7 @@ def plot_histograms(
         assert drawn is not None
         color_of = dict(zip(map(id, histograms_), drawn.histogram_colors, strict=True))
         has_data = any(h.is_data for h in histograms_)
-        add_experiment_label(layout.main, st, has_data=has_data)
+        add_experiment_label(layout.main, st, has_data=has_data, right=layout.main_right)
 
         per_object = any(h.stats is not None and h.stats.per_object for h in histograms_)
         unit = variable.unit if variable is not None else None
@@ -668,7 +670,9 @@ def plot_histograms(
             if layout.ratio is not None and layout.ratio_right is not None:
                 apply_xbreak(layout.ratio, layout.ratio_right, *segments)
 
-        finalize_figure(layout.fig, layout.main, panels=layout.ratio_axes)  # last: fonts, labels
+        finalize_figure(layout.fig, panels=layout.ratio_axes)  # last: fonts, panel labels
+    # outside the style context, against the layout the figure is drawn with
+    align_experiment_label(layout.main, right=layout.main_right)
     result = Plot(
         fig=layout.fig,
         ax=layout.main,
@@ -759,8 +763,11 @@ def plot2d(
             main_ax.set_yscale("log")
         if title:
             main_ax.set_title(title)
-        add_experiment_label(main_ax, st, has_data=sample.is_data)
-        finalize_figure(fig, main_ax)  # last: fonts and label anchoring
+        # the bins fill the frame: an experiment label goes above it
+        add_experiment_label(main_ax, st, has_data=sample.is_data, above=True)
+        finalize_figure(fig)  # last: fonts
+    # outside the style context, against the layout the figure is drawn with
+    align_experiment_label(main_ax)
     result = Plot(fig=fig, ax=main_ax, histograms=[histogram_], variable=var_x)
     if save:
         result.save(save)
@@ -873,7 +880,9 @@ def correlation(
 
     All variables must share the same structure (all per-event, or all
     per-object from one collection). The matrix is available as
-    ``Plot.matrix``.
+    ``Plot.matrix``. The matrix is titled ``"<sample>: correlation"``; a style
+    with an ``experiment`` draws that experiment's label above the matrix
+    instead, and an explicit ``title`` is always shown.
     """
     sample = _single_sample(data, tree=tree)
     var_list = [as_variable(v) for v in variables]
@@ -888,17 +897,20 @@ def correlation(
         list(labels) if labels is not None else [v.label or v.expression for v in var_list]
     )
     with style_context(style) as st:
-        size = figsize or st.figsize
-        if size is None:
-            side = max(4.5, 0.75 * len(var_list) + 2.5)
-            size = (side * 1.15, side)
+        size = figsize or st.figsize or correlation_figsize(len(var_list))
         layout = make_figure(st, ratio=False, ax=ax, figsize=size)
         fig, main_ax = layout.fig, layout.main
         draw_correlation(
             matrix, tick_labels, main_ax, cmap=cmap, annotate=annotate, percent=percent
         )
-        main_ax.set_title(title if title is not None else f"{sample.label}: correlation")
-        finalize_figure(fig, main_ax)
+        if st.experiment:
+            # above the matrix, where the automatic title would go
+            add_experiment_label(main_ax, st, has_data=sample.is_data, above=True)
+        if title is not None or not st.experiment:
+            main_ax.set_title(title if title is not None else f"{sample.label}: correlation")
+        finalize_figure(fig)  # last: fonts
+    # outside the style context, against the layout the figure is drawn with
+    align_experiment_label(main_ax)
     result = Plot(fig=fig, ax=main_ax, matrix=matrix)
     if save:
         result.save(save)
@@ -1046,7 +1058,9 @@ def efficiency(
                 logy=False,
                 floating=[legend_artist] if floating and legend_artist is not None else [],
             )
-        finalize_figure(layout.fig, layout.main)  # last: fonts and label anchoring
+        finalize_figure(layout.fig)  # last: fonts
+    # outside the style context, against the layout the figure is drawn with
+    align_experiment_label(layout.main)
     result = Plot(
         fig=layout.fig,
         ax=layout.main,
@@ -1184,7 +1198,9 @@ def profile(
                 logy=logy,
                 floating=[legend_artist] if floating and legend_artist is not None else [],
             )
-        finalize_figure(layout.fig, layout.main)  # last: fonts and label anchoring
+        finalize_figure(layout.fig)  # last: fonts
+    # outside the style context, against the layout the figure is drawn with
+    align_experiment_label(layout.main)
     result = Plot(fig=layout.fig, ax=layout.main, variable=var_x, profiles=profiles)
     if save:
         result.save(save)

@@ -185,8 +185,8 @@ range avoids range inference.
   a sentinel region. The right segment is `Plot.ax_right`
   (`Plot.ratio_ax_right`). Not available together with `ax=` or `flow="show"`.
 
-  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio.png#only-light){ width="60%" }
-  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio-dark.png#only-dark){ width="60%" }
+  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio-atlas.png#only-light){ width="60%" }
+  ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio-atlas-dark.png#only-dark){ width="60%" }
 - `flow`: how under/overflow is shown (this is where entries outside an
   inferred [range](#binning-and-range) end up), `"hint"` (small arrows, default),
   `"show"` (extra bins labelled `<low` / `>high`, added on a side as soon as any
@@ -221,7 +221,15 @@ range avoids range inference.
   Axes passed with `ax=` keep the properties they were created with (their
   background, frame and ticks), so a `Style.rc` passed to that plot colours
   only what rootfig draws into them.
-- `text=` extra line(s) drawn with the experiment label.
+- `text=` extra line(s) drawn with the experiment label: below it when the
+  label is inside the frame, in the upper left corner inside the frame when the
+  label sits above it (CMS, DUNE).
+- A label line above the frame (experiment name, status, luminosity) that does
+  not fit the width of the axes, next to a colour bar or over a broken x axis,
+  is shrunk to fit, down to 60% of its original font size. If that is still too
+  wide, the luminosity gets a separate line above the label. The luminosity of
+  a broken x axis sits above the right end of the right segment. An explicit
+  title is placed above these labels, preserving its font, alignment and padding.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).
 
@@ -255,12 +263,17 @@ rf.correlation(sample, ["MET", "nJet", "HT"], selection="nJet >= 2", percent=Tru
 map, default `viridis`), `colorbar=False`, `zlabel` (default `Events` or the
 normalisation), `normalize`, `title`, `text`, `style`, `figsize`, `ax`, `save`.
 The figure has the same size as a 1D plot; the colour bar takes its space from
-the axes.
+the axes. The bins fill the frame, so an experiment label goes above it.
 
 `rf.correlation` options: `labels` (tick labels, default the variable labels),
 `percent=True` (integer percentages instead of two-decimal coefficients),
 `annotate=False` (colours only), `cmap` (default `RdBu_r`), `title`, `style`,
-`figsize`, `ax`, `save`. The matrix is returned as `Plot.matrix`.
+`figsize`, `ax`, `save`. The matrix is returned as `Plot.matrix`. Without a
+`figsize` the figure grows with the number of variables, in proportion to the
+style's figure width, so the larger fonts of experiment styles keep their
+cells readable. It is titled
+`"<sample>: correlation"`; with an experiment style the experiment label takes
+that place above the matrix, and an explicit `title` is shown either way.
 
 Both variables of a 2D histogram (and all variables of a correlation matrix)
 must share their structure: all per-event, or all per-object from the same

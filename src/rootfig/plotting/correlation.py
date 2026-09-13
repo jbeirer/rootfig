@@ -10,8 +10,21 @@ import numpy as np
 from matplotlib.axes import Axes
 
 from rootfig._typing import FloatArray
+from rootfig.plotting.style import ROOTFIG_STYLE
 
-__all__ = ["draw_correlation"]
+__all__ = ["correlation_figsize", "draw_correlation"]
+
+
+def correlation_figsize(n_variables: int) -> tuple[float, float]:
+    """Figure size for a matrix of ``n_variables``, near-square cells included.
+
+    The matrix grows with the number of variables, in proportion to the active
+    style's figure width: experiment styles pair larger fonts with larger figures,
+    and the cell annotations and tick labels need that room too.
+    """
+    scale = plt.rcParams["figure.figsize"][0] / ROOTFIG_STYLE["figure.figsize"][0]
+    side = max(4.5, 0.75 * n_variables + 2.5) * scale
+    return (side * 1.15, side)
 
 
 def draw_correlation(
