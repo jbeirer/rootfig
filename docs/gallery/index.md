@@ -5,10 +5,13 @@ hide:
 
 # Gallery
 
-Every figure below is drawn by the code on its page, from a toy dataset: three
-simulated processes and one "observed" sample with muons, jets and event-level
-quantities. Choose a style: the figures here and on every example page follow
-it.
+Every figure below is drawn by the code on its page. Most examples use a toy
+ROOT dataset: three simulated processes and one "observed" sample with muons,
+jets and event-level quantities. The in-memory arrays example generates its
+own NumPy data.
+
+Choose a style: examples with style tabs follow your choice here and on their
+individual pages. The other examples keep their own styles.
 
 <!-- gallery-overview -->
 
@@ -20,7 +23,7 @@ and one command writes the toy files and every figure in a few seconds:
 
 ```bash
 python examples/gallery                # everything ends up in examples/out/
-python examples/gallery --style CMS    # the same figures in the CMS style
+python examples/gallery --style CMS    # CMS for examples with style tabs
 ```
 
 Each picture is also the reference image the test suite compares against, so
