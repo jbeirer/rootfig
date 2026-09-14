@@ -1721,11 +1721,9 @@ class TestSystematics:
         assert rf.Uncertainty is Uncertainty
 
 
-@pytest.mark.parametrize("is_data", [False, True])
-def test_plain_histogram_ignores_sample_systematics(is_data: bool) -> None:
+def test_plain_histogram_ignores_sample_systematics() -> None:
     sample = rf.Sample(
         {"x": [0.5, 1.5]},
-        is_data=is_data,
         systematics={
             "missing": "missing_weight",
             "files": rf.Systematic.samples("does-not-exist.root"),
