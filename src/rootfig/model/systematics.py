@@ -29,7 +29,7 @@ class Systematic:
     form                                   variation
     =====================================  =============================================
     ``"w_up"``, ``("w_up", "w_down")``     weight expression(s) replacing ``Sample.weight``
-    ``0.05``                               the nominal histogram scaled by ``1 +- 0.05``
+    ``0.05``                               the nominal histogram scaled by ``1 +- 0.05``; 0 <= u < 1
     ``(1.10, 0.95)``                       the nominal histogram scaled by these factors
     ``{"pt": ("pt_up", "pt_down")}``       branches replaced in variable, selection and weight
     ``Systematic.samples(up, down)``       other files or arrays (see :meth:`samples`)
@@ -143,6 +143,12 @@ def _as_systematic(value: Any) -> Systematic:
         return _branch_variation(value)
     if _is_number(value):
         size = _check_number(value)
+        if not 0.0 <= size < 1.0:
+            msg = (
+                f"a relative normalisation uncertainty is a magnitude from 0 to below 1, got "
+                f"{size!r}; give (up, down) factors such as (0.95, 1.05) for a directed variation"
+            )
+            raise SystematicError(msg)
         return Systematic("norm", 1.0 + size, 1.0 - size)
     if isinstance(value, tuple | list) and len(value) == 2:
         if all(isinstance(v, str) for v in value):

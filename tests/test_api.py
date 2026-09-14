@@ -1745,6 +1745,35 @@ class TestSystematics:
             rf.histograms(sample, "x", bins=(2, 0, 2))
         assert any("MC [pileup down]" in note for note in caught.value.__notes__)
 
+    def test_varied_arrays_keep_the_nominal_ngen_from_the_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "nominal.root"
+        with uproot.recreate(path) as file:
+            file.mktree("events", {"x": "float64"}).extend({"x": np.array([0.5, 1.5, 2.5])})
+            file["eventsProcessed"] = np.histogram([0.5] * 6, bins=1)
+        sample = rf.Sample(
+            str(path),
+            tree="events",
+            xsec=1.0,
+            ngen="eventsProcessed",
+            systematics={"generator": rf.Systematic.samples({"x": [0.5, 0.5, 2.5]})},
+        )
+        (h,) = rf.histograms(sample, "x", bins=(3, 0, 3), lumi=1)
+        scale = 1e3 / 6  # 1 pb x 1 fb^-1 / 6 generated events, for nominal and variation alike
+        np.testing.assert_allclose(h.values(), [scale, scale, scale])
+        np.testing.assert_allclose(h.variations["generator"][0].values(), [2 * scale, 0, scale])
+
+    def test_varied_data_warnings_name_the_variation(self) -> None:
+        sample = rf.Sample(
+            {"x": [0.5, 1.5]},
+            label="MC",
+            systematics={"gen": rf.Systematic.samples({"x": [np.nan, 1.5]})},
+        )
+        with pytest.warns(RootfigWarning, match=r"^MC \[gen up\]: dropped 1 non-finite"):
+            rf.histograms(sample, "x", bins=(2, 0, 2))
+        replaced = rf.Sample({"x": [0.5]}, label="MC", systematics={"jes": {"x": "x_up"}})
+        with pytest.raises(MissingBranchError, match=r"MC \[jes up\]: replacing 'x'"):
+            rf.histograms(replaced, "x", bins=(2, 0, 2))
+
     def test_exports(self) -> None:
         assert rf.Systematic.samples("alt.root").kind == "samples"
         assert issubclass(rf.SystematicError, rf.RootfigError)

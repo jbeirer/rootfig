@@ -46,9 +46,9 @@ p = rf.plot(
 | Form | Variation |
 | --- | --- |
 | `"w_up"`, `("w_up", "w_down")` | weight expression(s) replacing `Sample.weight`; the plot `weight=`, `scale` and luminosity scaling still multiply |
-| `0.05`, `(1.10, 0.97)` | the nominal histogram scaled by `1 ± 0.05`, or by the two factors (positive, so a relative uncertainty is below 1) |
+| `0.05`, `(1.10, 0.97)` | the nominal histogram scaled by `1 ± 0.05` (a magnitude, at least 0 and below 1), or by the two positive factors, which may point either way |
 | `{"Jet_pt": ("Jet_pt_up", "Jet_pt_down")}` | branch names replaced by other branches in the variable, the selection and the weight, so a cut on `Jet_pt` moves with it; replacements are branch names, not expressions |
-| `Systematic.samples(up, down)` | other files or arrays with the sample's selection, weight, cross section, tree name and entry range; a `Sample` is used as given |
+| `Systematic.samples(up, down)` | other files or arrays with the sample's selection, weight, cross section, tree name and entry range; files look up a string `ngen` themselves, arrays take the nominal sample's; a `Sample` is used as given |
 
 Rules:
 

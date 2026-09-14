@@ -303,7 +303,9 @@ def _load_with_variations(
                         continue
                     if new not in available:
                         raise MissingBranchError(
-                            new, available=available, context=f"{sample.label}: replacing {old!r}"
+                            new,
+                            available=available,
+                            context=f"{sample.label} [{name} {direction}]: replacing {old!r}",
                         )
                     extra.append(parse(f"`{new}`"))
     arrays, n_events = read_arrays(sample, [*parsed, *extra])
@@ -376,9 +378,14 @@ def _in_variation(context: str) -> Iterator[None]:
 
 
 def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
-    """Return the sample a ``Systematic.samples`` variation reads: ``spec``, or its data."""
+    """Return the sample a ``Systematic.samples`` variation reads: ``spec``, or its data.
+
+    It is labelled ``context`` so its warnings and errors name the variation. Data
+    that cannot look up a string ``ngen`` itself (in-memory arrays) takes the
+    nominal sample's resolved number of generated events; files read their own.
+    """
     if isinstance(spec, Sample):
-        return spec
+        return spec.with_(label=context)
     nominal = sample.source
     try:
         if isinstance(nominal, FileSource | ArraySource) and (
@@ -400,7 +407,14 @@ def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
     except (SourceError, OSError, TypeError, ValueError) as exc:
         msg = f"{context}: cannot use {spec!r} as varied data: {exc}"
         raise SystematicError(msg) from exc
-    return sample.with_(source=source, systematics={})
+    changes: dict[str, Any] = {"source": source, "systematics": {}, "label": context}
+    if (
+        sample.xsec is not None
+        and isinstance(sample.ngen, str)
+        and not callable(getattr(source, "read_scalar", None))
+    ):
+        changes["ngen"] = sample.generated_events()
+    return sample.with_(**changes)
 
 
 def _is_file_spec(spec: Any) -> bool:
