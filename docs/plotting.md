@@ -78,7 +78,7 @@ Rules:
   name and direction in the warning. `nonfinite="error"` rejects them.
 - Data samples cannot carry systematics ([`SystematicError`][rootfig.SystematicError]),
   and neither can pre-filled `Histogram(is_data=True)`; plot-level sources skip them.
-- `plot2d`, `correlation`, `cutflow`, `efficiency`, `profile` and
+- `plot2d`, `correlation`, `summarize`, `cutflow`, `efficiency`, `profile` and
   `histogram()` (a plain `hist.Hist`) ignore systematics.
   Significance panels also use only statistical uncertainties.
 
@@ -90,13 +90,16 @@ and the ratio panel includes the systematics in its band around one
 statistical uncertainties uncorrelated, systematic ones propagated source by
 source through the varied ratio; a variation that empties a denominator bin
 leaves that bin's systematic uncertainty undefined, with a warning). The
-automatic ratio range covers the band and the systematic error bars, and goes
-below zero when a ratio is negative (signed weights).
+automatic ratio range covers the bulk of the band and of the systematic error
+bars (robust percentiles, like the points, so a single bin with a huge
+uncertainty runs off the panel instead of squashing it; pass `ratio_ylim` to
+show it in full). It stays at or above zero unless a central ratio is negative
+(signed weights).
 
 The numbers are part of the result:
 
 ```python
-u = p.uncertainty()  # the stack total; p.uncertainty("Background") for one sample
+u = p.uncertainty()  # all simulated histograms summed (the stack total); or one by label
 u.stat, u.syst_down, u.syst_up  # per bin, visible bins
 u.total_down, u.total_up  # statistical ⊕ systematic
 u.components["jes"]  # signed (up − nominal, down − nominal) shifts

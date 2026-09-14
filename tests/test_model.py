@@ -765,6 +765,16 @@ class TestSystematic:
         with pytest.raises(SystematicError):
             Systematic(kind, up, down)
 
+    def test_explicit_definitions_keep_the_short_form_invariants(self) -> None:
+        with pytest.raises(SystematicError, match="same branches"):
+            Systematic("replace", {"Jet_pt": "Jet_pt_up"}, {"MET": "MET_down"})
+        assert Systematic("replace", {"x": "x_up"}, {"x": "x_down"}).down == {"x": "x_down"}
+        for up in (2.0, 3.0):
+            with pytest.raises(SystematicError, match="one-sided normalisation factor"):
+                Systematic("norm", up)
+        assert Systematic("norm", 1.9).symmetric
+        assert Systematic("norm", 3.0, 0.5).up == 3.0
+
     def test_explicit_replacements_copy_input(self) -> None:
         replacements = {"x": "x_up"}
         systematic = Systematic("replace", replacements)

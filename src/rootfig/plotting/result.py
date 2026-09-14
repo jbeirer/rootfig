@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from rootfig.errors import BinningError
 from rootfig.histograms import sum_histograms, uncertainty
 
 if TYPE_CHECKING:
@@ -83,14 +84,16 @@ class Plot:
         return [h.hist for h in self.histograms]
 
     def uncertainty(self, label: str | None = None) -> Uncertainty:
-        """Statistical and systematic uncertainties of a drawn histogram.
+        """Statistical and systematic uncertainties of a histogram of the plot, or of their sum.
 
         Parameters
         ----------
         label
-            The label of one histogram, or ``None`` for the sum of all non-data
-            histograms (the stack total), with same-named systematic sources
-            added linearly.
+            The label of one histogram. ``None`` sums all non-data histograms,
+            with same-named systematic sources added linearly: the stack total
+            of a stacked plot, the one simulated histogram if there is only one,
+            and for an overlay a total that is not drawn, which needs every
+            histogram to share its binning.
 
         Raises
         ------
@@ -98,13 +101,23 @@ class Plot:
             If no histogram has ``label``.
         ValueError
             If ``label`` is ``None`` and there are no non-data histograms.
+        BinningError
+            If ``label`` is ``None`` and the non-data histograms have different
+            binnings (an overlay); pass a ``label`` instead.
         """
         if label is None:
             simulated = [h for h in self.histograms if not h.is_data]
             if not simulated:
                 msg = "the plot has no non-data histograms; pass the label of a histogram"
                 raise ValueError(msg)
-            return uncertainty(sum_histograms(simulated))
+            try:
+                return uncertainty(sum_histograms(simulated))
+            except BinningError as exc:
+                msg = (
+                    f"cannot sum the histograms of this plot ({exc}); pass the label of one, "
+                    f"e.g. uncertainty({simulated[0].label!r})"
+                )
+                raise BinningError(msg) from exc
         for histogram in self.histograms:
             if histogram.label == label:
                 return uncertainty(histogram)

@@ -68,9 +68,21 @@ class Systematic:
         elif kind == "norm":
             up = _check_factor(up)
             down = None if down is None else _check_factor(down)
+            if down is None and up >= 2.0:
+                msg = (
+                    f"a one-sided normalisation factor mirrors to {2.0 - up!r}, which is not a "
+                    f"factor; give the down factor explicitly or an up factor below 2, got {up!r}"
+                )
+                raise SystematicError(msg)
         elif kind == "replace":
             up = _check_replacements(up)
             down = None if down is None else _check_replacements(down)
+            if down is not None and set(up) != set(down):
+                msg = (
+                    f"the up and down variations must replace the same branches, got "
+                    f"{sorted(up)} and {sorted(down)}"
+                )
+                raise SystematicError(msg)
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "up", up)
         object.__setattr__(self, "down", down)

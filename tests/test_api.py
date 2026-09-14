@@ -1774,6 +1774,14 @@ class TestSystematics:
         with pytest.raises(MissingBranchError, match=r"MC \[jes up\]: replacing 'x'"):
             rf.histograms(replaced, "x", bins=(2, 0, 2))
 
+    def test_uncertainty_of_an_overlay_with_different_binnings_needs_a_label(self) -> None:
+        a = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+        b = hist.Hist(hist.axis.Regular(3, 0, 2), storage=hist.storage.Weight())
+        p = rf.plot_histograms([rf.Histogram(a, "a"), rf.Histogram(b, "b")])
+        with pytest.raises(BinningError, match=r"pass the label of one, e.g. uncertainty\('a'\)"):
+            p.uncertainty()
+        assert p.uncertainty("b").nominal.size == 3
+
     def test_exports(self) -> None:
         assert rf.Systematic.samples("alt.root").kind == "samples"
         assert issubclass(rf.SystematicError, rf.RootfigError)

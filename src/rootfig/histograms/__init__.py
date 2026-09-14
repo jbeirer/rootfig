@@ -17,7 +17,6 @@ from rootfig.histograms.pipeline import (
     load_columns,
     load_columns_each,
     read_arrays,
-    sample_systematics,
     source_length,
 )
 from rootfig.histograms.ratio import (
@@ -66,7 +65,6 @@ __all__ = [
     "profile",
     "ratio",
     "read_arrays",
-    "sample_systematics",
     "significance",
     "source_length",
     "sum_histograms",

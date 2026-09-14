@@ -39,7 +39,6 @@ __all__ = [
     "load_columns",
     "load_columns_each",
     "read_arrays",
-    "sample_systematics",
 ]
 
 
@@ -192,7 +191,7 @@ def build_histograms(
     """Fill one 1D histogram per sample with a binning shared by all of them.
 
     Systematic variations (the sample's own and ``systematics``, which apply to
-    every non-data sample, see :func:`sample_systematics`) are filled into
+    every non-data sample; a sample's own source of the same name wins) are filled into
     :attr:`~rootfig.histograms.Histogram.variations` with the binning chosen
     from the nominal values.
     """
@@ -202,7 +201,7 @@ def build_histograms(
         _load_with_variations(
             s,
             var,
-            sample_systematics(s, plot_level),
+            _sample_systematics(s, plot_level),
             selection=selection,
             weight=weight,
             lumi=lumi,
@@ -237,7 +236,7 @@ def build_histograms(
     return histograms
 
 
-def sample_systematics(
+def _sample_systematics(
     sample: Sample, plot_level: Mapping[str, Systematic] | None = None
 ) -> dict[str, Systematic]:
     """Return the systematics of ``sample``: ``plot_level`` ones, overridden by its own.
