@@ -8,15 +8,25 @@ all samples, and fills one :class:`~rootfig.histograms.Histogram` per sample.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from os import PathLike
 from typing import Any
 
+import awkward as ak
+import numpy as np
+
+from rootfig._typing import Hist
+from rootfig.errors import MissingBranchError, SourceError, SystematicError
 from rootfig.expressions import parse
-from rootfig.histograms.build import Histogram, fill
+from rootfig.histograms.build import Histogram, fill, mirror
 from rootfig.histograms.stats import summarize
-from rootfig.model.binning import resolve_axis
+from rootfig.io import ArraySource, FileSource, as_source
+from rootfig.io.sources import resolve_files
+from rootfig.model.binning import Axis, resolve_axis
 from rootfig.model.cuts import Cut, CutLike, as_cut
 from rootfig.model.samples import Sample
+from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.variables import Variable, as_variable
 from rootfig.selection import Columns, NonFinitePolicy, prepare
 
@@ -28,6 +38,7 @@ __all__ = [
     "load_columns",
     "load_columns_each",
     "read_arrays",
+    "sample_systematics",
 ]
 
 
@@ -43,13 +54,17 @@ def combined_selection(sample: Sample, selection: CutLike | None) -> Cut | None:
 
 def combined_weight(sample: Sample, weight: str | None) -> str | None:
     """Combine a sample's own weight with a plot-level weight multiplicatively."""
-    if weight is not None and not weight.strip():
-        weight = None
-    if sample.weight is None:
-        return weight
-    if weight is None:
-        return sample.weight
-    return f"({sample.weight}) * ({weight})"
+    return _product(sample.weight, weight)
+
+
+def _product(first: str | None, second: str | None) -> str | None:
+    if second is not None and not second.strip():
+        second = None
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return f"({first}) * ({second})"
 
 
 def read_arrays(sample: Sample, expressions: Sequence[Any]) -> tuple[dict[str, Any], int]:
@@ -171,31 +186,239 @@ def build_histograms(
     weight: str | None = None,
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
+    systematics: Mapping[str, SystematicLike] | None = None,
 ) -> list[Histogram]:
-    """Fill one 1D histogram per sample with a binning shared by all of them."""
+    """Fill one 1D histogram per sample with a binning shared by all of them.
+
+    Systematic variations (the sample's own and ``systematics``, which apply to
+    every non-data sample, see :func:`sample_systematics`) are filled into
+    :attr:`~rootfig.histograms.Histogram.variations` with the binning chosen
+    from the nominal values.
+    """
     var = as_variable(variable)
-    columns = [
-        load_columns(s, [var], selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite)
+    plot_level = as_systematics(systematics, "plot")
+    loaded = [
+        _load_with_variations(
+            s,
+            var,
+            sample_systematics(s, plot_level),
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            nonfinite=nonfinite,
+        )
         for s in samples
     ]
     axis = resolve_axis(
         var,
-        [c.values for c in columns],
+        [item.nominal.values for item in loaded],
         name=var.safe_name,
-        weights=[c.weights for c in columns],
+        weights=[item.nominal.weights for item in loaded],
     )
-    return [
-        Histogram(
-            hist=fill([axis], cols),
-            label=sample.label,
-            sample=sample,
-            stats=summarize(cols),
-            is_data=sample.is_data,
-            color=sample.color,
-            histtype=sample.histtype,
+    histograms = []
+    for sample, item in zip(samples, loaded, strict=True):
+        nominal = fill([axis], item.nominal)
+        histograms.append(
+            Histogram(
+                hist=nominal,
+                label=sample.label,
+                sample=sample,
+                stats=summarize(item.nominal),
+                is_data=sample.is_data,
+                color=sample.color,
+                histtype=sample.histtype,
+                variations={
+                    name: _fill_variation(axis, nominal, up, down)
+                    for name, (up, down) in item.variations.items()
+                },
+            )
         )
-        for sample, cols in zip(samples, columns, strict=True)
-    ]
+    return histograms
+
+
+def sample_systematics(
+    sample: Sample, plot_level: Mapping[str, Systematic] | None = None
+) -> dict[str, Systematic]:
+    """Return the systematics of ``sample``: ``plot_level`` ones, overridden by its own.
+
+    Data carries no systematics; plot-level ones skip it.
+
+    Raises
+    ------
+    SystematicError
+        If a data sample defines systematics of its own.
+    """
+    if sample.is_data:
+        if sample.systematics:
+            msg = (
+                f"sample {sample.label!r} is observed data and cannot carry systematics "
+                f"({sorted(sample.systematics)}); attach them to the simulated samples"
+            )
+            raise SystematicError(msg)
+        return {}
+    return {**(plot_level or {}), **sample.systematics}
+
+
+@dataclass(frozen=True)
+class _Loaded:
+    """Nominal columns of a sample and, per source, what its up and down variations are."""
+
+    nominal: Columns
+    variations: dict[str, tuple[Columns | float | None, Columns | float | None]]
+
+
+def _load_with_variations(
+    sample: Sample,
+    var: Variable,
+    systematics: Mapping[str, Systematic],
+    *,
+    selection: CutLike | None,
+    weight: str | None,
+    lumi: float | str | None,
+    nonfinite: NonFinitePolicy,
+) -> _Loaded:
+    """Prepare the nominal columns and every variation, reading the sample's branches once.
+
+    Weight and branch variations are evaluated on the arrays read for the
+    nominal; variations from other data read those. A variation is a
+    :class:`Columns` to fill, a factor for the nominal histogram, or ``None``
+    for a down direction mirrored from the up one.
+    """
+    cut = combined_selection(sample, selection)
+    cut_text = None if cut is None else cut.expression
+    weight_expr = combined_weight(sample, weight)
+    scale = sample.scale * sample.lumi_scale(lumi)
+
+    parsed = [parse(var.expression)]
+    if cut is not None:
+        parsed.append(cut.parsed())
+    if weight_expr is not None:
+        parsed.append(parse(weight_expr))
+    available = sample.source.branches()
+    used = {name for expression in parsed for name in expression.required_branches(available)}
+    # weight variations and the branches that replace used ones join the single read
+    extra = []
+    for syst in systematics.values():
+        for spec in (syst.up, syst.down):
+            if spec is None or syst.kind not in ("weight", "replace"):
+                continue
+            if syst.kind == "weight":
+                extra.append(parse(spec))
+            else:
+                for old, new in spec.items():
+                    if old not in used:
+                        continue
+                    if new not in available:
+                        raise MissingBranchError(
+                            new, available=available, context=f"{sample.label}: replacing {old!r}"
+                        )
+                    extra.append(parse(f"`{new}`"))
+    arrays, n_events = read_arrays(sample, [*parsed, *extra])
+
+    nominal = prepare(
+        arrays,
+        [var.expression],
+        selection=cut_text,
+        weight=weight_expr,
+        scale=scale,
+        nonfinite=nonfinite,
+        context=sample.label,
+        n_events=n_events,
+    )
+
+    variations: dict[str, tuple[Columns | float | None, Columns | float | None]] = {}
+    for name, syst in systematics.items():
+        shifts: list[Columns | float | None] = []
+        for direction, spec in (("up", syst.up), ("down", syst.down)):
+            context = f"{sample.label} [{name} {direction}]"
+            if spec is None:
+                shifts.append(None)
+            elif syst.kind == "norm":
+                shifts.append(float(spec))
+            elif syst.kind == "samples":
+                variant = _variant_sample(sample, spec, context)
+                shifts.append(
+                    load_columns(
+                        variant,
+                        [var],
+                        selection=selection,
+                        weight=weight,
+                        lumi=lumi,
+                        nonfinite=nonfinite,
+                    )
+                )
+            else:
+                if syst.kind == "weight":
+                    varied_arrays, varied_weight = arrays, _product(spec, weight)
+                else:
+                    # the replacing branches take the place of the replaced ones, so the
+                    # variable, selection and weight all see the shifted values
+                    replaced = {old: arrays[new] for old, new in spec.items() if old in used}
+                    varied_arrays, varied_weight = {**arrays, **replaced}, weight_expr
+                shifts.append(
+                    prepare(
+                        varied_arrays,
+                        [var.expression],
+                        selection=cut_text,
+                        weight=varied_weight,
+                        scale=scale,
+                        nonfinite=nonfinite,
+                        context=context,
+                        n_events=n_events,
+                    )
+                )
+        variations[name] = (shifts[0], shifts[1])
+    return _Loaded(nominal, variations)
+
+
+def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
+    """Return the sample a ``Systematic.samples`` variation reads: ``spec``, or its data."""
+    if isinstance(spec, Sample):
+        return spec
+    nominal = sample.source
+    try:
+        if isinstance(nominal, FileSource | ArraySource) and (
+            _is_file_spec(spec) or isinstance(spec, Mapping | ak.Array | np.ndarray)
+        ):
+            # the nominal tree name and entry range apply unless the spec names its own tree
+            tree = (
+                nominal.resolved_tree()
+                if isinstance(nominal, FileSource)
+                and _is_file_spec(spec)
+                and resolve_files(spec)[1] is None
+                else None
+            )
+            source = as_source(
+                spec, tree=tree, entry_start=nominal.entry_start, entry_stop=nominal.entry_stop
+            )
+        else:
+            source = as_source(spec)
+    except (SourceError, OSError, TypeError, ValueError) as exc:
+        msg = f"{context}: cannot use {spec!r} as varied data: {exc}"
+        raise SystematicError(msg) from exc
+    return sample.with_(source=source, systematics={})
+
+
+def _is_file_spec(spec: Any) -> bool:
+    if isinstance(spec, str | PathLike):
+        return True
+    return isinstance(spec, list | tuple) and all(isinstance(f, str | PathLike) for f in spec)
+
+
+def _fill_variation(
+    axis: Axis, nominal: Hist, up: Columns | float | None, down: Columns | float | None
+) -> tuple[Hist, Hist]:
+    up_hist = _fill_shift(axis, nominal, up)
+    return up_hist, mirror(nominal, up_hist) if down is None else _fill_shift(axis, nominal, down)
+
+
+def _fill_shift(axis: Axis, nominal: Hist, shift: Columns | float | None) -> Hist:
+    if isinstance(shift, float):
+        return nominal * shift
+    if shift is None:  # pragma: no cover - an up variation always exists
+        msg = "internal error: missing up variation"
+        raise SystematicError(msg)
+    return fill([axis], shift)
 
 
 def build_histograms_2d(

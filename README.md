@@ -127,6 +127,10 @@ matplotlib `Figure`/`Axes`, `p.hists` are `hist.Hist` objects, and
   and `(n, low, high)` are used as given, while a range inferred from the data
   ignores far outliers, so `-999` sentinels do not set the axis. Normalise to
   unity, density, bin width or luminosity.
+- **Show systematic uncertainties.** Attach weight, branch, file or
+  normalisation variations to a sample; stacks and ratio panels draw the
+  combined statistical and systematic band, and every component stays
+  accessible.
 - **Style figures for your analysis.** Add experiment labels, units, log axes
   and broken axes, then refine the result with matplotlib.
 - **Go beyond 1D plots.** Draw 2D histograms, correlations, efficiencies,

@@ -26,12 +26,14 @@
 ::: rootfig.Variable
 ::: rootfig.Cut
 ::: rootfig.Style
+::: rootfig.Systematic
 
 ## Results
 
 ::: rootfig.Plot
 ::: rootfig.Histogram
 ::: rootfig.Ratio
+::: rootfig.Uncertainty
 ::: rootfig.Summary
 ::: rootfig.SummaryTable
 ::: rootfig.Cutflow

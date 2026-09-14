@@ -12,6 +12,7 @@ from matplotlib.ticker import MaxNLocator
 from rootfig.histograms.build import Histogram
 from rootfig.histograms.ratio import Ratio, RatioUncertainty, SignificanceKind, ratio
 from rootfig.model.style import Style
+from rootfig.plotting.hist1d import band_label
 from rootfig.plotting.style import color_cycle, foreground
 
 __all__ = ["draw_ratio_panel", "draw_significance_panel", "ratio_ylim"]
@@ -46,6 +47,8 @@ def draw_ratio_panel(
     uncertainty
         ``"propagate"`` (error bars carry both uncertainties) or ``"numerator"``
         (error bars carry the numerator's; the reference uncertainty is a band).
+        Systematic variations of the histograms are included in error bars and
+        band alike (see :func:`~rootfig.histograms.ratio`).
     colors
         One colour per numerator; defaults to the numerator's own colour or the
         style cycle (``text.color`` for data).
@@ -58,7 +61,7 @@ def draw_ratio_panel(
         Draw the reference uncertainty band. Defaults to ``True`` for
         ``uncertainty="numerator"``.
     """
-    ratios = [ratio(h.hist, reference.hist, uncertainty=uncertainty) for h in numerators]
+    ratios = [ratio(h, reference, uncertainty=uncertainty) for h in numerators]
     if colors is None:
         cycle = iter(color_cycle(max(len(numerators), 1), style))
         colors = [
@@ -70,9 +73,10 @@ def draw_ratio_panel(
     show_band = (uncertainty == "numerator") if band is None else band
     if show_band and ratios:
         first = ratios[0]
-        finite = np.isfinite(first.band)
-        lower = np.where(finite, 1.0 - first.band, 1.0)
-        upper = np.where(finite, 1.0 + first.band, 1.0)
+        band_down, band_up = first.total_band()
+        has_systematics = first.syst_band is not None
+        lower = np.where(np.isfinite(band_down), 1.0 - band_down, 1.0)
+        upper = np.where(np.isfinite(band_up), 1.0 + band_up, 1.0)
         ax.fill_between(
             first.edges,
             np.append(lower, lower[-1]),
@@ -82,16 +86,17 @@ def draw_ratio_panel(
             alpha=0.3,
             linewidth=0,
             zorder=0,
-            label=f"{reference.label} stat. unc.",
+            label=f"{reference.label} {band_label(systematics=has_systematics).lower()}",
         )
 
     for r, color, numerator in zip(ratios, colors, numerators, strict=True):
         ok = np.isfinite(r.values)
         marker: dict[str, Any] = {"fmt": "o", "markersize": 4 if not numerator.is_data else 5}
+        errors_down, errors_up = r.total_errors()
         ax.errorbar(
             r.centers[ok],
             r.values[ok],
-            yerr=r.errors[ok],
+            yerr=r.errors[ok] if r.syst_errors is None else [errors_down[ok], errors_up[ok]],
             xerr=r.half_widths[ok],
             color=color,
             elinewidth=1.0,

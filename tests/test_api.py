@@ -13,11 +13,12 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 import numpy as np
 import pytest
+import uproot
 from matplotlib.colors import to_rgba
 from matplotlib.font_manager import FontProperties
 
 import rootfig as rf
-from rootfig.api import _split_bins
+from rootfig.api.plots2d import _split_bins
 from rootfig.errors import (
     BinningError,
     IncompatibleWeightError,
@@ -1632,3 +1633,122 @@ class TestWeightedRangeInference:
         unweighted = rf.plot({"x": values}, "x", bins=50)
         assert unweighted.ax.get_xlim()[1] < 8.0
         plt.close(unweighted.fig)
+
+
+class TestSystematics:
+    @pytest.mark.filterwarnings("ignore::rootfig.errors.RootfigWarning")
+    def test_stack_with_data_and_ratio(self, signal_file: Path, background_file: Path) -> None:
+        bkg = rf.Sample(
+            background_file,
+            tree="events",
+            label="Background",
+            weight="weight",
+            systematics={
+                "weight": ("weight * 1.1", "weight * 0.95"),
+                "met": {"MET": ("with_nan", "sentinel")},
+            },
+        )
+        sig = rf.Sample(signal_file, tree="events", label="Signal", systematics={"xsec": 0.2})
+        data = rf.Sample(background_file, tree="events", label="Data")
+        p = rf.plot(
+            [bkg, sig],
+            "MET",
+            observed=data,
+            bins=(20, 0, 200),
+            stack=True,
+            ratio=True,
+            systematics={"lumi": 0.02},
+        )
+        legend_texts = [t.get_text() for t in p.ax.get_legend().get_texts()]
+        assert legend_texts == ["Data", "Signal", "Background", "Stat. + syst. unc."]
+        total = p.uncertainty()
+        assert list(total.components) == ["lumi", "weight", "met", "xsec"]
+        np.testing.assert_allclose(
+            total.components["lumi"][0],
+            0.02 * (p.histograms[0].values() + p.histograms[1].values()),
+        )
+        assert np.all(total.total_up >= total.stat)
+        assert p.ratios[0].syst_band is not None
+        filled = total.nominal > 0
+        np.testing.assert_allclose(
+            p.ratios[0].syst_band[1][filled], total.syst_up[filled] / total.nominal[filled]
+        )
+        signal = p.uncertainty("Signal")
+        assert set(signal.components) == {"lumi", "xsec"}
+        assert not p.uncertainty("Data").has_systematics
+        with pytest.raises(KeyError, match="no histogram labelled"):
+            p.uncertainty("nope")
+
+    def test_replaced_branches_move_the_selection(self, signal_arrays: dict[str, Any]) -> None:
+        sample = rf.Sample(signal_arrays, systematics={"s": {"MET": "weight"}})
+        (h,) = rf.histograms(sample, "MET", selection="MET > 0.9", bins=(10, 0, 2))
+        swapped = {**signal_arrays, "MET": signal_arrays["weight"]}
+        (expected,) = rf.histograms(swapped, "MET", selection="MET > 0.9", bins=(10, 0, 2))
+        np.testing.assert_allclose(h.variations["s"][0].values(), expected.values())
+
+    def test_varied_files_inherit_the_tree(self, signal_file: Path, background_file: Path) -> None:
+        sample = rf.Sample(
+            signal_file,
+            tree="events",
+            label="S",
+            systematics={"generator": rf.Systematic.samples(str(background_file))},
+        )
+        (h,) = rf.histograms(sample, "MET", bins=(10, 0, 100), systematics={"lumi": 0.1})
+        (other,) = rf.histograms(background_file, "MET", tree="events", bins=(10, 0, 100))
+        np.testing.assert_allclose(h.variations["generator"][0].values(), other.values())
+        assert set(h.variations) == {"lumi", "generator"}
+
+    def test_prefilled_histograms_and_empty_plot(self) -> None:
+        nominal = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
+        nominal.fill([0.5, 1.5, 1.5, 2.5])
+        h = rf.Histogram(nominal, label="MC", variations={"s": (nominal * 1.1, nominal * 0.8)})
+        p = rf.plot_histograms([h], ratio=False)
+        np.testing.assert_allclose(p.uncertainty().syst_down, 0.2 * nominal.values())
+        data = rf.Histogram(nominal, label="Data", is_data=True)
+        with pytest.raises(ValueError, match="no non-data histograms"):
+            rf.plot_histograms([data]).uncertainty()
+
+    def test_exports(self) -> None:
+        assert rf.Systematic.samples("alt.root").kind == "samples"
+        assert issubclass(rf.SystematicError, rf.RootfigError)
+        from rootfig.histograms import Uncertainty
+
+        assert rf.Uncertainty is Uncertainty
+
+
+@pytest.mark.parametrize("is_data", [False, True])
+def test_plain_histogram_ignores_sample_systematics(is_data: bool) -> None:
+    sample = rf.Sample(
+        {"x": [0.5, 1.5]},
+        is_data=is_data,
+        systematics={
+            "missing": "missing_weight",
+            "files": rf.Systematic.samples("does-not-exist.root"),
+        },
+    )
+    result = rf.histogram(sample, "x", bins=(2, 0, 2))
+    np.testing.assert_allclose(result.values(), [1, 1])
+
+
+def test_varied_files_inherit_auto_detected_tree_and_range(tmp_path: Path) -> None:
+    nominal = tmp_path / "nominal.root"
+    alternate = tmp_path / "alternate.root"
+    with uproot.recreate(nominal) as f:
+        f["events"] = {"x": np.array([0.5, 1.5, 2.5, 3.5])}
+    with uproot.recreate(alternate) as f:
+        f["events"] = {"x": np.array([0.5, 1.5, 2.5, 3.5])}
+        f["other"] = {"x": np.array([3.5, 2.5, 1.5, 0.5])}
+    sample = rf.Sample(
+        nominal,
+        entry_start=0,
+        entry_stop=2,
+        systematics={
+            "inherit": rf.Systematic.samples(alternate),
+            "explicit": rf.Systematic.samples(f"{alternate}:other"),
+            "arrays": rf.Systematic.samples({"x": [0.5, 1.5, 2.5, 3.5]}),
+        },
+    )
+    (h,) = rf.histograms(sample, "x", bins=(4, 0, 4))
+    np.testing.assert_allclose(h.variations["inherit"][0].values(), [1, 1, 0, 0])
+    np.testing.assert_allclose(h.variations["explicit"][0].values(), [0, 0, 1, 1])
+    np.testing.assert_allclose(h.variations["arrays"][0].values(), [1, 1, 0, 0])

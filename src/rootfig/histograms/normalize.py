@@ -9,7 +9,7 @@ from typing import Any, Literal, TypeAlias
 import numpy as np
 
 from rootfig._typing import FloatArray, Hist
-from rootfig.errors import BinningError, RootfigWarning
+from rootfig.errors import BinningError, RootfigWarning, SystematicError
 from rootfig.histograms.build import Histogram, as_weight_storage
 
 __all__ = ["NormalizeSpec", "normalization_label", "normalize", "normalize_hist"]
@@ -139,13 +139,37 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
     ``normalization`` is set only when the normalisation was actually applied;
     a histogram that could not be normalised (see :func:`normalize_hist`) keeps
     ``None`` so labels do not claim a scaling that did not happen.
+
+    Systematic variations are normalised the same way as the nominal histogram,
+    each by its own total, so a normalised plot shows how a variation changes the
+    shape; a pure normalisation uncertainty drops out of the rescaling modes
+    (``unity``, ``density`` and numeric targets). ``width`` retains it.
+    If the nominal cannot be normalised, all variations stay unchanged too.
+    A variation that cannot be normalised when the nominal can raises
+    :class:`~rootfig.errors.SystematicError`, avoiding a mixture of raw and
+    normalised contents in the uncertainty.
     """
     mode = _mode(spec)
     if mode is None:
         return histogram
     result, applied = _normalize_hist(histogram.hist, spec)
-    label = normalization_label(spec) if applied else None
-    return histogram.with_(hist=result, normalization=label)
+    if not applied:
+        return histogram.with_(hist=result, normalization=None)
+    label = normalization_label(spec)
+    variations = {}
+    for name, pair in histogram.variations.items():
+        normalized = []
+        for direction, varied in zip(("up", "down"), pair, strict=True):
+            shifted, shift_applied = _normalize_hist(varied, spec)
+            if not shift_applied:
+                msg = (
+                    f"histogram {histogram.label!r}: systematic {name!r} {direction} cannot "
+                    "be normalised; its visible total must be finite and non-zero"
+                )
+                raise SystematicError(msg)
+            normalized.append(shifted)
+        variations[name] = (normalized[0], normalized[1])
+    return histogram.with_(hist=result, normalization=label, variations=variations)
 
 
 def normalization_label(spec: NormalizeSpec) -> str | None:

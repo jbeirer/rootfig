@@ -378,6 +378,8 @@ class ArraySource:
     """
 
     data: Mapping[str, ak.Array]
+    entry_start: int | None = None
+    entry_stop: int | None = None
 
     def __init__(
         self,
@@ -394,6 +396,8 @@ class ArraySource:
         if entry_start is not None or entry_stop is not None:
             columns = {name: array[entry_start:entry_stop] for name, array in columns.items()}
         object.__setattr__(self, "data", columns)
+        object.__setattr__(self, "entry_start", entry_start)
+        object.__setattr__(self, "entry_stop", entry_stop)
 
     def branches(self) -> list[str]:
         """Return the column names."""

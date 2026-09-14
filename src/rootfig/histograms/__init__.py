@@ -17,6 +17,7 @@ from rootfig.histograms.pipeline import (
     load_columns,
     load_columns_each,
     read_arrays,
+    sample_systematics,
     source_length,
 )
 from rootfig.histograms.ratio import (
@@ -29,6 +30,7 @@ from rootfig.histograms.ratio import (
     significance,
 )
 from rootfig.histograms.stats import Summary, correlation_matrix, describe_table, summarize
+from rootfig.histograms.systematics import Uncertainty, sum_histograms, uncertainty
 
 __all__ = [
     "SIGNIFICANCE_KINDS",
@@ -44,6 +46,7 @@ __all__ = [
     "RatioUncertainty",
     "SignificanceKind",
     "Summary",
+    "Uncertainty",
     "as_weight_storage",
     "build_histograms",
     "build_histograms_2d",
@@ -63,7 +66,10 @@ __all__ = [
     "profile",
     "ratio",
     "read_arrays",
+    "sample_systematics",
     "significance",
     "source_length",
+    "sum_histograms",
     "summarize",
+    "uncertainty",
 ]

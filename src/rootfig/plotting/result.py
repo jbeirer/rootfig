@@ -12,9 +12,11 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from rootfig.histograms import sum_histograms, uncertainty
+
 if TYPE_CHECKING:
     from rootfig._typing import FloatArray
-    from rootfig.histograms import Efficiency, Histogram, Profile, Ratio
+    from rootfig.histograms import Efficiency, Histogram, Profile, Ratio, Uncertainty
     from rootfig.model import Variable
 
 __all__ = ["Plot"]
@@ -79,6 +81,35 @@ class Plot:
     def hists(self) -> list[Any]:
         """The underlying ``hist.Hist`` objects, in drawing order."""
         return [h.hist for h in self.histograms]
+
+    def uncertainty(self, label: str | None = None) -> Uncertainty:
+        """Statistical and systematic uncertainties of a drawn histogram.
+
+        Parameters
+        ----------
+        label
+            The label of one histogram, or ``None`` for the sum of all non-data
+            histograms (the stack total), with same-named systematic sources
+            added linearly.
+
+        Raises
+        ------
+        KeyError
+            If no histogram has ``label``.
+        ValueError
+            If ``label`` is ``None`` and there are no non-data histograms.
+        """
+        if label is None:
+            simulated = [h for h in self.histograms if not h.is_data]
+            if not simulated:
+                msg = "the plot has no non-data histograms; pass the label of a histogram"
+                raise ValueError(msg)
+            return uncertainty(sum_histograms(simulated))
+        for histogram in self.histograms:
+            if histogram.label == label:
+                return uncertainty(histogram)
+        msg = f"no histogram labelled {label!r}; labels: {[h.label for h in self.histograms]}"
+        raise KeyError(msg)
 
     def save(
         self,

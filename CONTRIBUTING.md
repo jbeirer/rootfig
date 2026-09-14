@@ -36,7 +36,7 @@ tests that require ROOT or network access.
 
 ```
 src/rootfig/
-  api.py          plot(), histogram(), load(), ...  (orchestration only)
+  api/            plot(), histogram(), load(), ...  (orchestration only)
   errors.py       exception hierarchy
   expressions/    parse, validate and evaluate expression strings
   io/             file and in-memory data sources

@@ -10,17 +10,25 @@ import hist
 import numpy as np
 import pytest
 
-from rootfig.errors import BinningError, ExpressionError, LuminosityError, SourceError
+from rootfig.errors import (
+    BinningError,
+    ExpressionError,
+    LuminosityError,
+    SourceError,
+    SystematicError,
+)
 from rootfig.io import ArraySource, FileSource
 from rootfig.model import (
     DEFAULT_RANGE,
     Cut,
     Sample,
     Style,
+    Systematic,
     Variable,
     as_cut,
     as_samples,
     as_style,
+    as_systematics,
     as_variable,
     auto_range,
     log_bins,
@@ -668,3 +676,90 @@ class TestFiniteScaling:
         assert cross_section_pb(1.23456789) == 1.23456789
         assert luminosity_fb(1.23456789) == 1.23456789
         assert cross_section_pb("1.23456789 pb") == 1.23456789
+
+
+class TestSystematic:
+    def test_forms(self) -> None:
+        systematics = as_systematics(
+            {
+                "one_sided": "w_up",
+                "pair": ("w_up", "w_down"),
+                "relative": 0.05,
+                "factors": (1.1, 0.95),
+                "branches": {"x": ("x_up", "x_down")},
+                "one_sided_branches": {"x": "x_up", "y": "y_up"},
+                "files": Systematic.samples("alt.root"),
+            }
+        )
+        assert systematics["one_sided"] == Systematic("weight", "w_up")
+        assert systematics["one_sided"].symmetric
+        assert systematics["pair"] == Systematic("weight", "w_up", "w_down")
+        assert systematics["relative"] == Systematic("norm", 1.05, 0.95)
+        assert systematics["factors"] == Systematic("norm", 1.1, 0.95)
+        assert systematics["branches"] == Systematic("replace", {"x": "x_up"}, {"x": "x_down"})
+        assert systematics["one_sided_branches"].down is None
+        assert systematics["files"] == Systematic("samples", "alt.root")
+        assert repr(systematics["relative"]) == "Systematic(kind='norm', up=1.05, down=0.95)"
+        assert as_systematics(None) == {}
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            ([1, "a"], "cannot interpret"),
+            (True, "cannot interpret"),
+            ("w +", "not a valid expression"),
+            (("w", "w +"), "not a valid expression"),
+            ({}, "non-empty mapping"),
+            ({"x": ("a", "b"), "y": "c"}, "every branch"),
+            ({"x": 3}, "branch name or"),
+            ({"x": ""}, "non-empty strings"),
+            (float("nan"), "finite numbers"),
+            ((1.1, float("inf")), "finite numbers"),
+        ],
+    )
+    def test_invalid_forms(self, value: Any, message: str) -> None:
+        with pytest.raises(SystematicError, match=message):
+            as_systematics({"s": value})
+
+    def test_invalid_mapping_and_kind(self) -> None:
+        with pytest.raises(SystematicError, match="non-empty strings"):
+            as_systematics({"": 0.1})
+        with pytest.raises(SystematicError, match="must be a mapping"):
+            as_systematics(["s"])  # type: ignore[arg-type]
+        with pytest.raises(SystematicError, match="systematic kind"):
+            Systematic("shape", "x")  # type: ignore[arg-type]
+        with pytest.raises(SystematicError, match="needs an up"):
+            Systematic("weight", None)
+
+    def test_sample_field(self) -> None:
+        sample = Sample({"x": [1.0, 2.0]}, label="S", systematics={"n": 0.1})
+        assert sample.systematics == {"n": Systematic("norm", 1.1, 0.9)}
+        assert "systematics=['n']" in repr(sample)
+        assert sample.with_(systematics={"w": "x"}).systematics == {"w": Systematic("weight", "x")}
+        assert Sample({"x": [1.0]}).systematics == {}
+        with pytest.raises(SystematicError, match="sample 'S': systematic 'bad'"):
+            sample.with_(systematics={"bad": object()})
+
+    @pytest.mark.parametrize(
+        ("kind", "up", "down"),
+        [
+            ("norm", float("nan"), None),
+            ("norm", 1.1, float("inf")),
+            ("norm", True, None),
+            ("norm", "1.1", None),
+            ("weight", 2.0, None),
+            ("weight", "w", "w +"),
+            ("replace", {}, None),
+            ("replace", {"x": "up"}, {"x": 2.0}),
+            ("replace", {"x": "up`"}, None),
+        ],
+    )
+    def test_explicit_definitions_are_validated(self, kind: Any, up: Any, down: Any) -> None:
+        with pytest.raises(SystematicError):
+            Systematic(kind, up, down)
+
+    def test_explicit_replacements_copy_input(self) -> None:
+        replacements = {"x": "x_up"}
+        systematic = Systematic("replace", replacements)
+        replacements["x"] = "another"
+        assert systematic.up == {"x": "x_up"}

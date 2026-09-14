@@ -36,6 +36,7 @@ from rootfig.errors import (
     RootfigWarning,
     SelectionError,
     SourceError,
+    SystematicError,
 )
 from rootfig.expressions import evaluate
 from rootfig.histograms import (
@@ -46,10 +47,11 @@ from rootfig.histograms import (
     Profile,
     Ratio,
     Summary,
+    Uncertainty,
     ratio,
     significance,
 )
-from rootfig.model import Cut, Sample, Style, Variable, log_bins
+from rootfig.model import Cut, Sample, Style, Systematic, Variable, log_bins
 from rootfig.plotting import Plot, dark_theme, use_style
 
 __version__ = "0.3.0"
@@ -76,6 +78,9 @@ __all__ = [
     "Style",
     "Summary",
     "SummaryTable",
+    "Systematic",
+    "SystematicError",
+    "Uncertainty",
     "Variable",
     "__version__",
     "correlation",

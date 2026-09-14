@@ -16,6 +16,7 @@ from matplotlib.axes import Axes
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram
 from rootfig.histograms.ratio import compatible_binning
+from rootfig.histograms.systematics import sum_histograms, uncertainty
 from rootfig.model.samples import HistType
 from rootfig.model.style import Style
 from rootfig.plotting.style import color_cycle, foreground
@@ -24,6 +25,7 @@ __all__ = [
     "DATA_STYLE",
     "Drawn",
     "FlowSpec",
+    "band_label",
     "draw_histograms",
     "envelope",
     "fold_flow_bins",
@@ -37,6 +39,11 @@ FlowSpec: TypeAlias = Literal["hint", "show", "sum", "none"]
 
 DATA_STYLE: dict[str, Any] = {"marker": "o", "markersize": 5, "capsize": 0}
 """Default appearance of data points, drawn in the style's ink colour unless a sample sets one."""
+
+
+def band_label(*, systematics: bool) -> str:
+    """Label of an uncertainty band: statistical, or statistical and systematic."""
+    return "Stat. + syst. unc." if systematics else "Stat. unc."
 
 
 @dataclass(frozen=True)
@@ -55,10 +62,6 @@ class Drawn:
     ymin_positive: float
     colors: dict[str, str]
     histogram_colors: list[str]
-
-
-def _errors(histogram: Histogram) -> np.ndarray:
-    return histogram.errors()
 
 
 def _histplot(*args: Any, **kwargs: Any) -> Any:
@@ -80,9 +83,10 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
     histogram has content there, so a stack or overlay mixing histograms with and
     without overflow ends up with mismatched bins (a crash for stacks, misaligned
     axes otherwise). rootfig therefore materialises the flow bins itself: a bin is
-    added on a side when *any* histogram has content there, with mplhep's width
-    convention (the larger of 5 % of the range and the mean bin width), and every
-    histogram gets the same edges. The flow bins of the returned histograms are empty.
+    added on a side when *any* histogram (or systematic variation) has content
+    there, with mplhep's width convention (the larger of 5 % of the range and the
+    mean bin width), and every histogram gets the same edges. The flow bins of the
+    returned histograms are empty.
 
     Returns
     -------
@@ -92,8 +96,8 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
         return [], (False, False)
     _require_same_binning(histograms, "flow='show'")
     edges = histograms[0].edges
-    under = any(_has_content(h.underflow, h.underflow_variance) for h in histograms)
-    over = any(_has_content(h.overflow, h.overflow_variance) for h in histograms)
+    under = any(_flow_content(h, 0) for h in histograms)
+    over = any(_flow_content(h, -1) for h in histograms)
     if not (under or over):
         return list(histograms), (False, False)
     width = max(0.05 * float(edges[-1] - edges[0]), float(np.mean(np.diff(edges))))
@@ -102,22 +106,24 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
         new_edges = np.r_[edges[0] - width, new_edges]
     if over:
         new_edges = np.r_[new_edges, edges[-1] + width]
-    result: list[Histogram] = []
-    for histogram in histograms:
-        axis = hist.axis.Variable(new_edges, name=histogram.axis.name, label=histogram.axis.label)
+
+    def expand(h: Any) -> Any:
+        axis = hist.axis.Variable(new_edges, name=h.axes[0].name, label=h.axes[0].label)
         new = hist.Hist(axis, storage=hist.storage.Weight())
-        values, variances = histogram.values(), histogram.variances()
-        if under:
-            values = np.r_[histogram.underflow, values]
-            variances = np.r_[histogram.underflow_variance, variances]
-        if over:
-            values = np.r_[values, histogram.overflow]
-            variances = np.r_[variances, histogram.overflow_variance]
+        traits = h.axes[0].traits
+        visible = slice(1 if traits.underflow else 0, -1 if traits.overflow else None)
         view = new.view()
-        view.value = values
-        view.variance = variances
-        result.append(histogram.with_(hist=new))
-    return result, (under, over)
+        for field, flow_cells in (
+            ("value", h.values(flow=True)),
+            ("variance", h.variances(flow=True)),
+        ):
+            cells = np.asarray(flow_cells, dtype=float)
+            low = [cells[0] if traits.underflow else 0.0] if under else []
+            high = [cells[-1] if traits.overflow else 0.0] if over else []
+            setattr(view, field, np.r_[low, cells[visible], high])
+        return new
+
+    return [h.map_hists(expand) for h in histograms], (under, over)
 
 
 def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
@@ -125,20 +131,15 @@ def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
 
     This is mplhep's ``flow="sum"`` done once, up front, so that ratios,
     significances, stack totals, statistical bands and axis limits are all
-    computed from the bins that are drawn. The flow bins of the returned
-    histograms are empty (values and variances).
+    computed from the bins that are drawn. Systematic variations are folded the
+    same way. The flow bins of the returned histograms are empty (values and
+    variances).
     """
-    result: list[Histogram] = []
-    for histogram in histograms:
-        if not (
-            _has_content(histogram.underflow, histogram.underflow_variance)
-            or _has_content(histogram.overflow, histogram.overflow_variance)
-        ):
-            result.append(histogram)
-            continue
-        new = histogram.hist.copy()
+
+    def fold(h: Any) -> Any:
+        new = h.copy()
         view: Any = new.view(flow=True)
-        traits = histogram.axis.traits
+        traits = h.axes[0].traits
         first, last = (1 if traits.underflow else 0), (-2 if traits.overflow else -1)
         if traits.underflow:
             view.value[first] += view.value[0]
@@ -148,8 +149,30 @@ def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
             view.value[last] += view.value[-1]
             view.variance[last] += view.variance[-1]
             view.value[-1] = view.variance[-1] = 0.0
-        result.append(histogram.with_(hist=new))
-    return result
+        return new
+
+    return [
+        h.map_hists(fold) if _flow_content(h, 0) or _flow_content(h, -1) else h for h in histograms
+    ]
+
+
+def _flow_content(histogram: Histogram, side: int) -> bool:
+    """Return True if the flow bin on ``side`` (0 under, -1 over) holds weight anywhere.
+
+    The nominal histogram and every systematic variation count, and a bin whose
+    weights cancel to zero still has content (its variance is positive).
+    """
+    traits = histogram.axis.traits
+    if not (traits.underflow if side == 0 else traits.overflow):
+        return False
+    hists = [histogram.hist, *(h for pair in histogram.variations.values() for h in pair)]
+    return any(
+        _has_content(
+            float(np.asarray(h.values(flow=True))[side]),
+            float(np.asarray(h.variances(flow=True))[side]),
+        )
+        for h in hists
+    )
 
 
 def _has_content(value: float, variance: float) -> bool:
@@ -193,7 +216,8 @@ def label_flow_bins(ax: Axes, edges: np.ndarray, *, under: bool, over: bool) -> 
 def envelope(histograms: Sequence[Histogram], *, stack: bool) -> tuple[np.ndarray, np.ndarray]:
     """Bin edges and the highest drawn value (content plus uncertainty) per bin.
 
-    Used to keep legends and labels clear of the histograms. For stacks the
+    Used to keep legends and labels clear of the histograms. The uncertainty
+    includes systematic variations, which are drawn as bands. For stacks the
     stack total counts; otherwise the maximum over all histograms. Overlaid
     histograms may have different binnings: the envelope is then evaluated on
     the union of all edges.
@@ -201,11 +225,10 @@ def envelope(histograms: Sequence[Histogram], *, stack: bool) -> tuple[np.ndarra
     mc = [h for h in histograms if not h.is_data]
     tops: list[tuple[np.ndarray, np.ndarray]] = []
     if stack and mc:
-        total = _stack_total(mc)
-        tops.append((total.edges, total.values() + total.errors()))
+        tops.append(_top(sum_histograms(mc)))
     else:
-        tops.extend((h.edges, h.values() + h.errors()) for h in mc)
-    tops.extend((h.edges, h.values() + h.errors()) for h in histograms if h.is_data)
+        tops.extend(_top(h) for h in mc)
+    tops.extend(_top(h) for h in histograms if h.is_data)
     edges = np.unique(np.concatenate([e for e, _ in tops] or [histograms[0].edges]))
     if not tops:
         return edges, np.zeros(len(edges) - 1)
@@ -220,11 +243,8 @@ def envelope(histograms: Sequence[Histogram], *, stack: bool) -> tuple[np.ndarra
     return edges, np.nan_to_num(heights, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def _stack_total(histograms: Sequence[Histogram]) -> Histogram:
-    total = histograms[0].hist.copy()
-    for histogram in histograms[1:]:
-        total = total + histogram.hist
-    return Histogram(total, label="Total", normalization=histograms[0].normalization)
+def _top(histogram: Histogram) -> tuple[np.ndarray, np.ndarray]:
+    return histogram.edges, histogram.values() + uncertainty(histogram).total_up
 
 
 def draw_histograms(
@@ -264,7 +284,9 @@ def draw_histograms(
     flow
         Under/overflow display, see :data:`FlowSpec`.
     stack_uncertainty
-        Draw a hatched band for the statistical uncertainty of the stack total.
+        Draw a hatched band for the uncertainty of the stack total: statistical,
+        and systematic where the histograms carry variations. Overlaid
+        histograms with variations get a light band in their own colour.
     alpha
         Opacity for filled histograms (default 1 for stacks, 0.4 for overlays).
     """
@@ -307,30 +329,32 @@ def draw_histograms(
         )
         artists.extend(_flatten_artists(stacked))
         labels.extend(h.label for h in mc)
-        total = _stack_total(mc)
-        values, errors = total.values(), total.errors()
-        ranges.append(_range(values, errors))
-        if stack_uncertainty and np.any(errors > 0):
+        total = sum_histograms(mc)
+        summary = uncertainty(total)
+        down, up = summary.total_down, summary.total_up
+        ranges.append(_range(total.values(), (down, up)))
+        if stack_uncertainty and (np.any(up > 0) or np.any(down > 0)):
+            label = band_label(systematics=summary.has_systematics)
             band = _histplot(
                 total.hist,
                 ax=ax,
                 histtype="band",
-                yerr=errors,
+                yerr=[down, up] if summary.has_systematics else up,
                 flow=flow,
                 facecolor="none",
                 edgecolor=foreground(),
                 hatch="////",
                 linewidth=0.0,
                 alpha=0.5,
-                label="Stat. unc.",
+                label=label,
             )
             artists.extend(_flatten_artists(band))
-            labels.append("Stat. unc.")
+            labels.append(label)
     elif mc:
         default_type: HistType = histtype or "step"
         for histogram, color in zip(mc, colors, strict=True):
             kind: HistType = histogram.histtype or default_type
-            errors = _errors(histogram)
+            errors = histogram.errors()
             show_errors = errorbars if errorbars is not None else kind == "errorbar"
             kwargs: dict[str, Any] = {
                 "ax": ax,
@@ -352,9 +376,26 @@ def draw_histograms(
             artists.extend(_flatten_artists(drawn))
             labels.append(histogram.label)
             ranges.append(_range(histogram.values(), errors if show_errors else None))
+            if histogram.variations:
+                summary = uncertainty(histogram)
+                bounds = (summary.total_down, summary.total_up)
+                band = _histplot(
+                    histogram.hist,
+                    ax=ax,
+                    histtype="band",
+                    yerr=list(bounds),
+                    flow=flow,
+                    facecolor=color,
+                    edgecolor="none",
+                    hatch="",
+                    linewidth=0.0,
+                    alpha=0.3,
+                )
+                artists.extend(_flatten_artists(band))
+                ranges.append(_range(histogram.values(), bounds))
 
     for histogram in data:
-        errors = _errors(histogram)
+        errors = histogram.errors()
         drawn = _histplot(
             histogram.hist,
             ax=ax,
@@ -387,13 +428,20 @@ def _assign_colors(histograms: Sequence[Histogram], style: Style) -> list[str]:
     return [h.color if h.color else next(cycle) for h in histograms]
 
 
-def _range(values: np.ndarray, errors: np.ndarray | None) -> tuple[float, float, float]:
+def _range(
+    values: np.ndarray, errors: np.ndarray | tuple[np.ndarray, np.ndarray] | None
+) -> tuple[float, float, float]:
+    """Lowest and highest drawn value and the smallest positive content.
+
+    ``errors`` is symmetric or a ``(down, up)`` pair.
+    """
     finite = values[np.isfinite(values)]
     if finite.size == 0:
         return (0.0, 0.0, float("nan"))
-    if errors is not None and errors.shape == values.shape:
-        upper = finite + errors[np.isfinite(values)]
-        lower = finite - errors[np.isfinite(values)]
+    down, up = errors if isinstance(errors, tuple) else (errors, errors)
+    if down is not None and up is not None and up.shape == values.shape:
+        upper = finite + up[np.isfinite(values)]
+        lower = finite - down[np.isfinite(values)]
     else:
         upper = lower = finite
     positive = finite[finite > 0]
