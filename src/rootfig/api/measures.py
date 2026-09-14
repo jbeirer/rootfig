@@ -94,7 +94,8 @@ def efficiency(
     ...     "reco.root", "TrueMuon_pt", passed="TrueMuon_matched", bins=(20, 0, 100)
     ... )  # doctest: +SKIP
     """
-    samples = as_samples(data, tree=tree, labels=label)
+    # efficiencies are statistical only: systematics are neither evaluated nor needed
+    samples = [s.with_(systematics={}) for s in as_samples(data, tree=tree, labels=label)]
     var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
     logx = var.log if logx is None else logx
     totals = build_histograms(

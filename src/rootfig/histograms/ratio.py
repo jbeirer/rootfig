@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
-from rootfig.histograms.systematics import uncertainty as uncertainty_of
+from rootfig.histograms.systematics import Uncertainty
 
 __all__ = [
     "SIGNIFICANCE_KINDS",
@@ -29,8 +29,8 @@ SIGNIFICANCE_KINDS: tuple[str, ...] = ("significance", "s/sqrt(b)", "s/sqrt(s+b)
 """Strings accepted by ``ratio=`` for a significance panel (``"significance"`` means S/sqrt(B))."""
 """How ratio uncertainties are computed.
 
-* ``"propagate"`` - numerator and denominator uncertainties are combined in
-  quadrature (uncorrelated) into the error bars.
+* ``"propagate"`` - numerator and denominator uncertainties both enter the
+  error bars (statistical ones uncorrelated, systematic ones source by source).
 * ``"numerator"`` - error bars carry only the numerator uncertainty; the
   denominator's relative uncertainty is returned separately as a band around
   one (the usual data/MC convention, mplhep's ``split_ratio``).
@@ -104,19 +104,24 @@ def ratio(
 ) -> Ratio:
     """Compute ``numerator / denominator`` bin by bin with uncertainties.
 
+    Statistical uncertainties of numerator and denominator are uncorrelated.
     ``Histogram`` inputs with systematic variations also give
-    :attr:`Ratio.syst_errors` and :attr:`Ratio.syst_band`. Numerator and
-    denominator are treated as uncorrelated: for positive contents with
-    ``"propagate"`` the ratio's upper uncertainty combines the numerator's upward
-    and the denominator's downward shift, and vice versa. For signed contents the
-    sides follow the signs of the derivatives of ``numerator / denominator``.
+    :attr:`Ratio.syst_errors` and :attr:`Ratio.syst_band`, propagated source by
+    source through the varied ratio itself: a source present on both sides varies
+    numerator and denominator together (a shared luminosity uncertainty cancels),
+    a source on one side only varies that side against the other's nominal
+    contents. The shifts of different sources then combine like those of one
+    histogram (see :mod:`rootfig.histograms.systematics`). With ``"numerator"``
+    only the numerator's sources enter the error bars; the denominator's are the
+    band.
 
     Raises
     ------
     BinningError
         If the histograms do not share the same one-dimensional binning.
     """
-    num_syst, den_syst = _systematics(numerator), _systematics(denominator)
+    num_variations = numerator.variations if isinstance(numerator, Histogram) else {}
+    den_variations = denominator.variations if isinstance(denominator, Histogram) else {}
     if isinstance(numerator, Histogram):
         numerator = numerator.hist
     if isinstance(denominator, Histogram):
@@ -131,58 +136,56 @@ def ratio(
     d = np.asarray(denominator.values(), dtype=float)
     vn = np.asarray(numerator.variances(), dtype=float)
     vd = np.asarray(denominator.variances(), dtype=float)
-    zero = np.zeros_like(d)
-    num_down, num_up = num_syst or (zero, zero)
-    den_down, den_up = den_syst or (zero, zero)
+    edges = np.asarray(numerator.axes[0].edges, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
 
-        def relative(shift: FloatArray) -> FloatArray:
-            return np.asarray(np.where(d != 0, shift / np.abs(d), np.nan), dtype=float)
+        def divide(top: FloatArray, bottom: FloatArray) -> FloatArray:
+            return np.asarray(np.where((d != 0) & (bottom != 0), top / bottom, np.nan))
 
-        values = np.where(d != 0, n / d, np.nan)
-        band = relative(np.sqrt(vd))
-        syst_band = (
-            (
-                relative(np.where(d >= 0, den_down, den_up)),
-                relative(np.where(d >= 0, den_up, den_down)),
-            )
-            if den_syst
-            else None
-        )
-        # d(n/d)/dn = 1/d; d(n/d)/dd = -n/d**2. Signed bins
-        # can reverse which side of an asymmetric uncertainty contributes.
-        num_low = np.where(d >= 0, num_down, num_up)
-        num_high = np.where(d >= 0, num_up, num_down)
-        den_low = np.where(n >= 0, den_up, den_down)
-        den_high = np.where(n >= 0, den_down, den_up)
+        values = divide(n, d)
+        band = divide(np.sqrt(vd), np.abs(d))
         if uncertainty == "propagate":
-            errors = relative(np.sqrt(vn + n**2 * vd / d**2))
-            syst_errors = (
-                (
-                    relative(np.hypot(num_low, n * den_low / d)),
-                    relative(np.hypot(num_high, n * den_high / d)),
-                )
-                if num_syst or den_syst
-                else None
-            )
+            errors = divide(np.sqrt(vn + n**2 * vd / d**2), np.abs(d))
+            varied_denominators = den_variations
         else:
-            errors = relative(np.sqrt(vn))
-            syst_errors = (relative(num_low), relative(num_high)) if num_syst else None
+            errors = divide(np.sqrt(vn), np.abs(d))
+            varied_denominators = {}  # the denominator's sources are the band
+        sources = list(dict.fromkeys([*num_variations, *varied_denominators]))
+
+        def varied(variations: Any, name: str, index: int, nominal: FloatArray) -> FloatArray:
+            if name not in variations:
+                return nominal
+            return np.asarray(variations[name][index].values(), dtype=float)
+
+        ratio_shifts = {
+            name: tuple(
+                divide(varied(num_variations, name, i, n), varied(varied_denominators, name, i, d))
+                - values
+                for i in (0, 1)
+            )
+            for name in sources
+        }
+        band_shifts = {
+            name: tuple(divide(up_or_down.values() - d, d) for up_or_down in pair)
+            for name, pair in den_variations.items()
+        }
     return Ratio(
-        values=np.asarray(values, dtype=float),
+        values=values,
         errors=errors,
         band=band,
-        edges=np.asarray(numerator.axes[0].edges, dtype=float),
-        syst_errors=syst_errors,
-        syst_band=syst_band,
+        edges=edges,
+        syst_errors=_combined(edges, values, ratio_shifts),
+        syst_band=_combined(edges, values, band_shifts),
     )
 
 
-def _systematics(histogram: Hist | Histogram) -> tuple[FloatArray, FloatArray] | None:
-    """Systematic ``(down, up)`` uncertainty of a histogram with variations, else ``None``."""
-    if not (isinstance(histogram, Histogram) and histogram.variations):
+def _combined(
+    edges: FloatArray, like: FloatArray, shifts: dict[str, Any]
+) -> tuple[FloatArray, FloatArray] | None:
+    """Combine signed per-source shifts into ``(down, up)`` magnitudes, or ``None`` without any."""
+    if not shifts:
         return None
-    summary = uncertainty_of(histogram)
+    summary = Uncertainty(edges=edges, nominal=like, stat=np.zeros_like(like), components=shifts)
     return summary.syst_down, summary.syst_up
 
 

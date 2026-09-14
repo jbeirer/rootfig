@@ -672,6 +672,12 @@ class TestRatioPanel:
         assert low < 0.2
         assert high == 3.0
         assert ratio_ylim([]) == (0.5, 1.5)
+        low, _ = ratio_ylim([wide], band=(np.full(4, 0.9), np.full(4, 1.1)))
+        assert low < 0.2  # a narrow band never narrows the range
+        wide_band = (np.full(4, 0.2), np.full(4, 1.8))
+        low, high = ratio_ylim([tight], band=wide_band)
+        assert low < 0.2
+        assert high > 1.8
 
 
 class TestAnnotations:

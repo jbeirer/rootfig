@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 
 import awkward as ak
 
-from rootfig.errors import LuminosityError, SourceError
+from rootfig._mapping import FrozenMapping
+from rootfig.errors import LuminosityError, SourceError, SystematicError
 from rootfig.io import FileSource, Source, as_source
 from rootfig.model.cuts import Cut, CutLike, as_cut
 from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
@@ -75,7 +76,8 @@ class Sample:
         (``{"Jet_pt": ("Jet_pt_up", "Jet_pt_down")}``), or
         ``Systematic.samples(...)`` for varied files. Sources
         with the same name in several samples are fully correlated; different
-        names are independent. Not allowed on data.
+        names are independent. Not allowed together with ``is_data=True``. The mapping is copied and
+        made read-only; use ``sample.with_(systematics=...)`` to change it.
 
     Examples
     --------
@@ -132,6 +134,7 @@ class Sample:
         object.__setattr__(self, "xsec", _check_xsec(xsec, label))
         object.__setattr__(self, "ngen", _check_ngen(ngen, label))
         object.__setattr__(self, "systematics", _check_systematics(systematics, label))
+        _check_data_systematics(self)
 
     def __repr__(self) -> str:
         parts = [repr(self.source.describe()), f"label={self.label!r}"]
@@ -215,6 +218,7 @@ class Sample:
         for name, value in changes.items():
             check = _FIELD_CHECKS.get(name)
             object.__setattr__(clone, name, value if check is None else check(value, label))
+        _check_data_systematics(clone)
         return clone
 
 
@@ -235,8 +239,18 @@ def _normalise_weight(weight: str | None, label: str) -> str | None:
 
 def _check_systematics(
     systematics: Mapping[str, SystematicLike] | None, label: str
-) -> dict[str, Systematic]:
-    return as_systematics(systematics, f"sample {label!r}")
+) -> Mapping[str, Systematic]:
+    return FrozenMapping(as_systematics(systematics, f"sample {label!r}"))
+
+
+def _check_data_systematics(sample: Sample) -> None:
+    """Refuse a data sample with systematics: uncertainties belong to the simulation."""
+    if sample.is_data and sample.systematics:
+        msg = (
+            f"sample {sample.label!r} is observed data and cannot carry systematics "
+            f"({sorted(sample.systematics)}); attach them to the simulated samples"
+        )
+        raise SystematicError(msg)
 
 
 def _check_scale(scale: float, label: str) -> float:

@@ -1708,6 +1708,11 @@ class TestSystematics:
         with pytest.raises(ValueError, match="no non-data histograms"):
             rf.plot_histograms([data]).uncertainty()
 
+    def test_efficiency_ignores_systematics(self) -> None:
+        sample = rf.Sample({"x": [0.5, 1.5]}, systematics={"unused": "missing_weight"})
+        p = rf.efficiency(sample, "x", passed="x > 1", bins=(2, 0, 2))
+        np.testing.assert_allclose(p.efficiencies[0].values, [0.0, 1.0])
+
     def test_exports(self) -> None:
         assert rf.Systematic.samples("alt.root").kind == "samples"
         assert issubclass(rf.SystematicError, rf.RootfigError)

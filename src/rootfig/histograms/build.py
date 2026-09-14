@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import hist
 import numpy as np
 
+from rootfig._mapping import FrozenMapping
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import RootfigWarning, SystematicError
 from rootfig.histograms.stats import Summary
@@ -115,7 +116,7 @@ def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
     return result
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class Histogram:
     """A filled histogram together with its provenance and drawing hints.
 
@@ -144,7 +145,10 @@ class Histogram:
         Systematic variations, ``{name: (up, down)}`` histograms with the binning
         of :attr:`hist`. A ``down`` given as ``None`` is filled in by mirroring the
         up shift around the nominal contents. Summarised by
-        :func:`~rootfig.histograms.uncertainty`.
+        :func:`~rootfig.histograms.uncertainty`. The mapping is copied and made
+        read-only; every stored pair contains two histograms. Use
+        ``histogram.with_(variations=...)`` to replace it. The underlying
+        ``hist.Hist`` objects remain mutable.
     """
 
     hist: Hist
@@ -157,15 +161,41 @@ class Histogram:
     normalization: str | None = None
     variations: Mapping[str, tuple[Hist, Hist]] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        # Keep the documented invariant for histograms built by users from plain hist.Hist
-        # objects; rootfig's own histograms already have Weight storage (no copy is made).
-        object.__setattr__(self, "hist", as_weight_storage(self.hist))
-        object.__setattr__(self, "variations", self._checked_variations())
+    def __init__(  # noqa: PLR0917 - preserve the positional dataclass constructor API
+        self,
+        hist: Hist,
+        label: str,
+        sample: Sample | None = None,
+        stats: Summary | None = None,
+        is_data: bool = False,
+        color: str | None = None,
+        histtype: HistType | None = None,
+        normalization: str | None = None,
+        variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
+    ) -> None:
+        object.__setattr__(self, "hist", hist)
+        object.__setattr__(self, "label", label)
+        object.__setattr__(self, "sample", sample)
+        object.__setattr__(self, "stats", stats)
+        object.__setattr__(self, "is_data", is_data)
+        object.__setattr__(self, "color", color)
+        object.__setattr__(self, "histtype", histtype)
+        object.__setattr__(self, "normalization", normalization)
+        object.__setattr__(self, "variations", {} if variations is None else variations)
+        self.__post_init__()
 
-    def _checked_variations(self) -> dict[str, tuple[Hist, Hist]]:
+    def __post_init__(self) -> None:
+        # Also validate subclasses that use a generated dataclass constructor.
+        # Weight storage histograms are retained without copying their contents.
+        object.__setattr__(self, "hist", as_weight_storage(self.hist))
+        checked = self._checked_variations(self.variations)
+        object.__setattr__(self, "variations", FrozenMapping(checked))
+
+    def _checked_variations(
+        self, variations: Mapping[str, tuple[Hist, Hist | None]]
+    ) -> dict[str, tuple[Hist, Hist]]:
         checked: dict[str, tuple[Hist, Hist]] = {}
-        for name, pair in dict(self.variations).items():
+        for name, pair in variations.items():
             if not isinstance(name, str) or not name.strip():
                 msg = f"histogram {self.label!r}: variation names must be non-empty strings"
                 raise SystematicError(msg)

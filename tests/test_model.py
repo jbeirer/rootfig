@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -763,3 +765,56 @@ class TestSystematic:
         systematic = Systematic("replace", replacements)
         replacements["x"] = "another"
         assert systematic.up == {"x": "x_up"}
+
+    def test_data_samples_cannot_carry_systematics(self) -> None:
+        columns = {"x": [1.0]}
+        with pytest.raises(SystematicError, match="observed data"):
+            Sample(columns, is_data=True, systematics={"s": 0.1})
+        data = Sample(columns, is_data=True, systematics={})  # an empty mapping is fine
+        with pytest.raises(SystematicError, match="observed data"):
+            data.with_(systematics={"s": 0.1})
+        mc = Sample(columns, systematics={"s": 0.1})
+        with pytest.raises(SystematicError, match="observed data"):
+            mc.with_(is_data=True)
+        assert mc.with_(is_data=True, systematics={}).is_data
+        assert data.with_(is_data=False, systematics={"s": 0.1}).systematics
+
+    def test_systematic_mappings_are_read_only_snapshots(self) -> None:
+        branches = {"x": ("x_up", "x_down")}
+        given = {"shape": branches}
+        sample = Sample({"x": [1.0]}, systematics=given)
+        given.clear()
+        branches["x"] = ("changed", "changed")
+        systematic = sample.systematics["shape"]
+        assert systematic.up == {"x": "x_up"}
+        assert systematic.down == {"x": "x_down"}
+        with pytest.raises(TypeError):
+            sample.systematics["extra"] = Systematic("norm", 1.1)  # type: ignore[index]
+        with pytest.raises(TypeError):
+            systematic.up["x"] = "changed"
+        with pytest.raises(TypeError):
+            del systematic.down["x"]
+        with pytest.raises(TypeError):
+            Sample({"x": [1.0]}).systematics["extra"] = systematic  # type: ignore[index]
+
+        updated = sample.with_(systematics={"norm": 0.1})
+        assert list(updated.systematics) == ["norm"]
+        assert list(sample.systematics) == ["shape"]
+        with pytest.raises(TypeError):
+            updated.systematics["extra"] = systematic  # type: ignore[index]
+
+    @pytest.mark.parametrize("operation", ["copy", "deepcopy", "pickle"])
+    def test_immutable_systematics_support_copy_and_pickle(self, operation: str) -> None:
+        sample = Sample({"x": [1.0]}, systematics={"shape": {"x": ("up", "down")}})
+        restored = (
+            pickle.loads(pickle.dumps(sample))
+            if operation == "pickle"
+            else getattr(copy, operation)(sample)
+        )
+        assert restored.systematics == sample.systematics
+        assert repr(restored) == repr(sample)
+        assert restored.source.arrays(["x"])["x"].to_list() == [1.0]
+        with pytest.raises(TypeError):
+            restored.systematics["new"] = Systematic("norm", 1.1)
+        with pytest.raises(TypeError):
+            restored.systematics["shape"].up["x"] = "changed"

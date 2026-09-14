@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
+from rootfig._mapping import FrozenMapping
 from rootfig.errors import ExpressionError, SystematicError
 from rootfig.expressions import parse
 
@@ -47,6 +48,7 @@ class Systematic:
         The up and down variation: a weight expression (``"weight"``), a mapping
         of branch names (``"replace"``), a dataset (``"samples"``) or a factor
         (``"norm"``). ``down`` is ``None`` for a symmetrised variation.
+        Branch replacement mappings are copied and made read-only.
     """
 
     kind: SystematicKind
@@ -214,8 +216,10 @@ def _check_name(name: Any) -> str:
     return name
 
 
-def _check_replacements(branches: Any) -> dict[str, str]:
+def _check_replacements(branches: Any) -> Mapping[str, str]:
     if not isinstance(branches, Mapping) or not branches:
         msg = "a branch variation needs a non-empty mapping of branch names"
         raise SystematicError(msg)
-    return {_check_name(name): _check_name(target) for name, target in branches.items()}
+    return FrozenMapping(
+        {_check_name(name): _check_name(target) for name, target in branches.items()}
+    )

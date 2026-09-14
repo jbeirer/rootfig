@@ -71,12 +71,14 @@ def draw_ratio_panel(
 
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, zorder=1)
     show_band = (uncertainty == "numerator") if band is None else band
+    band_edges: tuple[np.ndarray, np.ndarray] | None = None
     if show_band and ratios:
         first = ratios[0]
         band_down, band_up = first.total_band()
         has_systematics = first.syst_band is not None
         lower = np.where(np.isfinite(band_down), 1.0 - band_down, 1.0)
         upper = np.where(np.isfinite(band_up), 1.0 + band_up, 1.0)
+        band_edges = (lower, upper)
         ax.fill_between(
             first.edges,
             np.append(lower, lower[-1]),
@@ -104,7 +106,7 @@ def draw_ratio_panel(
             **marker,
         )
 
-    ax.set_ylim(*(ylim if ylim is not None else ratio_ylim(ratios)))
+    ax.set_ylim(*(ylim if ylim is not None else ratio_ylim(ratios, band=band_edges)))
     ax.set_xlim(reference.edges[0], reference.edges[-1])
     if ylabel is None:
         if any(h.is_data for h in numerators) and not reference.is_data:
@@ -116,23 +118,36 @@ def draw_ratio_panel(
     return ratios
 
 
-def ratio_ylim(ratios: Sequence[Ratio]) -> tuple[float, float]:
-    """Choose a ratio range: at least (0.5, 1.5), widened to cover the bulk of the points.
+def ratio_ylim(
+    ratios: Sequence[Ratio], *, band: tuple[np.ndarray, np.ndarray] | None = None
+) -> tuple[float, float]:
+    """Choose a ratio range: at least (0.5, 1.5), widened to cover the bulk of what is drawn.
 
     The bulk is the 5th to 95th percentile of the finite ratio values, padded
-    by 10 percent, so a few wild bins with huge uncertainties do not squash the
-    panel. The result is clipped to ``[0, 3]``.
+    by 10 percent, and likewise of the lower and upper edges of the reference
+    ``band`` when one is drawn, so a large systematic band is not clipped. Error
+    bars do not count: a few low-statistics bins with huge uncertainties would
+    otherwise squash the panel. The result is clipped to ``[0, 3]``.
     """
     low, high = DEFAULT_RATIO_YLIM
-    values = [r.values[np.isfinite(r.values)] for r in ratios]
-    values = [v for v in values if v.size]
-    if values:
-        combined = np.concatenate(values)
-        q_low, q_high = (float(q) for q in np.percentile(combined, [5, 95]))
-        pad = 0.1 * max(q_high - q_low, 0.2)
-        low = min(low, q_low - pad)
-        high = max(high, q_high + pad)
+    ranges = [(_finite([r.values for r in ratios]),) * 2]
+    if band is not None:  # judged on its own, so the band can widen the range but never narrow it
+        ranges.append((_finite([band[0]]), _finite([band[1]])))
+    for lower, upper in ranges:
+        if lower.size and upper.size:
+            q_low = float(np.percentile(lower, 5))
+            q_high = float(np.percentile(upper, 95))
+            pad = 0.1 * max(q_high - q_low, 0.2)
+            low = min(low, q_low - pad)
+            high = max(high, q_high + pad)
     return (max(low, 0.0), min(high, 3.0))
+
+
+def _finite(arrays: Sequence[np.ndarray]) -> np.ndarray:
+    if not arrays:
+        return np.empty(0)
+    combined = np.concatenate([np.asarray(a, dtype=float).ravel() for a in arrays])
+    return combined[np.isfinite(combined)]
 
 
 def draw_significance_panel(

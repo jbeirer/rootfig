@@ -241,20 +241,9 @@ def sample_systematics(
 ) -> dict[str, Systematic]:
     """Return the systematics of ``sample``: ``plot_level`` ones, overridden by its own.
 
-    Data carries no systematics; plot-level ones skip it.
-
-    Raises
-    ------
-    SystematicError
-        If a data sample defines systematics of its own.
+    Data carries no systematics (``Sample`` refuses them); plot-level ones skip it.
     """
     if sample.is_data:
-        if sample.systematics:
-            msg = (
-                f"sample {sample.label!r} is observed data and cannot carry systematics "
-                f"({sorted(sample.systematics)}); attach them to the simulated samples"
-            )
-            raise SystematicError(msg)
         return {}
     return {**(plot_level or {}), **sample.systematics}
 

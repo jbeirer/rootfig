@@ -64,7 +64,9 @@ Rules:
   quadrature; the total is statistical ⊕ systematic, per side.
 - Sources with the same name are fully correlated across samples: the stack
   total adds their variations linearly (a sample without the source
-  contributes its nominal contents).
+  contributes its nominal contents), and a ratio varies numerator and
+  denominator together, so a shared luminosity uncertainty cancels in an
+  MC/MC ratio.
 - `normalize=True`, `"unity"`, `"density"` or a numeric target normalises every
   variation by its own total, so the plot shows shape uncertainties; a pure
   normalisation uncertainty drops out. `normalize="width"` only divides by
@@ -84,8 +86,9 @@ Drawing follows mplhep's conventions: a stack's hatched band shows the
 statistical and systematic uncertainty of the total (legend `Stat. + syst.
 unc.`), overlaid samples with variations get a light band in their own colour,
 and the ratio panel includes the systematics in its band around one
-(`split_ratio`, data/MC) or in the error bars of the points (`propagate`,
-numerator and denominator uncorrelated).
+(`split_ratio`, data/MC) or in the error bars of the points (`propagate`:
+statistical uncertainties uncorrelated, systematic ones propagated source by
+source through the varied ratio). The automatic ratio range covers the band.
 
 The numbers are part of the result:
 
@@ -102,6 +105,9 @@ Pre-filled histograms take variations directly and are drawn the same way:
 `rf.Histogram(h, label="MC", variations={"jes": (h_up, h_down)})` passed to
 `plot_histograms`; [`uncertainty`][rootfig.histograms.uncertainty] and
 [`sum_histograms`][rootfig.histograms.sum_histograms] work on them too.
+
+Use `(h_up, None)` for a mirrored variation. `Sample.systematics` and
+`Histogram.variations` are read-only; change them with `with_(...)`.
 
 ## Luminosity
 
