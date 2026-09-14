@@ -26,7 +26,7 @@ def draw_ratio_panel(
     ax: Axes,
     *,
     style: Style,
-    uncertainty: RatioUncertainty,
+    uncertainty: RatioUncertainty | Sequence[RatioUncertainty],
     colors: Sequence[str] | None = None,
     ylim: tuple[float, float] | None = None,
     ylabel: str | None = None,
@@ -46,9 +46,10 @@ def draw_ratio_panel(
         Style providing colours.
     uncertainty
         ``"propagate"`` (error bars carry both uncertainties) or ``"numerator"``
-        (error bars carry the numerator's; the reference uncertainty is a band).
-        Systematic variations of the histograms are included in error bars and
-        band alike (see :func:`~rootfig.histograms.ratio`).
+        (error bars carry the numerator's; the reference uncertainty is a band),
+        for all numerators or one per numerator. Systematic variations of the
+        histograms are included in error bars and band alike (see
+        :func:`~rootfig.histograms.ratio`).
     colors
         One colour per numerator; defaults to the numerator's own colour or the
         style cycle (``text.color`` for data).
@@ -58,10 +59,16 @@ def draw_ratio_panel(
     ylabel
         Label; defaults to ``"Ratio to <reference>"`` or ``"Data / MC"``.
     band
-        Draw the reference uncertainty band. Defaults to ``True`` for
-        ``uncertainty="numerator"``.
+        Draw the reference uncertainty band. Defaults to ``True`` when any
+        numerator uses ``uncertainty="numerator"``.
     """
-    ratios = [ratio(h, reference, uncertainty=uncertainty) for h in numerators]
+    modes = [uncertainty] * len(numerators) if isinstance(uncertainty, str) else list(uncertainty)
+    if len(modes) != len(numerators):
+        msg = f"got {len(modes)} uncertainty modes for {len(numerators)} numerators"
+        raise ValueError(msg)
+    ratios = [
+        ratio(h, reference, uncertainty=mode) for h, mode in zip(numerators, modes, strict=True)
+    ]
     if colors is None:
         cycle = iter(color_cycle(max(len(numerators), 1), style))
         colors = [
@@ -70,7 +77,7 @@ def draw_ratio_panel(
         ]
 
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, zorder=1)
-    show_band = (uncertainty == "numerator") if band is None else band
+    show_band = ("numerator" in modes) if band is None else band
     band_edges: tuple[np.ndarray, np.ndarray] | None = None
     if show_band and ratios:
         first = ratios[0]

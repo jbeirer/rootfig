@@ -717,6 +717,10 @@ class TestSystematic:
             ({"x": ""}, "non-empty strings"),
             (float("nan"), "finite numbers"),
             ((1.1, float("inf")), "finite numbers"),
+            (1.0, "must be positive"),
+            (1.5, "must be positive"),
+            ((1.1, 0.0), "must be positive"),
+            ((-1.1, 0.9), "must be positive"),
         ],
     )
     def test_invalid_forms(self, value: Any, message: str) -> None:

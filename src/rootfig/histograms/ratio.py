@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
 
 from rootfig._typing import FloatArray, Hist
-from rootfig.errors import BinningError
+from rootfig.errors import BinningError, RootfigWarning
 from rootfig.histograms.build import Histogram, compatible_binning
 from rootfig.histograms.systematics import Uncertainty
 
@@ -113,7 +114,8 @@ def ratio(
     contents. The shifts of different sources then combine like those of one
     histogram (see :mod:`rootfig.histograms.systematics`). With ``"numerator"``
     only the numerator's sources enter the error bars; the denominator's are the
-    band.
+    band. A variation that empties a denominator bin leaves that bin's
+    systematic uncertainty ``nan``, with a :class:`~rootfig.errors.RootfigWarning`.
 
     Raises
     ------
@@ -157,14 +159,14 @@ def ratio(
                 return nominal
             return np.asarray(variations[name][index].values(), dtype=float)
 
-        ratio_shifts = {
-            name: tuple(
-                divide(varied(num_variations, name, i, n), varied(varied_denominators, name, i, d))
-                - values
-                for i in (0, 1)
-            )
-            for name in sources
-        }
+        ratio_shifts = {}
+        for name in sources:
+            shifts = []
+            for i, direction in ((0, "up"), (1, "down")):
+                varied_d = varied(varied_denominators, name, i, d)
+                _warn_emptied(name, direction, (d != 0) & (varied_d == 0))
+                shifts.append(divide(varied(num_variations, name, i, n), varied_d) - values)
+            ratio_shifts[name] = (shifts[0], shifts[1])
         band_shifts = {
             name: tuple(divide(up_or_down.values() - d, d) for up_or_down in pair)
             for name, pair in den_variations.items()
@@ -177,6 +179,17 @@ def ratio(
         syst_errors=_combined(edges, values, ratio_shifts),
         syst_band=_combined(edges, values, band_shifts),
     )
+
+
+def _warn_emptied(name: str, direction: str, emptied: np.ndarray) -> None:
+    """Warn that a variation empties denominator bins, leaving the ratio's systematic undefined."""
+    if emptied.any():
+        warnings.warn(
+            f"systematic {name!r} {direction} empties the denominator in "
+            f"{int(emptied.sum())} bin(s); the ratio's systematic uncertainty there is nan",
+            RootfigWarning,
+            stacklevel=4,
+        )
 
 
 def _combined(

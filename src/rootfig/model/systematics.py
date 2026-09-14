@@ -66,8 +66,8 @@ class Systematic:
             up = _check_expression(up)
             down = None if down is None else _check_expression(down)
         elif kind == "norm":
-            up = _check_number(up)
-            down = None if down is None else _check_number(down)
+            up = _check_factor(up)
+            down = None if down is None else _check_factor(down)
         elif kind == "replace":
             up = _check_replacements(up)
             down = None if down is None else _check_replacements(down)
@@ -192,6 +192,17 @@ def _check_number(value: Any) -> float:
         msg = f"normalisation uncertainties must be finite numbers, got {value!r}"
         raise SystematicError(msg)
     return float(value)
+
+
+def _check_factor(value: Any) -> float:
+    factor = _check_number(value)
+    if factor <= 0:
+        msg = (
+            f"normalisation factors must be positive (a relative uncertainty below 1), "
+            f"got {factor!r}"
+        )
+        raise SystematicError(msg)
+    return factor
 
 
 def _check_expression(expression: Any) -> str:

@@ -46,7 +46,7 @@ p = rf.plot(
 | Form | Variation |
 | --- | --- |
 | `"w_up"`, `("w_up", "w_down")` | weight expression(s) replacing `Sample.weight`; the plot `weight=`, `scale` and luminosity scaling still multiply |
-| `0.05`, `(1.10, 0.97)` | the nominal histogram scaled by `1 ± 0.05`, or by the two factors |
+| `0.05`, `(1.10, 0.97)` | the nominal histogram scaled by `1 ± 0.05`, or by the two factors (positive, so a relative uncertainty is below 1) |
 | `{"Jet_pt": ("Jet_pt_up", "Jet_pt_down")}` | branch names replaced by other branches in the variable, the selection and the weight, so a cut on `Jet_pt` moves with it; replacements are branch names, not expressions |
 | `Systematic.samples(up, down)` | other files or arrays with the sample's selection, weight, cross section, tree name and entry range; a `Sample` is used as given |
 
@@ -88,7 +88,8 @@ unc.`), overlaid samples with variations get a light band in their own colour,
 and the ratio panel includes the systematics in its band around one
 (`split_ratio`, data/MC) or in the error bars of the points (`propagate`:
 statistical uncertainties uncorrelated, systematic ones propagated source by
-source through the varied ratio). The automatic ratio range covers the band.
+source through the varied ratio; a variation that empties a denominator bin
+leaves that bin's systematic uncertainty undefined, with a warning). The automatic ratio range covers the band.
 
 The numbers are part of the result:
 
@@ -161,7 +162,10 @@ weights cancel exactly, is left unchanged with a warning and keeps the plain
   propagated in quadrature (`ratio_uncertainty="propagate"`).
 
 `ratio="Background"` picks the reference by label; all other histograms, data
-included, are divided by it.
+included, are divided by it. The uncertainty treatment is chosen per histogram:
+data over simulation keeps the reference uncertainty as a band, simulation over
+simulation propagates both sides, so systematic sources they share cancel.
+`ratio_uncertainty=` applies one treatment to all.
 
 `ratio="significance"` (or `"s/sqrt(b)"`, `"s/sqrt(s+b)"`) draws a
 **significance panel** instead: per bin, the signal over the square root of

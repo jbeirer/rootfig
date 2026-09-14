@@ -172,7 +172,9 @@ def plot(
         others; ``("s/sqrt(b)", "Signal")`` names the signal sample.
     ratio_ylim, ratio_label, ratio_uncertainty
         Ratio panel range, y label, and uncertainty treatment
-        (``"propagate"`` or ``"numerator"`` with a reference band). The label is
+        (``"propagate"`` or ``"numerator"`` with a reference band; by default
+        data uses ``"numerator"`` and simulation ``"propagate"``, so systematic
+        sources shared with the reference cancel). The label is
         shrunk, and if needed wrapped onto two lines, to fit the short panel;
         pass a shorter ``ratio_label`` (``"Ratio"``) to keep it at full size.
     logx, logy
@@ -575,7 +577,7 @@ def _ratio_setup(
     *,
     stack: bool,
     uncertainty: RatioUncertainty | None,
-) -> tuple[list[Histogram], Histogram, RatioUncertainty]:
+) -> tuple[list[Histogram], Histogram, RatioUncertainty | list[RatioUncertainty]]:
     data = [h for h in hists if h.is_data]
     mc = [h for h in hists if not h.is_data]
     if isinstance(ratio, str):
@@ -585,10 +587,14 @@ def _ratio_setup(
             raise ValueError(msg)
         reference = matches[0]
         numerators = [h for h in hists if h is not reference]
-        default_uncertainty: RatioUncertainty = (
-            "numerator" if data and reference in mc else "propagate"
-        )
-        return numerators, reference, uncertainty or default_uncertainty
+        if uncertainty is not None:
+            return numerators, reference, uncertainty
+        # chosen per numerator: data over simulation keeps the reference as a band, while
+        # simulation over simulation propagates both, so shared systematic sources cancel
+        per_numerator: list[RatioUncertainty] = [
+            "numerator" if h.is_data and not reference.is_data else "propagate" for h in numerators
+        ]
+        return numerators, reference, per_numerator
     if stack and mc:
         reference = sum_histograms(mc)
         numerators = data if data else []

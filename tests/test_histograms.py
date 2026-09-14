@@ -1410,6 +1410,24 @@ class TestSystematicsRegressions:
         assert result.syst_band is not None
         np.testing.assert_allclose(result.syst_band, [[np.hypot(0.1, 0.2)], [np.hypot(0.1, 0.2)]])
 
+    def test_ratio_warns_when_a_variation_empties_the_denominator(self) -> None:
+        num = Histogram(contents([10.0, 10.0]), label="N")
+        den = Histogram(
+            contents([20.0, 20.0]), label="D", variations={"shape": (contents([20.0, 0.0]), None)}
+        )
+        with pytest.warns(RootfigWarning, match="'shape' up empties the denominator in 1 bin"):
+            result = ratio(num, den)
+        assert result.syst_errors is not None
+        assert np.isfinite(result.syst_errors[0][0])
+        assert np.isnan(result.syst_errors[0][1])
+
+    def test_sum_keeps_only_a_shared_normalization(self) -> None:
+        raw = Histogram(contents([1.0]), label="raw")
+        unity = Histogram(contents([1.0]), label="unity", normalization="Normalised to unity")
+        assert sum_histograms([unity, unity]).normalization == "Normalised to unity"
+        assert sum_histograms([unity, raw]).normalization is None
+        assert sum_histograms([raw, unity]).normalization is None
+
     def test_different_nonfinite_entries_with_equal_counts_are_reported(self) -> None:
         sample = Sample({"x": [np.nan, 1.0], "up": [1.0, np.nan]}, systematics={"s": {"x": "up"}})
         with pytest.warns(RootfigWarning) as caught:

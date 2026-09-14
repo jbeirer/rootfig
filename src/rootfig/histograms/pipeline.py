@@ -8,7 +8,8 @@ all samples, and fills one :class:`~rootfig.histograms.Histogram` per sample.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from os import PathLike
 from typing import Any
@@ -17,7 +18,7 @@ import awkward as ak
 import numpy as np
 
 from rootfig._typing import Hist
-from rootfig.errors import MissingBranchError, SourceError, SystematicError
+from rootfig.errors import MissingBranchError, RootfigError, SourceError, SystematicError
 from rootfig.expressions import parse
 from rootfig.histograms.build import Histogram, fill, mirror
 from rootfig.histograms.stats import summarize
@@ -287,12 +288,15 @@ def _load_with_variations(
     used = {name for expression in parsed for name in expression.required_branches(available)}
     # weight variations and the branches that replace used ones join the single read
     extra = []
-    for syst in systematics.values():
-        for spec in (syst.up, syst.down):
+    for name, syst in systematics.items():
+        for direction, spec in (("up", syst.up), ("down", syst.down)):
             if spec is None or syst.kind not in ("weight", "replace"):
                 continue
             if syst.kind == "weight":
-                extra.append(parse(spec))
+                with _in_variation(f"{sample.label} [{name} {direction}]"):
+                    spec_expression = parse(spec)
+                    spec_expression.required_branches(available)
+                extra.append(spec_expression)
             else:
                 for old, new in spec.items():
                     if old not in used:
@@ -320,44 +324,55 @@ def _load_with_variations(
         shifts: list[Columns | float | None] = []
         for direction, spec in (("up", syst.up), ("down", syst.down)):
             context = f"{sample.label} [{name} {direction}]"
-            if spec is None:
-                shifts.append(None)
-            elif syst.kind == "norm":
-                shifts.append(float(spec))
-            elif syst.kind == "samples":
-                variant = _variant_sample(sample, spec, context)
-                shifts.append(
-                    load_columns(
-                        variant,
-                        [var],
-                        selection=selection,
-                        weight=weight,
-                        lumi=lumi,
-                        nonfinite=nonfinite,
+            with _in_variation(context):
+                if spec is None:
+                    shifts.append(None)
+                elif syst.kind == "norm":
+                    shifts.append(float(spec))
+                elif syst.kind == "samples":
+                    variant = _variant_sample(sample, spec, context)
+                    shifts.append(
+                        load_columns(
+                            variant,
+                            [var],
+                            selection=selection,
+                            weight=weight,
+                            lumi=lumi,
+                            nonfinite=nonfinite,
+                        )
                     )
-                )
-            else:
-                if syst.kind == "weight":
-                    varied_arrays, varied_weight = arrays, _product(spec, weight)
                 else:
-                    # the replacing branches take the place of the replaced ones, so the
-                    # variable, selection and weight all see the shifted values
-                    replaced = {old: arrays[new] for old, new in spec.items() if old in used}
-                    varied_arrays, varied_weight = {**arrays, **replaced}, weight_expr
-                shifts.append(
-                    prepare(
-                        varied_arrays,
-                        [var.expression],
-                        selection=cut_text,
-                        weight=varied_weight,
-                        scale=scale,
-                        nonfinite=nonfinite,
-                        context=context,
-                        n_events=n_events,
+                    if syst.kind == "weight":
+                        varied_arrays, varied_weight = arrays, _product(spec, weight)
+                    else:
+                        # the replacing branches take the place of the replaced ones, so the
+                        # variable, selection and weight all see the shifted values
+                        replaced = {old: arrays[new] for old, new in spec.items() if old in used}
+                        varied_arrays, varied_weight = {**arrays, **replaced}, weight_expr
+                    shifts.append(
+                        prepare(
+                            varied_arrays,
+                            [var.expression],
+                            selection=cut_text,
+                            weight=varied_weight,
+                            scale=scale,
+                            nonfinite=nonfinite,
+                            context=context,
+                            n_events=n_events,
+                        )
                     )
-                )
         variations[name] = (shifts[0], shifts[1])
     return _Loaded(nominal, variations)
+
+
+@contextmanager
+def _in_variation(context: str) -> Iterator[None]:
+    """Name the variation (sample, source, direction) in any rootfig error raised inside."""
+    try:
+        yield
+    except RootfigError as exc:
+        exc.add_note(f"while evaluating the systematic variation {context}")
+        raise
 
 
 def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:

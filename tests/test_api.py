@@ -1708,10 +1708,42 @@ class TestSystematics:
         with pytest.raises(ValueError, match="no non-data histograms"):
             rf.plot_histograms([data]).uncertainty()
 
+    def test_named_reference_chooses_uncertainty_per_numerator(self) -> None:
+        rng = np.random.default_rng(3)
+        reference = rf.Sample(
+            {"x": rng.uniform(0, 2, 500)}, label="Reference", systematics={"lumi": 0.10}
+        )
+        other = rf.Sample({"x": rng.uniform(0, 2, 500)}, label="Other", systematics={"lumi": 0.10})
+        data = rf.Sample({"x": rng.uniform(0, 2, 500)}, label="Data", is_data=True)
+        p = rf.plot([reference, other, data], "x", bins=(2, 0, 2), ratio="Reference")
+        other_ratio, data_ratio = p.ratios
+        assert other_ratio.syst_errors is not None  # simulation / simulation: lumi cancels
+        np.testing.assert_allclose(other_ratio.syst_errors, 0.0, atol=1e-12)
+        np.testing.assert_allclose(other_ratio.errors**2, _propagated_variance(p))
+        assert data_ratio.syst_errors is None  # data / simulation: the reference is the band
+        assert data_ratio.syst_band is not None
+        np.testing.assert_allclose(data_ratio.syst_band, 0.1)
+        explicit = rf.plot(
+            [reference, other, data],
+            "x",
+            bins=(2, 0, 2),
+            ratio="Reference",
+            ratio_uncertainty="numerator",
+        )
+        assert explicit.ratios[0].syst_errors is not None
+        for side in explicit.ratios[0].syst_errors:  # its own lumi against the nominal reference
+            np.testing.assert_allclose(side, 0.1 * explicit.ratios[0].values)
+
     def test_efficiency_ignores_systematics(self) -> None:
         sample = rf.Sample({"x": [0.5, 1.5]}, systematics={"unused": "missing_weight"})
         p = rf.efficiency(sample, "x", passed="x > 1", bins=(2, 0, 2))
         np.testing.assert_allclose(p.efficiencies[0].values, [0.0, 1.0])
+
+    def test_errors_name_the_variation(self) -> None:
+        sample = rf.Sample({"x": [0.5, 1.5]}, label="MC", systematics={"pileup": ("x", "w_down")})
+        with pytest.raises(MissingBranchError) as caught:
+            rf.histograms(sample, "x", bins=(2, 0, 2))
+        assert any("MC [pileup down]" in note for note in caught.value.__notes__)
 
     def test_exports(self) -> None:
         assert rf.Systematic.samples("alt.root").kind == "samples"
@@ -1719,6 +1751,12 @@ class TestSystematics:
         from rootfig.histograms import Uncertainty
 
         assert rf.Uncertainty is Uncertainty
+
+
+def _propagated_variance(p: rf.Plot) -> Any:
+    reference, other = p.histograms[0], p.histograms[1]
+    n, d = other.values(), reference.values()
+    return other.variances() / d**2 + n**2 * reference.variances() / d**4
 
 
 def test_plain_histogram_ignores_sample_systematics() -> None:
