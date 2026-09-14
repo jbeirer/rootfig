@@ -227,6 +227,38 @@ def stack_data(mc: list[rf.Sample], data: rf.Sample, pt: rf.Variable, style: rf.
 
 
 @example(
+    "systematics",
+    "Systematic uncertainties in a stack and its ratio panel",
+    section=SIMULATION_AND_DATA,
+)
+def systematics(mc: list[rf.Sample], data: rf.Sample, met: rf.Variable, style: rf.Style) -> rf.Plot:
+    """A sample lists its sources of systematic uncertainty by name: a pair of weight
+    expressions, a relative normalisation uncertainty, or a mapping of shifted branches,
+    which also move the selection. ``systematics=`` on the plot adds a
+    source to every simulated sample. The hatched band and the ratio band combine the
+    statistical and systematic uncertainties; a source with the same name in several
+    samples is correlated, different sources add in quadrature. ``p.uncertainty()``
+    returns every component."""
+    zjets, diboson, signal = mc
+    jes = {"MET": ("MET_jesUp", "MET_jesDown")}
+    varied = [
+        zjets.with_(systematics={"pileup": ("weight_pu_up", "weight_pu_down"), "jes": jes}),
+        diboson.with_(systematics={"jes": jes, "xsec": 0.10}),
+        signal,
+    ]
+    return rf.plot(
+        varied,
+        met,
+        observed=data,
+        stack=True,
+        ratio=True,
+        logy=True,
+        systematics={"lumi": 0.02},
+        style=style,
+    )
+
+
+@example(
     "ratio_reference",
     "Ratio to a chosen sample, per-sample drawing styles",
     section=SIMULATION_AND_DATA,

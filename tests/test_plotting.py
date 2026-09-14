@@ -39,6 +39,7 @@ from rootfig.plotting import (
     draw_ratio_panel,
     envelope,
     finish_axes,
+    fold_flow_bins,
     label_flow_bins,
     make_figure,
     overlay_artists,
@@ -671,6 +672,27 @@ class TestRatioPanel:
         assert low < 0.2
         assert high == 3.0
         assert ratio_ylim([]) == (0.5, 1.5)
+        syst = Ratio(
+            np.ones(4), np.zeros(4), np.zeros(4), edges, syst_errors=(np.full(4, 0.8),) * 2
+        )
+        low, high = ratio_ylim([syst])  # a propagated systematic without a band
+        assert low < 0.2
+        assert high > 1.8
+        signed = Ratio(np.array([-0.5, 1.0, 1.0, 1.0]), np.zeros(4), np.zeros(4), edges)
+        low, high = ratio_ylim([signed])
+        assert low < -0.5
+        assert high == 1.5
+        deep = Ratio(
+            np.ones(4), np.zeros(4), np.zeros(4), edges, syst_errors=(np.full(4, 1.5),) * 2
+        )
+        low, _ = ratio_ylim([deep])  # a systematic reaching below zero on positive ratios
+        assert low == 0.0
+        low, _ = ratio_ylim([wide], band=(np.full(4, 0.9), np.full(4, 1.1)))
+        assert low < 0.2  # a narrow band never narrows the range
+        wide_band = (np.full(4, 0.2), np.full(4, 1.8))
+        low, high = ratio_ylim([tight], band=wide_band)
+        assert low < 0.2
+        assert high > 1.8
 
 
 class TestAnnotations:
@@ -1195,3 +1217,59 @@ class TestHist2DMask:
         draw_hist2d(Histogram(h, label="h"), ax, colorbar=False, logz=True)
         assert np.ma.getmaskarray(ax.collections[0].get_array()).sum() == 0  # LogNorm masks
         plt.close(fig)
+
+
+def with_variation(histogram: Histogram, factor: float) -> Histogram:
+    return histogram.with_(variations={"s": (histogram.hist * factor, None)})
+
+
+class TestSystematicDrawing:
+    def test_stack_band_includes_systematics(
+        self, mc_hists: list[Histogram], data_hist: Histogram
+    ) -> None:
+        varied = [with_variation(mc_hists[0], 1.5), mc_hists[1]]
+        with style_context() as st:
+            fig, ax = plt.subplots()
+            plain = draw_histograms([*mc_hists, data_hist], ax, style=st, stack=True)
+            fig, ax = plt.subplots()
+            drawn = draw_histograms([*varied, data_hist], ax, style=st, stack=True)
+        assert drawn.labels == ["A", "B", "Stat. + syst. unc.", "Data"]
+        assert drawn.ymax > plain.ymax
+
+    def test_overlay_band_and_envelope(self, mc_hists: list[Histogram]) -> None:
+        varied = [mc_hists[0], with_variation(mc_hists[1], 2.0)]
+        with style_context() as st:
+            fig, ax = plt.subplots()
+            drawn = draw_histograms(varied, ax, style=st)
+        assert drawn.labels == ["A", "B"]
+        assert len(ax.get_legend_handles_labels()[1]) == 2  # the band has no legend entry
+        assert drawn.ymax >= 2.0 * mc_hists[1].values().max()
+        _, heights = envelope(varied, stack=False)
+        _, plain = envelope(mc_hists, stack=False)
+        assert heights.max() > plain.max()
+
+    def test_flow_bins_carry_variations(self) -> None:
+        nominal = make_hist([1.5, 5.0], label="A")  # 5.0 is overflow
+        up = make_hist([-1.0, 1.5], label="up")  # underflow only in the variation
+        varied = nominal.with_(variations={"s": (up.hist, None)})
+        (shown,), (under, over) = show_flow_bins([varied])
+        assert (under, over) == (True, True)
+        np.testing.assert_allclose(shown.variations["s"][0].values(), [1, 0, 1, 0, 0, 0])
+        np.testing.assert_allclose(shown.values(), [0, 0, 1, 0, 0, 1])
+        (folded,) = fold_flow_bins([varied])
+        np.testing.assert_allclose(folded.variations["s"][0].values(), [1, 1, 0, 0])
+        np.testing.assert_allclose(folded.variations["s"][1].values(), [-1, 1, 0, 2])
+
+    def test_ratio_panel_band_and_errors(
+        self, mc_hists: list[Histogram], data_hist: Histogram
+    ) -> None:
+        reference = with_variation(mc_hists[0], 1.5)
+        with style_context() as st:
+            fig, ax = plt.subplots()
+            (result,) = draw_ratio_panel(
+                [with_variation(mc_hists[1], 1.2)], reference, ax, style=st, uncertainty="numerator"
+            )
+        assert result.syst_band is not None
+        assert result.syst_errors is not None
+        band = next(c for c in ax.collections if isinstance(c, PolyCollection))
+        assert band.get_label() == "A stat. + syst. unc."

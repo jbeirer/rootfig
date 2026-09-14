@@ -1,7 +1,9 @@
 """The toy dataset: three simulated processes and one "observed" sample.
 
 Muons and jets are jagged per event, ``MET``, ``m_ll``, ``lep_iso`` and the
-``weight`` are per event. Nothing here is specific to rootfig; it only produces
+``weight`` are per event. ``weight_pu_up``/``weight_pu_down`` and
+``MET_jesUp``/``MET_jesDown`` are systematic variations of the weight and of
+``MET``. Nothing here is specific to rootfig; it only produces
 small ``TTree`` files the examples can read.
 """
 
@@ -53,7 +55,7 @@ def make_events(kind: Kind, n: int, seed: int) -> dict[str, Any]:
         )
         btag = rng.beta(1.5, 4.0, n_jet_total)
 
-    return {
+    columns = {
         "event": np.arange(n, dtype=np.int64),
         "nMuon": n_muon.astype(np.int32),
         "Muon_pt": ak.unflatten(rng.exponential(p["pt"], n_mu_total) + 5.0, n_muon),
@@ -71,6 +73,14 @@ def make_events(kind: Kind, n: int, seed: int) -> dict[str, Any]:
         "lep_iso": np.where(rng.random(n) < 0.03, -999.0, rng.exponential(0.08, n)),
         "weight": rng.normal(1.0, 0.1, n),
     }
+    # systematic variations, drawn last so the columns above do not depend on them
+    pileup = rng.normal(0.06, 0.02, n) * (1.0 + columns["MET"] / 100.0)
+    columns["weight_pu_up"] = columns["weight"] * (1.0 + pileup)
+    columns["weight_pu_down"] = columns["weight"] * (1.0 - 0.8 * pileup)
+    jes = rng.normal(0.05, 0.01, n)
+    columns["MET_jesUp"] = columns["MET"] * (1.0 + jes)
+    columns["MET_jesDown"] = columns["MET"] * (1.0 - jes)
+    return columns
 
 
 def concatenate(*parts: dict[str, Any]) -> dict[str, Any]:

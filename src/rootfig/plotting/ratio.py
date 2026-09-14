@@ -12,6 +12,7 @@ from matplotlib.ticker import MaxNLocator
 from rootfig.histograms.build import Histogram
 from rootfig.histograms.ratio import Ratio, RatioUncertainty, SignificanceKind, ratio
 from rootfig.model.style import Style
+from rootfig.plotting.hist1d import band_label
 from rootfig.plotting.style import color_cycle, foreground
 
 __all__ = ["draw_ratio_panel", "draw_significance_panel", "ratio_ylim"]
@@ -25,7 +26,7 @@ def draw_ratio_panel(
     ax: Axes,
     *,
     style: Style,
-    uncertainty: RatioUncertainty,
+    uncertainty: RatioUncertainty | Sequence[RatioUncertainty],
     colors: Sequence[str] | None = None,
     ylim: tuple[float, float] | None = None,
     ylabel: str | None = None,
@@ -45,7 +46,10 @@ def draw_ratio_panel(
         Style providing colours.
     uncertainty
         ``"propagate"`` (error bars carry both uncertainties) or ``"numerator"``
-        (error bars carry the numerator's; the reference uncertainty is a band).
+        (error bars carry the numerator's; the reference uncertainty is a band),
+        for all numerators or one per numerator. Systematic variations of the
+        histograms are included in error bars and band alike (see
+        :func:`~rootfig.histograms.ratio`).
     colors
         One colour per numerator; defaults to the numerator's own colour or the
         style cycle (``text.color`` for data).
@@ -55,10 +59,16 @@ def draw_ratio_panel(
     ylabel
         Label; defaults to ``"Ratio to <reference>"`` or ``"Data / MC"``.
     band
-        Draw the reference uncertainty band. Defaults to ``True`` for
-        ``uncertainty="numerator"``.
+        Draw the reference uncertainty band. Defaults to ``True`` when any
+        numerator uses ``uncertainty="numerator"``.
     """
-    ratios = [ratio(h.hist, reference.hist, uncertainty=uncertainty) for h in numerators]
+    modes = [uncertainty] * len(numerators) if isinstance(uncertainty, str) else list(uncertainty)
+    if len(modes) != len(numerators):
+        msg = f"got {len(modes)} uncertainty modes for {len(numerators)} numerators"
+        raise ValueError(msg)
+    ratios = [
+        ratio(h, reference, uncertainty=mode) for h, mode in zip(numerators, modes, strict=True)
+    ]
     if colors is None:
         cycle = iter(color_cycle(max(len(numerators), 1), style))
         colors = [
@@ -67,12 +77,15 @@ def draw_ratio_panel(
         ]
 
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, zorder=1)
-    show_band = (uncertainty == "numerator") if band is None else band
+    show_band = ("numerator" in modes) if band is None else band
+    band_edges: tuple[np.ndarray, np.ndarray] | None = None
     if show_band and ratios:
         first = ratios[0]
-        finite = np.isfinite(first.band)
-        lower = np.where(finite, 1.0 - first.band, 1.0)
-        upper = np.where(finite, 1.0 + first.band, 1.0)
+        band_down, band_up = first.total_band()
+        has_systematics = first.syst_band is not None
+        lower = np.where(np.isfinite(band_down), 1.0 - band_down, 1.0)
+        upper = np.where(np.isfinite(band_up), 1.0 + band_up, 1.0)
+        band_edges = (lower, upper)
         ax.fill_between(
             first.edges,
             np.append(lower, lower[-1]),
@@ -82,16 +95,17 @@ def draw_ratio_panel(
             alpha=0.3,
             linewidth=0,
             zorder=0,
-            label=f"{reference.label} stat. unc.",
+            label=f"{reference.label} {band_label(systematics=has_systematics).lower()}",
         )
 
     for r, color, numerator in zip(ratios, colors, numerators, strict=True):
         ok = np.isfinite(r.values)
         marker: dict[str, Any] = {"fmt": "o", "markersize": 4 if not numerator.is_data else 5}
+        errors_down, errors_up = r.total_errors()
         ax.errorbar(
             r.centers[ok],
             r.values[ok],
-            yerr=r.errors[ok],
+            yerr=r.errors[ok] if r.syst_errors is None else [errors_down[ok], errors_up[ok]],
             xerr=r.half_widths[ok],
             color=color,
             elinewidth=1.0,
@@ -99,7 +113,7 @@ def draw_ratio_panel(
             **marker,
         )
 
-    ax.set_ylim(*(ylim if ylim is not None else ratio_ylim(ratios)))
+    ax.set_ylim(*(ylim if ylim is not None else ratio_ylim(ratios, band=band_edges)))
     ax.set_xlim(reference.edges[0], reference.edges[-1])
     if ylabel is None:
         if any(h.is_data for h in numerators) and not reference.is_data:
@@ -111,23 +125,51 @@ def draw_ratio_panel(
     return ratios
 
 
-def ratio_ylim(ratios: Sequence[Ratio]) -> tuple[float, float]:
-    """Choose a ratio range: at least (0.5, 1.5), widened to cover the bulk of the points.
+def ratio_ylim(
+    ratios: Sequence[Ratio], *, band: tuple[np.ndarray, np.ndarray] | None = None
+) -> tuple[float, float]:
+    """Choose a ratio range: at least (0.5, 1.5), widened to cover the bulk of what is drawn.
 
-    The bulk is the 5th to 95th percentile of the finite ratio values, padded
-    by 10 percent, so a few wild bins with huge uncertainties do not squash the
-    panel. The result is clipped to ``[0, 3]``.
+    The bulk is the 5th to 95th percentile, padded by 10 percent, of the finite
+    ratio values, of the systematic extent of the points and of the edges of the
+    reference ``band`` when one is drawn. Each is judged on its own, so it can
+    widen the range but never narrow it. Statistical error bars do not count: a
+    few low-statistics bins with huge uncertainties would otherwise squash the
+    panel. The result is clipped to ``[0, 3]``, or to ``[-3, 3]`` with negative
+    ratios (signed weights), whose lowest value then stays in view.
     """
     low, high = DEFAULT_RATIO_YLIM
-    values = [r.values[np.isfinite(r.values)] for r in ratios]
-    values = [v for v in values if v.size]
-    if values:
-        combined = np.concatenate(values)
-        q_low, q_high = (float(q) for q in np.percentile(combined, [5, 95]))
-        pad = 0.1 * max(q_high - q_low, 0.2)
-        low = min(low, q_low - pad)
-        high = max(high, q_high + pad)
-    return (max(low, 0.0), min(high, 3.0))
+    values = _finite([r.values for r in ratios])
+    ranges = [(values, values)]
+    with_syst = [r for r in ratios if r.syst_errors is not None]
+    if with_syst:
+        ranges.append(
+            (
+                _finite([r.values - r.syst_errors[0] for r in with_syst]),  # type: ignore[index]
+                _finite([r.values + r.syst_errors[1] for r in with_syst]),  # type: ignore[index]
+            )
+        )
+    if band is not None:
+        ranges.append((_finite([band[0]]), _finite([band[1]])))
+    for lower, upper in ranges:
+        if lower.size and upper.size:
+            q_low = float(np.percentile(lower, 5))
+            q_high = float(np.percentile(upper, 95))
+            pad = 0.1 * max(q_high - q_low, 0.2)
+            low = min(low, q_low - pad)
+            high = max(high, q_high + pad)
+    floor = 0.0
+    if values.size and values.min() < 0:
+        floor = -3.0
+        low = min(low, float(values.min()) - 0.1 * max(high - float(values.min()), 0.2))
+    return (max(low, floor), min(high, 3.0))
+
+
+def _finite(arrays: Sequence[np.ndarray]) -> np.ndarray:
+    if not arrays:
+        return np.empty(0)
+    combined = np.concatenate([np.asarray(a, dtype=float).ravel() for a in arrays])
+    return combined[np.isfinite(combined)]
 
 
 def draw_significance_panel(

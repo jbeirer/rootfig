@@ -120,7 +120,7 @@ docstring-code-format = true
 python_version = "3.12"
 strict = true
 disallow_untyped_calls = false  # uproot, awkward, hist and mplhep are largely untyped
-files = ["src/rootfig"]
+files = ["src/rootfig", "tests/type_checks"]
 warn_unreachable = true
 pretty = true
 

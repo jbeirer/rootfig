@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 
 from rootfig._typing import FloatArray, Hist
-from rootfig.errors import BinningError
+from rootfig.errors import BinningError, RootfigWarning
+from rootfig.histograms.build import Histogram, compatible_binning
+from rootfig.histograms.systematics import Uncertainty
 
 __all__ = [
     "SIGNIFICANCE_KINDS",
@@ -27,11 +30,14 @@ SIGNIFICANCE_KINDS: tuple[str, ...] = ("significance", "s/sqrt(b)", "s/sqrt(s+b)
 """Strings accepted by ``ratio=`` for a significance panel (``"significance"`` means S/sqrt(B))."""
 """How ratio uncertainties are computed.
 
-* ``"propagate"`` - numerator and denominator uncertainties are combined in
-  quadrature (uncorrelated) into the error bars.
+* ``"propagate"`` - numerator and denominator uncertainties both enter the
+  error bars (statistical ones uncorrelated, systematic ones source by source).
 * ``"numerator"`` - error bars carry only the numerator uncertainty; the
   denominator's relative uncertainty is returned separately as a band around
-  one (the usual data/MC convention).
+  one (the usual data/MC convention, mplhep's ``split_ratio``).
+
+Systematic uncertainties of :class:`~rootfig.histograms.Histogram` inputs follow
+the same rule, per side.
 """
 
 
@@ -46,16 +52,25 @@ class Ratio:
     errors
         Uncertainty on ``values`` (see :data:`RatioUncertainty`).
     band
-        Relative uncertainty of the denominator, ``sqrt(var_den) / den``; use as
-        a band around one. ``nan`` where the denominator is zero.
+        Relative statistical uncertainty of the denominator, ``sqrt(var_den) / den``;
+        use as a band around one. ``nan`` where the denominator is zero.
     edges
         Bin edges shared by both histograms.
+    syst_errors
+        Systematic uncertainty on ``values`` as ``(down, up)`` (matplotlib's
+        ``yerr`` order), following :data:`RatioUncertainty`; ``None`` without
+        systematic variations.
+    syst_band
+        Relative systematic uncertainty of the denominator below and above one,
+        ``(down, up)``; ``None`` if the denominator has no variations.
     """
 
     values: FloatArray
     errors: FloatArray
     band: FloatArray
     edges: FloatArray
+    syst_errors: tuple[FloatArray, FloatArray] | None = None
+    syst_band: tuple[FloatArray, FloatArray] | None = None
 
     @property
     def centers(self) -> FloatArray:
@@ -67,59 +82,124 @@ class Ratio:
         """Half bin widths (for horizontal error bars)."""
         return np.asarray(0.5 * np.diff(self.edges), dtype=float)
 
+    def total_errors(self) -> tuple[FloatArray, FloatArray]:
+        """Statistical and systematic uncertainty on ``values`` in quadrature, ``(down, up)``."""
+        if self.syst_errors is None:
+            return self.errors, self.errors
+        down, up = self.syst_errors
+        return np.hypot(self.errors, down), np.hypot(self.errors, up)
 
-def compatible_binning(a: Hist, b: Hist) -> bool:
-    """Return True if both histograms are one-dimensional with identical edges.
-
-    Edges may differ by round-off only: the tolerance is a millionth of the
-    smallest bin width, so bins shifted by a whole width at large coordinates
-    (where NumPy's default relative tolerance would accept them) are rejected.
-    """
-    if a.ndim != 1 or b.ndim != 1:
-        return False
-    ea, eb = np.asarray(a.axes[0].edges, dtype=float), np.asarray(b.axes[0].edges, dtype=float)
-    if ea.shape != eb.shape:
-        return False
-    tolerance = 1e-6 * float(min(np.diff(ea).min(), np.diff(eb).min()))
-    return bool(np.allclose(ea, eb, rtol=0.0, atol=tolerance))
+    def total_band(self) -> tuple[FloatArray, FloatArray]:
+        """Relative statistical and systematic denominator uncertainty, ``(down, up)``."""
+        if self.syst_band is None:
+            return self.band, self.band
+        down, up = self.syst_band
+        return np.hypot(self.band, down), np.hypot(self.band, up)
 
 
 def ratio(
-    numerator: Hist,
-    denominator: Hist,
+    numerator: Hist | Histogram,
+    denominator: Hist | Histogram,
     *,
     uncertainty: RatioUncertainty = "propagate",
 ) -> Ratio:
     """Compute ``numerator / denominator`` bin by bin with uncertainties.
+
+    Statistical uncertainties of numerator and denominator are uncorrelated.
+    ``Histogram`` inputs with systematic variations also give
+    :attr:`Ratio.syst_errors` and :attr:`Ratio.syst_band`, propagated source by
+    source through the varied ratio itself: a source present on both sides varies
+    numerator and denominator together (a shared luminosity uncertainty cancels),
+    a source on one side only varies that side against the other's nominal
+    contents. The shifts of different sources then combine like those of one
+    histogram (see :mod:`rootfig.histograms.systematics`). With ``"numerator"``
+    only the numerator's sources enter the error bars; the denominator's are the
+    band. A variation that empties a denominator bin leaves that bin's
+    systematic uncertainty ``nan``, with a :class:`~rootfig.errors.RootfigWarning`.
 
     Raises
     ------
     BinningError
         If the histograms do not share the same one-dimensional binning.
     """
+    num_variations = numerator.variations if isinstance(numerator, Histogram) else {}
+    den_variations = denominator.variations if isinstance(denominator, Histogram) else {}
+    if isinstance(numerator, Histogram):
+        numerator = numerator.hist
+    if isinstance(denominator, Histogram):
+        denominator = denominator.hist
     if not compatible_binning(numerator, denominator):
         msg = "ratio requires two one-dimensional histograms with identical bin edges"
+        raise BinningError(msg)
+    if uncertainty not in ("propagate", "numerator"):  # runtime guard for untyped callers
+        msg = f"uncertainty must be 'propagate' or 'numerator', got {uncertainty!r}"
         raise BinningError(msg)
     n = np.asarray(numerator.values(), dtype=float)
     d = np.asarray(denominator.values(), dtype=float)
     vn = np.asarray(numerator.variances(), dtype=float)
     vd = np.asarray(denominator.variances(), dtype=float)
+    edges = np.asarray(numerator.axes[0].edges, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
-        values = np.where(d != 0, n / d, np.nan)
-        band = np.where(d != 0, np.sqrt(vd) / np.abs(d), np.nan)
+
+        def divide(top: FloatArray, bottom: FloatArray) -> FloatArray:
+            return np.asarray(np.where((d != 0) & (bottom != 0), top / bottom, np.nan))
+
+        values = divide(n, d)
+        band = divide(np.sqrt(vd), np.abs(d))
         if uncertainty == "propagate":
-            errors = np.where(d != 0, np.sqrt(vn / d**2 + n**2 * vd / d**4), np.nan)
-        elif uncertainty == "numerator":
-            errors = np.where(d != 0, np.sqrt(vn) / np.abs(d), np.nan)
-        else:  # runtime guard for untyped callers
-            msg = f"uncertainty must be 'propagate' or 'numerator', got {uncertainty!r}"  # type: ignore[unreachable]
-            raise BinningError(msg)
+            errors = divide(np.sqrt(vn + n**2 * vd / d**2), np.abs(d))
+            varied_denominators = den_variations
+        else:
+            errors = divide(np.sqrt(vn), np.abs(d))
+            varied_denominators = {}  # the denominator's sources are the band
+        sources = list(dict.fromkeys([*num_variations, *varied_denominators]))
+
+        def varied(variations: Any, name: str, index: int, nominal: FloatArray) -> FloatArray:
+            if name not in variations:
+                return nominal
+            return np.asarray(variations[name][index].values(), dtype=float)
+
+        ratio_shifts = {}
+        for name in sources:
+            shifts = []
+            for i, direction in ((0, "up"), (1, "down")):
+                varied_d = varied(varied_denominators, name, i, d)
+                _warn_emptied(name, direction, (d != 0) & (varied_d == 0))
+                shifts.append(divide(varied(num_variations, name, i, n), varied_d) - values)
+            ratio_shifts[name] = (shifts[0], shifts[1])
+        band_shifts = {
+            name: tuple(divide(up_or_down.values() - d, d) for up_or_down in pair)
+            for name, pair in den_variations.items()
+        }
     return Ratio(
-        values=np.asarray(values, dtype=float),
-        errors=np.asarray(errors, dtype=float),
-        band=np.asarray(band, dtype=float),
-        edges=np.asarray(numerator.axes[0].edges, dtype=float),
+        values=values,
+        errors=errors,
+        band=band,
+        edges=edges,
+        syst_errors=_combined(edges, values, ratio_shifts),
+        syst_band=_combined(edges, values, band_shifts),
     )
+
+
+def _warn_emptied(name: str, direction: str, emptied: np.ndarray) -> None:
+    """Warn that a variation empties denominator bins, leaving the ratio's systematic undefined."""
+    if emptied.any():
+        warnings.warn(
+            f"systematic {name!r} {direction} empties the denominator in "
+            f"{int(emptied.sum())} bin(s); the ratio's systematic uncertainty there is nan",
+            RootfigWarning,
+            stacklevel=4,
+        )
+
+
+def _combined(
+    edges: FloatArray, like: FloatArray, shifts: dict[str, Any]
+) -> tuple[FloatArray, FloatArray] | None:
+    """Combine signed per-source shifts into ``(down, up)`` magnitudes, or ``None`` without any."""
+    if not shifts:
+        return None
+    summary = Uncertainty(edges=edges, nominal=like, stat=np.zeros_like(like), components=shifts)
+    return summary.syst_down, summary.syst_up
 
 
 def significance(signal: Hist, background: Hist, *, kind: SignificanceKind = "s/sqrt(b)") -> Ratio:

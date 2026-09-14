@@ -69,5 +69,9 @@ class LuminosityError(RootfigError, ValueError):
     """A sample cannot be scaled to a luminosity (no luminosity, cross section or event count)."""
 
 
+class SystematicError(RootfigError, ValueError):
+    """A systematic variation is malformed or cannot be applied to a sample or histogram."""
+
+
 class RootfigWarning(UserWarning):
     """Base class for warnings emitted by rootfig (dropped values, empty selections, ...)."""

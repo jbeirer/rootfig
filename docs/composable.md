@@ -49,6 +49,13 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
   (a plot reads every needed branch of every file into memory at once). For a
   ready-made `FileSource`, give the range to the source itself; passing it to
   `Sample` afterwards raises a [`SourceError`][rootfig.SourceError].
+- `systematics={name: variation}` lists the sample's sources of systematic
+  uncertainty: weight expressions (`("w_up", "w_down")`), normalisation
+  uncertainties (`0.05`, `(1.1, 0.95)`), varied branches
+  (`{"Jet_pt": ("Jet_pt_up", "Jet_pt_down")}`) and varied files
+  ([`Systematic.samples`][rootfig.Systematic]). Sources with
+  the same name are correlated across samples; see
+  [Systematic uncertainties](plotting.md#systematic-uncertainties).
 - `sample.with_(label="...")` returns a modified copy; replacement values are
   validated like constructor arguments.
 

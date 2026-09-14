@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import hist
 import numpy as np
 
+from rootfig._mapping import FrozenMapping
 from rootfig._typing import FloatArray, Hist
-from rootfig.errors import RootfigWarning
+from rootfig.errors import RootfigWarning, SystematicError
 from rootfig.histograms.stats import Summary
 
 if TYPE_CHECKING:
@@ -19,7 +20,23 @@ if TYPE_CHECKING:
     from rootfig.model.samples import HistType, Sample
     from rootfig.selection import Columns
 
-__all__ = ["Histogram", "as_weight_storage", "fill"]
+__all__ = ["Histogram", "as_weight_storage", "compatible_binning", "fill", "mirror"]
+
+
+def compatible_binning(a: Hist, b: Hist) -> bool:
+    """Return True if both histograms are one-dimensional with identical edges.
+
+    Edges may differ by round-off only: the tolerance is a millionth of the
+    smallest bin width, so bins shifted by a whole width at large coordinates
+    (where NumPy's default relative tolerance would accept them) are rejected.
+    """
+    if a.ndim != 1 or b.ndim != 1:
+        return False
+    ea, eb = np.asarray(a.axes[0].edges, dtype=float), np.asarray(b.axes[0].edges, dtype=float)
+    if ea.shape != eb.shape:
+        return False
+    tolerance = 1e-6 * float(min(np.diff(ea).min(), np.diff(eb).min()))
+    return bool(np.allclose(ea, eb, rtol=0.0, atol=tolerance))
 
 
 def fill(axes: Sequence[Axis], columns: Columns) -> Hist:
@@ -99,7 +116,7 @@ def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
     return result
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class Histogram:
     """A filled histogram together with its provenance and drawing hints.
 
@@ -124,6 +141,15 @@ class Histogram:
         Drawing hints, ``None`` for style defaults.
     normalization
         Description of the normalisation applied (``None`` for raw counts).
+    variations
+        Systematic variations, ``{name: (up, down)}`` histograms with the binning
+        of :attr:`hist`. A ``down`` given as ``None`` is filled in by mirroring the
+        up shift around the nominal contents. Summarised by
+        :func:`~rootfig.histograms.uncertainty`. The mapping is copied and made
+        read-only; every stored pair contains two histograms. Use
+        ``histogram.with_(variations=...)`` to replace it. The underlying
+        ``hist.Hist`` objects remain mutable. Observed data (``is_data``) cannot
+        carry variations, as for :class:`~rootfig.model.Sample`.
     """
 
     hist: Hist
@@ -134,11 +160,65 @@ class Histogram:
     color: str | None = None
     histtype: HistType | None = None
     normalization: str | None = None
+    variations: Mapping[str, tuple[Hist, Hist]] = field(default_factory=dict)
+
+    def __init__(  # noqa: PLR0917 - preserve the positional dataclass constructor API
+        self,
+        hist: Hist,
+        label: str,
+        sample: Sample | None = None,
+        stats: Summary | None = None,
+        is_data: bool = False,
+        color: str | None = None,
+        histtype: HistType | None = None,
+        normalization: str | None = None,
+        variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
+    ) -> None:
+        object.__setattr__(self, "hist", hist)
+        object.__setattr__(self, "label", label)
+        object.__setattr__(self, "sample", sample)
+        object.__setattr__(self, "stats", stats)
+        object.__setattr__(self, "is_data", is_data)
+        object.__setattr__(self, "color", color)
+        object.__setattr__(self, "histtype", histtype)
+        object.__setattr__(self, "normalization", normalization)
+        object.__setattr__(self, "variations", {} if variations is None else variations)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
-        # Keep the documented invariant for histograms built by users from plain hist.Hist
-        # objects; rootfig's own histograms already have Weight storage (no copy is made).
+        # Also validate subclasses that use a generated dataclass constructor.
+        # Weight storage histograms are retained without copying their contents.
         object.__setattr__(self, "hist", as_weight_storage(self.hist))
+        checked = self._checked_variations(self.variations)
+        object.__setattr__(self, "variations", FrozenMapping(checked))
+
+    def _checked_variations(
+        self, variations: Mapping[str, tuple[Hist, Hist | None]]
+    ) -> dict[str, tuple[Hist, Hist]]:
+        if self.is_data and variations:
+            msg = (
+                f"histogram {self.label!r} is observed data and cannot carry systematic "
+                f"variations ({sorted(variations)}); attach them to the simulated histograms"
+            )
+            raise SystematicError(msg)
+        checked: dict[str, tuple[Hist, Hist]] = {}
+        for name, pair in variations.items():
+            if not isinstance(name, str) or not name.strip():
+                msg = f"histogram {self.label!r}: variation names must be non-empty strings"
+                raise SystematicError(msg)
+            if not (isinstance(pair, tuple | list) and len(pair) == 2 and pair[0] is not None):
+                msg = f"histogram {self.label!r}: variation {name!r} must be an (up, down) pair"  # type: ignore[unreachable]
+                raise SystematicError(msg)
+            given = [as_weight_storage(h, assume_poisson=True) for h in pair if h is not None]
+            if not all(_same_edges(varied, self.hist) for varied in given):
+                msg = (
+                    f"histogram {self.label!r}: variation {name!r} does not have the binning "
+                    "of the nominal histogram"
+                )
+                raise SystematicError(msg)
+            up = given[0]
+            checked[name] = (up, mirror(self.hist, up) if pair[1] is None else given[1])
+        return checked
 
     # -- convenience accessors -----------------------------------------------------------
 
@@ -231,6 +311,13 @@ class Histogram:
         """Return a copy with the given fields replaced."""
         return replace(self, **changes)
 
+    def map_hists(self, transform: Callable[[Hist], Hist]) -> Histogram:
+        """Return a copy with ``transform`` applied to the nominal histogram and every variation."""
+        variations = {
+            name: (transform(up), transform(down)) for name, (up, down) in self.variations.items()
+        }
+        return replace(self, hist=transform(self.hist), variations=variations)
+
     def scaled(self, factor: float) -> Histogram:
         """Return a copy multiplied by ``factor``.
 
@@ -245,4 +332,34 @@ class Histogram:
                 sum_weights=stats.sum_weights * factor,
                 _sum_w2=stats._sum_w2 * factor**2,
             )
-        return replace(self, hist=self.hist * factor, stats=stats)
+        return replace(self.map_hists(lambda h: h * factor), stats=stats)
+
+
+def _same_edges(a: Hist, b: Hist) -> bool:
+    if a.ndim != b.ndim:
+        return False
+    for axis_a, axis_b in zip(a.axes, b.axes, strict=True):
+        edges_a, edges_b = np.asarray(axis_a.edges), np.asarray(axis_b.edges)
+        if edges_a.shape != edges_b.shape:
+            return False
+        tolerance = 1e-6 * float(min(np.diff(edges_a).min(), np.diff(edges_b).min()))
+        if not np.allclose(edges_a, edges_b, rtol=0.0, atol=tolerance):
+            return False
+        if (axis_a.traits.underflow, axis_a.traits.overflow) != (
+            axis_b.traits.underflow,
+            axis_b.traits.overflow,
+        ):
+            return False
+    return True
+
+
+def mirror(nominal: Hist, up: Hist) -> Hist:
+    """Return ``2 * nominal - up``, the up shift applied in the opposite direction.
+
+    Variances are the up variation's: mirroring moves the contents, not their
+    statistical precision.
+    """
+    down = up.copy()
+    view: Any = down.view(flow=True)
+    view.value = 2.0 * np.asarray(nominal.values(flow=True)) - np.asarray(up.values(flow=True))
+    return down

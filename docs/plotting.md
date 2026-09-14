@@ -17,6 +17,104 @@ All options below are keyword arguments of [`rf.plot`][rootfig.plot] (and of
   colour (black by default) unless the sample sets `color`.
 - `errorbars=True` adds statistical error bars to non-data histograms.
 
+## Systematic uncertainties
+
+Samples carry their sources of systematic uncertainty, `{name: variation}`;
+`systematics=` on `plot()` and `histograms()` adds sources to every simulated
+sample (a sample's own source of the same name wins):
+
+```python
+bkg = rf.Sample(
+    "mc.root",
+    tree="events",
+    label="Background",
+    weight="weight",
+    systematics={
+        "pileup": ("weight_pu_up", "weight_pu_down"),  # weights replacing Sample.weight
+        "trigger": "weight_trig_up",  # one-sided: down mirrors up
+        "xsec": 0.05,  # ±5 % normalisation
+        "shower": (1.10, 0.97),  # (up, down) normalisation factors
+        "jes": {"Jet_pt": ("Jet_pt_jesUp", "Jet_pt_jesDown")},  # branches
+        "generator": rf.Systematic.samples("mc_herwig.root"),
+    },
+)
+p = rf.plot(
+    [bkg, sig], "Jet_pt", observed=data, stack=True, ratio=True, systematics={"lumi": 0.017}
+)
+```
+
+| Form | Variation |
+| --- | --- |
+| `"w_up"`, `("w_up", "w_down")` | weight expression(s) replacing `Sample.weight`; the plot `weight=`, `scale` and luminosity scaling still multiply |
+| `0.05`, `(1.10, 0.97)` | the nominal histogram scaled by `1 ± 0.05` (a magnitude, at least 0 and below 1), or by the two positive factors, which may point either way |
+| `{"Jet_pt": ("Jet_pt_up", "Jet_pt_down")}` | branch names replaced by other branches in the variable, the selection and the weight, so a cut on `Jet_pt` moves with it; replacements are branch names, not expressions |
+| `Systematic.samples(up, down)` | other files or arrays with the sample's selection, weight, cross section, tree name and entry range; files look up a string `ngen` themselves, arrays take the nominal sample's; a `Sample` is used as given |
+
+Rules:
+
+- Every tuple is `(up, down)`. Without a down variation, the up shift is
+  mirrored: `down = 2 × nominal − up`.
+- The binning comes from the nominal values; variations fill the same axis.
+  Weight and branch variations are evaluated on the branches read once for the
+  nominal histogram.
+- Per bin, each source shifts the contents by `up − nominal` and
+  `down − nominal`. The larger positive shift enters the upper uncertainty,
+  the larger negative one the lower (so two variations moving the same way
+  widen one side only). Different sources are independent and added in
+  quadrature; the total is statistical ⊕ systematic, per side.
+- Sources with the same name are fully correlated across samples: the stack
+  total adds their variations linearly (a sample without the source
+  contributes its nominal contents), and a ratio varies numerator and
+  denominator together, so a shared luminosity uncertainty cancels in an
+  MC/MC ratio.
+- `normalize=True`, `"unity"`, `"density"` or a numeric target normalises every
+  variation by its own total, so the plot shows shape uncertainties; a pure
+  normalisation uncertainty drops out. `normalize="width"` only divides by
+  bin width and retains normalisation uncertainties. If the nominal cannot be
+  normalised, its variations also stay raw. If only a variation has a zero or
+  non-finite total, normalization raises `SystematicError`.
+  `flow="sum"`/`"show"` treat variations like the nominal histogram.
+- Non-finite values are reported for each affected variation, with the source
+  name and direction in the warning. `nonfinite="error"` rejects them.
+- Data samples cannot carry systematics ([`SystematicError`][rootfig.SystematicError]),
+  and neither can pre-filled `Histogram(is_data=True)`; plot-level sources skip them.
+- `plot2d`, `correlation`, `summarize`, `cutflow`, `efficiency`, `profile` and
+  `histogram()` (a plain `hist.Hist`) ignore systematics.
+  Significance panels also use only statistical uncertainties.
+
+Drawing follows mplhep's conventions: a stack's hatched band shows the
+statistical and systematic uncertainty of the total (legend `Stat. + syst.
+unc.`), overlaid samples with variations get a light band in their own colour,
+and the ratio panel includes the systematics in its band around one
+(`split_ratio`, data/MC) or in the error bars of the points (`propagate`:
+statistical uncertainties uncorrelated, systematic ones propagated source by
+source through the varied ratio; a variation that empties a denominator bin
+leaves that bin's systematic uncertainty undefined, with a warning). The
+automatic ratio range covers the bulk of the band and of the systematic error
+bars (robust percentiles, like the points, so a single bin with a huge
+uncertainty runs off the panel instead of squashing it; pass `ratio_ylim` to
+show it in full). It stays at or above zero unless a central ratio is negative
+(signed weights).
+
+The numbers are part of the result:
+
+```python
+u = p.uncertainty()  # all simulated histograms summed (the stack total); or one by label
+u.stat, u.syst_down, u.syst_up  # per bin, visible bins
+u.total_down, u.total_up  # statistical ⊕ systematic
+u.components["jes"]  # signed (up − nominal, down − nominal) shifts
+p.histograms[0].variations  # {"jes": (hist_up, hist_down), ...}
+p.ratios[0].syst_band  # relative (down, up) band of the reference
+```
+
+Pre-filled histograms take variations directly and are drawn the same way:
+`rf.Histogram(h, label="MC", variations={"jes": (h_up, h_down)})` passed to
+`plot_histograms`; [`uncertainty`][rootfig.histograms.uncertainty] and
+[`sum_histograms`][rootfig.histograms.sum_histograms] work on them too.
+
+Use `(h_up, None)` for a mirrored variation. `Sample.systematics` and
+`Histogram.variations` are read-only; change them with `with_(...)`.
+
 ## Luminosity
 
 `lumi=` scales simulated samples that carry a cross section
@@ -69,7 +167,10 @@ weights cancel exactly, is left unchanged with a warning and keeps the plain
   propagated in quadrature (`ratio_uncertainty="propagate"`).
 
 `ratio="Background"` picks the reference by label; all other histograms, data
-included, are divided by it.
+included, are divided by it. The uncertainty treatment is chosen per histogram:
+data over simulation keeps the reference uncertainty as a band, simulation over
+simulation propagates both sides, so systematic sources they share cancel.
+`ratio_uncertainty=` applies one treatment to all.
 
 `ratio="significance"` (or `"s/sqrt(b)"`, `"s/sqrt(s+b)"`) draws a
 **significance panel** instead: per bin, the signal over the square root of
@@ -85,7 +186,8 @@ rotated y label is bounded by the height of the short ratio panel, so a long
 one is shrunk and, if that is not enough, wrapped onto two lines; pass a
 shorter `ratio_label` such as `"Ratio"` to keep it at full size. The
 computed values are returned in `Plot.ratios` as
-[`Ratio`][rootfig.Ratio] objects (`values`, `errors`, `band`, `edges`).
+[`Ratio`][rootfig.Ratio] objects (`values`, `errors`, `band`, `edges`, and
+`syst_errors`/`syst_band` with [systematic uncertainties](#systematic-uncertainties)).
 
 ## Binning and range
 

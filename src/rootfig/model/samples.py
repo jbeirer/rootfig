@@ -5,15 +5,17 @@ from __future__ import annotations
 import copy
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from os import PathLike
 from typing import Any, Literal, TypeAlias
 
 import awkward as ak
 
-from rootfig.errors import LuminosityError, SourceError
+from rootfig._mapping import FrozenMapping
+from rootfig.errors import LuminosityError, SourceError, SystematicError
 from rootfig.io import FileSource, Source, as_source
 from rootfig.model.cuts import Cut, CutLike, as_cut
+from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.units import cross_section_pb, luminosity_fb
 
 __all__ = ["HistType", "Sample", "as_samples"]
@@ -66,6 +68,16 @@ class Sample:
         ``None`` to use the number of entries in the source.
     entry_start, entry_stop
         Read only this range of entries (counted across files).
+    systematics
+        Sources of systematic uncertainty, ``{name: variation}``: a weight
+        expression or ``(up, down)`` pair of them replacing ``weight``, a relative
+        normalisation uncertainty (``0.05``), ``(up, down)`` normalisation
+        factors, a mapping of branches to their ``(up, down)`` replacements
+        (``{"Jet_pt": ("Jet_pt_up", "Jet_pt_down")}``), or
+        ``Systematic.samples(...)`` for varied files. Sources
+        with the same name in several samples are fully correlated; different
+        names are independent. Not allowed together with ``is_data=True``. The mapping is copied and
+        made read-only; use ``sample.with_(systematics=...)`` to change it.
 
     Examples
     --------
@@ -73,6 +85,9 @@ class Sample:
     >>> sig = rf.Sample("sig.root", tree="events", label="Signal", weight="mc_w")
     >>> bkg = rf.Sample(["bkg_*.root"], tree="events", label="Background", color="gray")
     >>> data = rf.Sample("data.root", tree="events", label="Data", is_data=True)
+    >>> mc = rf.Sample(
+    ...     "mc.root", weight="w", systematics={"pileup": ("w_pu_up", "w_pu_down"), "xsec": 0.05}
+    ... )  # doctest: +SKIP
     """
 
     source: Source
@@ -85,6 +100,7 @@ class Sample:
     scale: float = 1.0
     xsec: float | str | None = None
     ngen: float | str | None = None
+    systematics: Mapping[str, Systematic] = field(default_factory=dict)
 
     def __init__(
         self,
@@ -102,6 +118,7 @@ class Sample:
         ngen: float | str | None = None,
         entry_start: int | None = None,
         entry_stop: int | None = None,
+        systematics: Mapping[str, SystematicLike] | None = None,
     ) -> None:
         source = as_source(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
         if label is None:
@@ -116,6 +133,8 @@ class Sample:
         object.__setattr__(self, "scale", _check_scale(scale, label))
         object.__setattr__(self, "xsec", _check_xsec(xsec, label))
         object.__setattr__(self, "ngen", _check_ngen(ngen, label))
+        object.__setattr__(self, "systematics", _check_systematics(systematics, label))
+        _check_data_systematics(self)
 
     def __repr__(self) -> str:
         parts = [repr(self.source.describe()), f"label={self.label!r}"]
@@ -127,6 +146,8 @@ class Sample:
             parts.append("is_data=True")
         if self.xsec is not None:
             parts.append(f"xsec={self.xsec!r}")
+        if self.systematics:
+            parts.append(f"systematics={sorted(self.systematics)!r}")
         return f"Sample({', '.join(parts)})"
 
     def generated_events(self) -> float:
@@ -197,6 +218,7 @@ class Sample:
         for name, value in changes.items():
             check = _FIELD_CHECKS.get(name)
             object.__setattr__(clone, name, value if check is None else check(value, label))
+        _check_data_systematics(clone)
         return clone
 
 
@@ -213,6 +235,22 @@ def _normalise_weight(weight: str | None, label: str) -> str | None:
         )
         raise TypeError(msg)
     return weight if weight.strip() else None
+
+
+def _check_systematics(
+    systematics: Mapping[str, SystematicLike] | None, label: str
+) -> Mapping[str, Systematic]:
+    return FrozenMapping(as_systematics(systematics, f"sample {label!r}"))
+
+
+def _check_data_systematics(sample: Sample) -> None:
+    """Refuse a data sample with systematics: uncertainties belong to the simulation."""
+    if sample.is_data and sample.systematics:
+        msg = (
+            f"sample {sample.label!r} is observed data and cannot carry systematics "
+            f"({sorted(sample.systematics)}); attach them to the simulated samples"
+        )
+        raise SystematicError(msg)
 
 
 def _check_scale(scale: float, label: str) -> float:
@@ -246,6 +284,7 @@ _FIELD_CHECKS: dict[str, Callable[[Any, str], Any]] = {
     "scale": _check_scale,
     "xsec": _check_xsec,
     "ngen": _check_ngen,
+    "systematics": _check_systematics,
 }
 
 
