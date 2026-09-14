@@ -91,8 +91,8 @@ class Variable:
         base = self.label if self.label is not None else self.expression
         return f"{base} [{self.unit}]" if self.unit else base
 
-    def with_(self, **changes: Any) -> Variable:
-        """Return a copy with the given fields replaced (``dataclasses.replace``)."""
+    def replace(self, **changes: Any) -> Variable:
+        """Return a copy with the given fields changed, e.g. ``var.replace(bins=20)``."""
         return replace(self, **changes)
 
 

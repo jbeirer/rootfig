@@ -98,7 +98,7 @@ class TestHistogram:
         scaled = histogram.scaled(2.0)
         assert scaled.values().tolist() == [4.0, 4.0, 2.0]
         assert scaled.variances().tolist() == [8.0, 16.0, 4.0]
-        assert histogram.with_(label="x").label == "x"
+        assert histogram.replace(label="x").label == "x"
 
     def test_scaled_keeps_statistics_consistent(self, histogram: Histogram) -> None:
         assert histogram.stats is not None
@@ -1026,13 +1026,13 @@ class TestVariations:
             del histogram.variations["shape"]  # type: ignore[attr-defined]
         with pytest.raises(TypeError):
             Histogram(nominal, "MC").variations["new"] = (up, up)  # type: ignore[index]
-        changed = histogram.with_(variations={"norm": (nominal * 1.1, None)})
+        changed = histogram.replace(variations={"norm": (nominal * 1.1, None)})
         assert list(changed.variations) == ["norm"]
         assert list(histogram.variations) == ["shape"]
         with pytest.raises(TypeError):
             changed.variations["new"] = (up, up)  # type: ignore[index]
         with pytest.raises(SystematicError, match="binning"):
-            histogram.with_(variations={"bad": (contents([1.0]), None)})
+            histogram.replace(variations={"bad": (contents([1.0]), None)})
 
     @pytest.mark.parametrize("operation", ["copy", "deepcopy", "pickle"])
     def test_variations_support_copy_and_pickle(self, operation: str) -> None:
@@ -1057,7 +1057,7 @@ class TestVariations:
         histogram = Histogram(
             nominal, "MC", sample, stats, False, "red", "step", "unity", {"s": (nominal, None)}
         )
-        changed = histogram.with_(label="renamed")
+        changed = histogram.replace(label="renamed")
         assert changed.label == "renamed"
         assert changed.sample is sample
         assert changed.stats is stats
@@ -1095,8 +1095,8 @@ class TestVariations:
             Histogram(nominal, "Data", is_data=True, variations={"s": (nominal, None)})
         simulated = Histogram(nominal, "MC", variations={"s": (nominal, None)})
         with pytest.raises(SystematicError, match="observed data"):
-            simulated.with_(is_data=True)
-        assert simulated.with_(is_data=True, variations={}).is_data
+            simulated.replace(is_data=True)
+        assert simulated.replace(is_data=True, variations={}).is_data
 
     def test_down_is_mirrored_and_binning_checked(self) -> None:
         nominal = contents([10.0, 20.0])
@@ -1264,7 +1264,7 @@ class TestSystematicsPipeline:
         np.testing.assert_allclose(hists[0].variations["lumi"][0].values(), 1.5 * hists[0].values())
         assert hists[1].variations == {}
         with pytest.raises(SystematicError, match="observed data"):
-            build_histograms([data.with_(systematics={"s": 0.1})], "x")
+            build_histograms([data.replace(systematics={"s": 0.1})], "x")
 
     def test_binning_from_nominal_and_single_read(self, arrays: dict[str, Any]) -> None:
         sample = Sample(
@@ -1471,7 +1471,7 @@ class TestSystematicsRegressions:
         with pytest.raises(MissingBranchError, match="pi"):
             build_histograms([sample], Variable("x", bins=(2, 0, 2)))
         # A name resolving to a mathematical constant is not a branch to replace.
-        sample = sample.with_(systematics={"s": {"pi": "missing"}})
+        sample = sample.replace(systematics={"s": {"pi": "missing"}})
         (h,) = build_histograms([sample], Variable("pi", bins=(4, 0, 4)))
         np.testing.assert_allclose(h.variations["s"][0].values(), h.values())
 

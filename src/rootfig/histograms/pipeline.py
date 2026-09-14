@@ -384,7 +384,7 @@ def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
     nominal sample's resolved number of generated events; files read their own.
     """
     if isinstance(spec, Sample):
-        return spec.with_(label=context)
+        return spec.replace(label=context)
     nominal = sample.source
     try:
         if isinstance(nominal, FileSource | ArraySource) and (
@@ -413,7 +413,7 @@ def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
         and not callable(getattr(source, "read_scalar", None))
     ):
         changes["ngen"] = sample.generated_events()
-    return sample.with_(**changes)
+    return sample.replace(**changes)
 
 
 def _is_file_spec(spec: Any) -> bool:

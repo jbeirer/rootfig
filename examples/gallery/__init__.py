@@ -231,7 +231,7 @@ def stack_data(mc: list[rf.Sample], data: rf.Sample, pt: rf.Variable, style: rf.
     "Systematic uncertainties in a stack and its ratio panel",
     section=SIMULATION_AND_DATA,
 )
-def systematics(mc: list[rf.Sample], data: rf.Sample, met: rf.Variable, style: rf.Style) -> rf.Plot:
+def systematics(signal: rf.Sample, data: rf.Sample, met: rf.Variable, style: rf.Style) -> rf.Plot:
     """A sample lists its sources of systematic uncertainty by name: a pair of weight
     expressions, a relative normalisation uncertainty, or a mapping of shifted branches,
     which also move the selection. ``systematics=`` on the plot adds a
@@ -239,15 +239,24 @@ def systematics(mc: list[rf.Sample], data: rf.Sample, met: rf.Variable, style: r
     statistical and systematic uncertainties; a source with the same name in several
     samples is correlated, different sources add in quadrature. ``p.uncertainty()``
     returns every component."""
-    zjets, diboson, signal = mc
     jes = {"MET": ("MET_jesUp", "MET_jesDown")}
-    varied = [
-        zjets.with_(systematics={"pileup": ("weight_pu_up", "weight_pu_down"), "jes": jes}),
-        diboson.with_(systematics={"jes": jes, "xsec": 0.10}),
-        signal,
-    ]
+    zjets = rf.Sample(
+        "background.root",
+        tree="events",
+        label="Z + jets",
+        weight="weight",
+        systematics={"pileup": ("weight_pu_up", "weight_pu_down"), "jes": jes},
+    )
+    diboson = rf.Sample(
+        "diboson.root",
+        tree="events",
+        label="Diboson",
+        weight="weight",
+        scale=0.15,
+        systematics={"jes": jes, "xsec": 0.10},
+    )
     return rf.plot(
-        varied,
+        [zjets, diboson, signal],
         met,
         observed=data,
         stack=True,
@@ -272,9 +281,9 @@ def ratio_reference(
     stays visible on light and dark pages."""
     return rf.plot(
         [
-            zjets.with_(color=plt.rcParams["text.color"], histtype="errorbar"),
-            diboson.with_(color="#d95f02"),
-            signal.with_(color="#1b9e77", histtype="fill"),
+            zjets.replace(color=plt.rcParams["text.color"], histtype="errorbar"),
+            diboson.replace(color="#d95f02"),
+            signal.replace(color="#1b9e77", histtype="fill"),
         ],
         rf.Variable("nJet", bins=(9, -0.5, 8.5), label="Jet multiplicity"),
         normalize=True,
@@ -413,12 +422,12 @@ def density_flow(
 def object_vs_event(signal: rf.Sample, pt: rf.Variable, style: rf.Style) -> rf.Plot:
     """``Muon_pt`` is a list per event. A per-object cut such as ``Muon_pt > 100`` masks
     individual muons, while ``any(Muon_pt > 100)`` is per event: it keeps whole events, with all
-    their muons, soft ones included. ``Sample.with_`` derives variants of a sample."""
+    their muons, soft ones included. ``Sample.replace`` derives variants of a sample."""
     return rf.plot(
         [
-            signal.with_(label="All muons"),
-            signal.with_(label="Muon_pt > 100", selection="Muon_pt > 100"),
-            signal.with_(label="any(Muon_pt > 100)", selection="any(Muon_pt > 100)"),
+            signal.replace(label="All muons"),
+            signal.replace(label="Muon_pt > 100", selection="Muon_pt > 100"),
+            signal.replace(label="any(Muon_pt > 100)", selection="any(Muon_pt > 100)"),
         ],
         pt,
         logy=True,
@@ -433,12 +442,12 @@ def expressions(signal: rf.Sample, pt: rf.Variable, style: rf.Style) -> rf.Plot:
     ``rf.histogram`` returns a plain ``hist.Hist``; ``rf.plot_histograms`` draws any collection
     of them with the usual options."""
     all_muons = rf.histogram(signal, pt)
-    leading = rf.histogram(signal, pt.with_(expression="first(Muon_pt)"))
-    momentum = rf.histogram(signal, pt.with_(expression="Muon_pt * cosh(Muon_eta)"))
+    leading = rf.histogram(signal, pt.replace(expression="first(Muon_pt)"))
+    momentum = rf.histogram(signal, pt.replace(expression="Muon_pt * cosh(Muon_eta)"))
     return rf.plot_histograms(
         [all_muons, leading, momentum],
         labels=["All muons", "Leading muon", r"Muon $|\vec{p}|$"],
-        variable=pt.with_(label=r"$p_T^{\mu}$ or $|\vec{p}^{\,\mu}|$"),
+        variable=pt.replace(label=r"$p_T^{\mu}$ or $|\vec{p}^{\,\mu}|$"),
         logy=True,
         style=style,
     )

@@ -115,8 +115,8 @@ class Style:
             return tuple(self.text.split("\n"))
         return tuple(self.text)
 
-    def with_(self, **changes: Any) -> Style:
-        """Return a copy with the given fields replaced (``dataclasses.replace``)."""
+    def replace(self, **changes: Any) -> Style:
+        """Return a copy with the given fields changed, e.g. ``style.replace(lumi=140)``."""
         return replace(self, **changes)
 
 

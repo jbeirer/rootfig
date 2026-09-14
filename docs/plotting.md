@@ -113,7 +113,8 @@ Pre-filled histograms take variations directly and are drawn the same way:
 [`sum_histograms`][rootfig.histograms.sum_histograms] work on them too.
 
 Use `(h_up, None)` for a mirrored variation. `Sample.systematics` and
-`Histogram.variations` are read-only; change them with `with_(...)`.
+`Histogram.variations` are read-only; `sample.replace(systematics=...)` and
+`histogram.replace(variations=...)` return copies with other ones.
 
 ## Luminosity
 

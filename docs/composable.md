@@ -56,7 +56,7 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
   ([`Systematic.samples`][rootfig.Systematic]). Sources with
   the same name are correlated across samples; see
   [Systematic uncertainties](plotting.md#systematic-uncertainties).
-- `sample.with_(label="...")` returns a modified copy; replacement values are
+- `sample.replace(label="...")` returns a copy with the given fields changed; new values are
   validated like constructor arguments.
 
 Passing a list of files to `plot()` creates one sample per file. To merge

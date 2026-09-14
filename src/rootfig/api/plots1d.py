@@ -231,7 +231,7 @@ def plot(
     samples = as_samples(data, tree=tree, labels=label)
     if observed is not None:
         observed_samples = [
-            s if s.is_data else s.with_(is_data=True) for s in as_samples(observed, tree=tree)
+            s if s.is_data else s.replace(is_data=True) for s in as_samples(observed, tree=tree)
         ]
         samples = [*samples, *observed_samples]
     var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
@@ -335,7 +335,7 @@ def plot_histograms(
         histograms_ = [normalize_for_plot(h, normalize) for h in histograms_]
     resolved_style = as_style(style)
     if legend is not None:
-        resolved_style = resolved_style.with_(legend=legend)
+        resolved_style = resolved_style.replace(legend=legend)
 
     # The y label quotes the bin width of the histogram as filled, before flow bins are added.
     label_widths = histograms_[0].widths
@@ -559,7 +559,7 @@ def _wrap_hists(
     wrapped: list[Histogram] = []
     for index, item in enumerate(hists):
         if isinstance(item, Histogram):
-            wrapped.append(item if labels is None else item.with_(label=labels[index]))
+            wrapped.append(item if labels is None else item.replace(label=labels[index]))
             continue
         if labels is not None:
             label = labels[index]

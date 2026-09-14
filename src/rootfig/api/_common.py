@@ -40,12 +40,12 @@ def style_for(
     """Resolve ``style`` and add free text lines and the luminosity used for scaling."""
     resolved = as_style(style)
     if lumi is not None and resolved.lumi is None:
-        resolved = resolved.with_(lumi=lumi)
+        resolved = resolved.replace(lumi=lumi)
     if text is None:
         return resolved
     existing = list(resolved.text_lines)
     extra = [text] if isinstance(text, str) else list(text)
-    return resolved.with_(text=[*existing, *extra])
+    return resolved.replace(text=[*existing, *extra])
 
 
 def normalize_for_plot(histogram_: Histogram, spec: NormalizeSpec) -> Histogram:

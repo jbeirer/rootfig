@@ -167,7 +167,7 @@ def histogram(
     ... )  # doctest: +SKIP
     >>> h.values().sum()  # doctest: +SKIP
     """
-    samples = [sample.with_(systematics={}) for sample in as_samples(data, tree=tree)]
+    samples = [sample.replace(systematics={}) for sample in as_samples(data, tree=tree)]
     results = histograms(
         samples,
         variable,

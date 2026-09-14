@@ -77,7 +77,7 @@ class Sample:
         ``Systematic.samples(...)`` for varied files. Sources
         with the same name in several samples are fully correlated; different
         names are independent. Not allowed together with ``is_data=True``. The mapping is copied and
-        made read-only; use ``sample.with_(systematics=...)`` to change it.
+        made read-only; use ``sample.replace(systematics=...)`` to change it.
 
     Examples
     --------
@@ -198,10 +198,10 @@ class Sample:
         """The resolved input files, or an empty tuple for in-memory sources."""
         return self.source.files if isinstance(self.source, FileSource) else ()
 
-    def with_(self, **changes: Any) -> Sample:
-        """Return a copy with the given fields replaced, e.g. ``sample.with_(label="B")``.
+    def replace(self, **changes: Any) -> Sample:
+        """Return a copy with the given fields changed, e.g. ``sample.replace(label="B")``.
 
-        Replacement values are validated and normalised exactly as by the
+        New values are validated and normalised exactly as by the
         constructor (``selection`` accepts a string, ``source`` anything
         :func:`~rootfig.io.as_source` accepts, ``scale`` must be finite, ...).
         """
@@ -222,7 +222,7 @@ class Sample:
         return clone
 
 
-# -- field validation shared by the constructor and with_() ---------------------------------
+# -- field validation shared by the constructor and replace() ---------------------------------
 
 
 def _normalise_weight(weight: str | None, label: str) -> str | None:
@@ -319,7 +319,7 @@ def as_samples(
         samples = [data]
     elif isinstance(data, Mapping) and _looks_like_label_map(data):
         samples = [
-            value.with_(label=key)
+            value.replace(label=key)
             if isinstance(value, Sample)
             else Sample(value, tree=tree, label=key, entry_start=entry_start, entry_stop=entry_stop)
             for key, value in data.items()
@@ -342,7 +342,7 @@ def as_samples(
         if len(label_list) != len(samples):
             msg = f"got {len(label_list)} labels for {len(samples)} samples"
             raise SourceError(msg)
-        samples = [s.with_(label=lab) for s, lab in zip(samples, label_list, strict=True)]
+        samples = [s.replace(label=lab) for s, lab in zip(samples, label_list, strict=True)]
     return samples
 
 

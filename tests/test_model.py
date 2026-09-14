@@ -82,7 +82,7 @@ class TestVariable:
         var = Variable("Muon_pt / 1000", label=r"$p_T$", unit="GeV")
         assert var.axis_label == r"$p_T$ [GeV]"
         assert var.safe_name == "Muon_pt_1000"
-        assert var.with_(name="pt").safe_name == "pt"
+        assert var.replace(name="pt").safe_name == "pt"
 
     def test_invalid_expression(self) -> None:
         with pytest.raises(ExpressionError):
@@ -117,7 +117,7 @@ class TestVariable:
         with pytest.raises(ValueError, match="path separators"):
             Variable("x", name=name)
         with pytest.raises(ValueError, match="path separators"):
-            Variable("x").with_(name=name)
+            Variable("x").replace(name=name)
 
     def test_name_keeps_plain_stems(self) -> None:
         assert Variable("x", name="pt-lead.window").safe_name == "pt-lead.window"
@@ -442,7 +442,7 @@ class TestSample:
 
     def test_with(self, signal_file: Path) -> None:
         sample = Sample(signal_file, tree="events")
-        other = sample.with_(label="new", selection="MET > 1")
+        other = sample.replace(label="new", selection="MET > 1")
         assert other.label == "new"
         assert other.selection == Cut("MET > 1")
         assert other.source is sample.source
@@ -450,21 +450,21 @@ class TestSample:
     def test_with_validates_like_init(self) -> None:
         sample = Sample({"x": np.arange(2.0)})
         with pytest.raises(ValueError, match="scale must be"):
-            sample.with_(scale=np.nan)
+            sample.replace(scale=np.nan)
         with pytest.raises(LuminosityError, match="finite"):
-            sample.with_(ngen=np.inf)
+            sample.replace(ngen=np.inf)
         with pytest.raises(LuminosityError):
-            sample.with_(xsec="bad")
+            sample.replace(xsec="bad")
         with pytest.raises(SourceError, match="cannot interpret"):
-            sample.with_(source=42)
+            sample.replace(source=42)
         with pytest.raises(TypeError, match="weight must be"):
-            sample.with_(weight=42)
+            sample.replace(weight=42)
         with pytest.raises(TypeError, match="label must be"):
-            sample.with_(label=3)
-        assert sample.with_(weight="  ").weight is None
-        assert sample.with_(scale=2).scale == 2.0
-        assert sample.with_(source=sample.source).source is sample.source
-        assert sample.with_(xsec="1.2 fb").xsec == "1.2 fb"
+            sample.replace(label=3)
+        assert sample.replace(weight="  ").weight is None
+        assert sample.replace(scale=2).scale == 2.0
+        assert sample.replace(source=sample.source).source is sample.source
+        assert sample.replace(xsec="1.2 fb").xsec == "1.2 fb"
 
     def test_existing_source_rejects_entry_range(self, signal_file: Path) -> None:
         source = FileSource(signal_file, tree="events")
@@ -531,7 +531,7 @@ class TestStyle:
         assert as_style("ggplot") == Style(base="ggplot")
         style = Style(lumi=140)
         assert as_style(style) is style
-        assert style.with_(com=13.6).com == 13.6
+        assert style.replace(com=13.6).com == 13.6
         with pytest.raises(TypeError):
             as_style(3)  # type: ignore[arg-type]
 
@@ -742,10 +742,12 @@ class TestSystematic:
         sample = Sample({"x": [1.0, 2.0]}, label="S", systematics={"n": 0.1})
         assert sample.systematics == {"n": Systematic("norm", 1.1, 0.9)}
         assert "systematics=['n']" in repr(sample)
-        assert sample.with_(systematics={"w": "x"}).systematics == {"w": Systematic("weight", "x")}
+        assert sample.replace(systematics={"w": "x"}).systematics == {
+            "w": Systematic("weight", "x")
+        }
         assert Sample({"x": [1.0]}).systematics == {}
         with pytest.raises(SystematicError, match="sample 'S': systematic 'bad'"):
-            sample.with_(systematics={"bad": object()})
+            sample.replace(systematics={"bad": object()})
 
     @pytest.mark.parametrize(
         ("kind", "up", "down"),
@@ -787,12 +789,12 @@ class TestSystematic:
             Sample(columns, is_data=True, systematics={"s": 0.1})
         data = Sample(columns, is_data=True, systematics={})  # an empty mapping is fine
         with pytest.raises(SystematicError, match="observed data"):
-            data.with_(systematics={"s": 0.1})
+            data.replace(systematics={"s": 0.1})
         mc = Sample(columns, systematics={"s": 0.1})
         with pytest.raises(SystematicError, match="observed data"):
-            mc.with_(is_data=True)
-        assert mc.with_(is_data=True, systematics={}).is_data
-        assert data.with_(is_data=False, systematics={"s": 0.1}).systematics
+            mc.replace(is_data=True)
+        assert mc.replace(is_data=True, systematics={}).is_data
+        assert data.replace(is_data=False, systematics={"s": 0.1}).systematics
 
     def test_systematic_mappings_are_read_only_snapshots(self) -> None:
         branches = {"x": ("x_up", "x_down")}
@@ -812,7 +814,7 @@ class TestSystematic:
         with pytest.raises(TypeError):
             Sample({"x": [1.0]}).systematics["extra"] = systematic  # type: ignore[index]
 
-        updated = sample.with_(systematics={"norm": 0.1})
+        updated = sample.replace(systematics={"norm": 0.1})
         assert list(updated.systematics) == ["norm"]
         assert list(sample.systematics) == ["shape"]
         with pytest.raises(TypeError):

@@ -975,7 +975,9 @@ class TestFigureShape:
         [narrow_name] = [t for t in narrow.ax.texts if isinstance(t, hep.label.ExpLabel)]
         assert narrow_name.get_fontsize() < wide_name.get_fontsize()
         # an explicit position inside the frame is kept for 2D plots too
-        inside = rf.plot2d(signal_file, "MET", "nMuon", tree="events", style=cms.with_(label_loc=1))
+        inside = rf.plot2d(
+            signal_file, "MET", "nMuon", tree="events", style=cms.replace(label_loc=1)
+        )
         inside.fig.canvas.draw()
         renderer = inside.fig.canvas.get_renderer()  # type: ignore[attr-defined]
         [name] = [t for t in inside.ax.texts if isinstance(t, hep.label.ExpLabel)]

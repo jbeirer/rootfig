@@ -1220,7 +1220,7 @@ class TestHist2DMask:
 
 
 def with_variation(histogram: Histogram, factor: float) -> Histogram:
-    return histogram.with_(variations={"s": (histogram.hist * factor, None)})
+    return histogram.replace(variations={"s": (histogram.hist * factor, None)})
 
 
 class TestSystematicDrawing:
@@ -1251,7 +1251,7 @@ class TestSystematicDrawing:
     def test_flow_bins_carry_variations(self) -> None:
         nominal = make_hist([1.5, 5.0], label="A")  # 5.0 is overflow
         up = make_hist([-1.0, 1.5], label="up")  # underflow only in the variation
-        varied = nominal.with_(variations={"s": (up.hist, None)})
+        varied = nominal.replace(variations={"s": (up.hist, None)})
         (shown,), (under, over) = show_flow_bins([varied])
         assert (under, over) == (True, True)
         np.testing.assert_allclose(shown.variations["s"][0].values(), [1, 0, 1, 0, 0, 0])

@@ -147,7 +147,7 @@ class Histogram:
         up shift around the nominal contents. Summarised by
         :func:`~rootfig.histograms.uncertainty`. The mapping is copied and made
         read-only; every stored pair contains two histograms. Use
-        ``histogram.with_(variations=...)`` to replace it. The underlying
+        ``histogram.replace(variations=...)`` to replace it. The underlying
         ``hist.Hist`` objects remain mutable. Observed data (``is_data``) cannot
         carry variations, as for :class:`~rootfig.model.Sample`.
     """
@@ -307,8 +307,8 @@ class Histogram:
         """
         return None if self.stats is None else self.stats.entries
 
-    def with_(self, **changes: Any) -> Histogram:
-        """Return a copy with the given fields replaced."""
+    def replace(self, **changes: Any) -> Histogram:
+        """Return a copy with the given fields changed, e.g. ``h.replace(label="B")``."""
         return replace(self, **changes)
 
     def map_hists(self, transform: Callable[[Hist], Hist]) -> Histogram:

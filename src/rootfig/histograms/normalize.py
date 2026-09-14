@@ -154,7 +154,7 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
         return histogram
     result, applied = _normalize_hist(histogram.hist, spec)
     if not applied:
-        return histogram.with_(hist=result, normalization=None)
+        return histogram.replace(hist=result, normalization=None)
     label = normalization_label(spec)
     variations = {}
     for name, pair in histogram.variations.items():
@@ -169,7 +169,7 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
                 raise SystematicError(msg)
             normalized.append(shifted)
         variations[name] = (normalized[0], normalized[1])
-    return histogram.with_(hist=result, normalization=label, variations=variations)
+    return histogram.replace(hist=result, normalization=label, variations=variations)
 
 
 def normalization_label(spec: NormalizeSpec) -> str | None:

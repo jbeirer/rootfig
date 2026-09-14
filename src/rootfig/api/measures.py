@@ -95,13 +95,13 @@ def efficiency(
     ... )  # doctest: +SKIP
     """
     # efficiencies are statistical only: systematics are neither evaluated nor needed
-    samples = [s.with_(systematics={}) for s in as_samples(data, tree=tree, labels=label)]
+    samples = [s.replace(systematics={}) for s in as_samples(data, tree=tree, labels=label)]
     var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
     logx = var.log if logx is None else logx
     totals = build_histograms(
         samples, var, selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
     )
-    fixed = var.with_(bins=totals[0].axis)  # same binning for the numerators
+    fixed = var.replace(bins=totals[0].axis)  # same binning for the numerators
     pass_cut = as_cut(passed)
     if pass_cut is None:
         msg = "efficiency() needs a 'passed' selection"
@@ -117,7 +117,7 @@ def efficiency(
     ]
     resolved_style = style_for(style, text, lumi)
     if legend is not None:
-        resolved_style = resolved_style.with_(legend=legend)
+        resolved_style = resolved_style.replace(legend=legend)
     with style_context(resolved_style) as st:
         layout = make_figure(st, ratio=False, ax=ax, figsize=figsize)
         cycle = iter(color_cycle(len(samples), st))
@@ -249,7 +249,7 @@ def profile(
     ]
     resolved_style = style_for(style, text, lumi)
     if legend is not None:
-        resolved_style = resolved_style.with_(legend=legend)
+        resolved_style = resolved_style.replace(legend=legend)
     if ylabel is None:
         ylabel = var_y.axis_label if statistic == "mean" else f"Std. dev. of {var_y.axis_label}"
     with style_context(resolved_style) as st:
@@ -260,7 +260,7 @@ def profile(
         finish_axes(
             layout.main,
             data_range=(low, high),
-            xlabel=var_x.with_(bins=axis).axis_label,
+            xlabel=var_x.replace(bins=axis).axis_label,
             ylabel=ylabel,
             xlim=xlim or (float(edges[0]), float(edges[-1])),
             ylim=ylim,
