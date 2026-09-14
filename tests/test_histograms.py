@@ -1089,6 +1089,15 @@ class TestVariations:
         assert result["sample"]["systematics"]["s"].up == {"x": "up"}
         np.testing.assert_allclose(result["variations"]["s"][1].values(), [1])
 
+    def test_data_histograms_cannot_carry_variations(self) -> None:
+        nominal = contents([1.0])
+        with pytest.raises(SystematicError, match="observed data"):
+            Histogram(nominal, "Data", is_data=True, variations={"s": (nominal, None)})
+        simulated = Histogram(nominal, "MC", variations={"s": (nominal, None)})
+        with pytest.raises(SystematicError, match="observed data"):
+            simulated.with_(is_data=True)
+        assert simulated.with_(is_data=True, variations={}).is_data
+
     def test_down_is_mirrored_and_binning_checked(self) -> None:
         nominal = contents([10.0, 20.0])
         h = Histogram(nominal, label="A", variations={"s": (contents([12.0, 18.0]), None)})

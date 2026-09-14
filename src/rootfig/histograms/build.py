@@ -148,7 +148,8 @@ class Histogram:
         :func:`~rootfig.histograms.uncertainty`. The mapping is copied and made
         read-only; every stored pair contains two histograms. Use
         ``histogram.with_(variations=...)`` to replace it. The underlying
-        ``hist.Hist`` objects remain mutable.
+        ``hist.Hist`` objects remain mutable. Observed data (``is_data``) cannot
+        carry variations, as for :class:`~rootfig.model.Sample`.
     """
 
     hist: Hist
@@ -194,6 +195,12 @@ class Histogram:
     def _checked_variations(
         self, variations: Mapping[str, tuple[Hist, Hist | None]]
     ) -> dict[str, tuple[Hist, Hist]]:
+        if self.is_data and variations:
+            msg = (
+                f"histogram {self.label!r} is observed data and cannot carry systematic "
+                f"variations ({sorted(variations)}); attach them to the simulated histograms"
+            )
+            raise SystematicError(msg)
         checked: dict[str, tuple[Hist, Hist]] = {}
         for name, pair in variations.items():
             if not isinstance(name, str) or not name.strip():

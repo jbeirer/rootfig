@@ -672,6 +672,21 @@ class TestRatioPanel:
         assert low < 0.2
         assert high == 3.0
         assert ratio_ylim([]) == (0.5, 1.5)
+        syst = Ratio(
+            np.ones(4), np.zeros(4), np.zeros(4), edges, syst_errors=(np.full(4, 0.8),) * 2
+        )
+        low, high = ratio_ylim([syst])  # a propagated systematic without a band
+        assert low < 0.2
+        assert high > 1.8
+        signed = Ratio(np.array([-0.5, 1.0, 1.0, 1.0]), np.zeros(4), np.zeros(4), edges)
+        low, high = ratio_ylim([signed])
+        assert low < -0.5
+        assert high == 1.5
+        deep = Ratio(
+            np.ones(4), np.zeros(4), np.zeros(4), edges, syst_errors=(np.full(4, 1.5),) * 2
+        )
+        low, _ = ratio_ylim([deep])  # a systematic reaching below zero on positive ratios
+        assert low == 0.0
         low, _ = ratio_ylim([wide], band=(np.full(4, 0.9), np.full(4, 1.1)))
         assert low < 0.2  # a narrow band never narrows the range
         wide_band = (np.full(4, 0.2), np.full(4, 1.8))
@@ -1252,7 +1267,7 @@ class TestSystematicDrawing:
         with style_context() as st:
             fig, ax = plt.subplots()
             (result,) = draw_ratio_panel(
-                [with_variation(data_hist, 1.2)], reference, ax, style=st, uncertainty="numerator"
+                [with_variation(mc_hists[1], 1.2)], reference, ax, style=st, uncertainty="numerator"
             )
         assert result.syst_band is not None
         assert result.syst_errors is not None

@@ -76,8 +76,8 @@ Rules:
   `flow="sum"`/`"show"` treat variations like the nominal histogram.
 - Non-finite values are reported for each affected variation, with the source
   name and direction in the warning. `nonfinite="error"` rejects them.
-- Data samples cannot carry systematics ([`SystematicError`][rootfig.SystematicError]);
-  plot-level sources skip them.
+- Data samples cannot carry systematics ([`SystematicError`][rootfig.SystematicError]),
+  and neither can pre-filled `Histogram(is_data=True)`; plot-level sources skip them.
 - `plot2d`, `correlation`, `cutflow`, `efficiency`, `profile` and
   `histogram()` (a plain `hist.Hist`) ignore systematics.
   Significance panels also use only statistical uncertainties.
@@ -89,7 +89,9 @@ and the ratio panel includes the systematics in its band around one
 (`split_ratio`, data/MC) or in the error bars of the points (`propagate`:
 statistical uncertainties uncorrelated, systematic ones propagated source by
 source through the varied ratio; a variation that empties a denominator bin
-leaves that bin's systematic uncertainty undefined, with a warning). The automatic ratio range covers the band.
+leaves that bin's systematic uncertainty undefined, with a warning). The
+automatic ratio range covers the band and the systematic error bars, and goes
+below zero when a ratio is negative (signed weights).
 
 The numbers are part of the result:
 

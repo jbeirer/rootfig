@@ -130,15 +130,26 @@ def ratio_ylim(
 ) -> tuple[float, float]:
     """Choose a ratio range: at least (0.5, 1.5), widened to cover the bulk of what is drawn.
 
-    The bulk is the 5th to 95th percentile of the finite ratio values, padded
-    by 10 percent, and likewise of the lower and upper edges of the reference
-    ``band`` when one is drawn, so a large systematic band is not clipped. Error
-    bars do not count: a few low-statistics bins with huge uncertainties would
-    otherwise squash the panel. The result is clipped to ``[0, 3]``.
+    The bulk is the 5th to 95th percentile, padded by 10 percent, of the finite
+    ratio values, of the systematic extent of the points and of the edges of the
+    reference ``band`` when one is drawn. Each is judged on its own, so it can
+    widen the range but never narrow it. Statistical error bars do not count: a
+    few low-statistics bins with huge uncertainties would otherwise squash the
+    panel. The result is clipped to ``[0, 3]``, or to ``[-3, 3]`` with negative
+    ratios (signed weights), whose lowest value then stays in view.
     """
     low, high = DEFAULT_RATIO_YLIM
-    ranges = [(_finite([r.values for r in ratios]),) * 2]
-    if band is not None:  # judged on its own, so the band can widen the range but never narrow it
+    values = _finite([r.values for r in ratios])
+    ranges = [(values, values)]
+    with_syst = [r for r in ratios if r.syst_errors is not None]
+    if with_syst:
+        ranges.append(
+            (
+                _finite([r.values - r.syst_errors[0] for r in with_syst]),  # type: ignore[index]
+                _finite([r.values + r.syst_errors[1] for r in with_syst]),  # type: ignore[index]
+            )
+        )
+    if band is not None:
         ranges.append((_finite([band[0]]), _finite([band[1]])))
     for lower, upper in ranges:
         if lower.size and upper.size:
@@ -147,7 +158,11 @@ def ratio_ylim(
             pad = 0.1 * max(q_high - q_low, 0.2)
             low = min(low, q_low - pad)
             high = max(high, q_high + pad)
-    return (max(low, 0.0), min(high, 3.0))
+    floor = 0.0
+    if values.size and values.min() < 0:
+        floor = -3.0
+        low = min(low, float(values.min()) - 0.1 * max(high - float(values.min()), 0.2))
+    return (max(low, floor), min(high, 3.0))
 
 
 def _finite(arrays: Sequence[np.ndarray]) -> np.ndarray:
