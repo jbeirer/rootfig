@@ -8,8 +8,8 @@ all samples, and fills one :class:`~rootfig.histograms.Histogram` per sample.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from os import PathLike
 from typing import Any
@@ -18,10 +18,11 @@ import awkward as ak
 import numpy as np
 
 from rootfig._typing import Hist
-from rootfig.errors import MissingBranchError, RootfigError, SourceError, SystematicError
+from rootfig.errors import MissingBranchError, SourceError, SystematicError, annotate
 from rootfig.expressions import parse
-from rootfig.histograms.build import Histogram, fill, mirror
+from rootfig.histograms.build import Histogram, fill, from_sample, mirror
 from rootfig.histograms.stats import summarize
+from rootfig.histograms.stored import read_stored, stored_mode
 from rootfig.io import ArraySource, FileSource, as_source
 from rootfig.io.sources import resolve_files
 from rootfig.model.binning import Axis, resolve_axis
@@ -187,6 +188,7 @@ def build_histograms(
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
+    assume_poisson: bool = False,
 ) -> list[Histogram]:
     """Fill one 1D histogram per sample with a binning shared by all of them.
 
@@ -194,8 +196,24 @@ def build_histograms(
     every non-data sample; a sample's own source of the same name wins) are filled into
     :attr:`~rootfig.histograms.Histogram.variations` with the binning chosen
     from the nominal values.
+
+    A bare variable name that addresses a histogram stored in the samples'
+    files (see :func:`~rootfig.histograms.stored_mode`) is read instead of
+    filled; ``assume_poisson`` then accepts stored histograms without a sum of
+    squared weights.
     """
     var = as_variable(variable)
+    if stored_mode(samples, [var]):
+        return read_stored(
+            samples,
+            [var],
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            nonfinite=nonfinite,
+            systematics=systematics,
+            assume_poisson=assume_poisson,
+        )
     plot_level = as_systematics(systematics, "plot")
     loaded = [
         _load_with_variations(
@@ -219,14 +237,10 @@ def build_histograms(
     for sample, item in zip(samples, loaded, strict=True):
         nominal = fill([axis], item.nominal)
         histograms.append(
-            Histogram(
-                hist=nominal,
-                label=sample.label,
-                sample=sample,
+            from_sample(
+                sample,
+                nominal,
                 stats=summarize(item.nominal),
-                is_data=sample.is_data,
-                color=sample.color,
-                histtype=sample.histtype,
                 variations={
                     name: _fill_variation(axis, nominal, up, down)
                     for name, (up, down) in item.variations.items()
@@ -366,14 +380,9 @@ def _load_with_variations(
     return _Loaded(nominal, variations)
 
 
-@contextmanager
-def _in_variation(context: str) -> Iterator[None]:
+def _in_variation(context: str) -> AbstractContextManager[None]:
     """Name the variation (sample, source, direction) in any rootfig error raised inside."""
-    try:
-        yield
-    except RootfigError as exc:
-        exc.add_note(f"while evaluating the systematic variation {context}")
-        raise
+    return annotate(f"while evaluating the systematic variation {context}")
 
 
 def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
@@ -441,15 +450,37 @@ def _fill_shift(axis: Axis, nominal: Hist, shift: Columns | float | None) -> His
 def build_histograms_2d(
     samples: Sequence[Sample],
     x: Variable | str,
-    y: Variable | str,
+    y: Variable | str | None = None,
     *,
     selection: CutLike | None = None,
     weight: str | None = None,
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
+    assume_poisson: bool = False,
 ) -> list[Histogram]:
-    """Fill one 2D histogram per sample; ``x`` and ``y`` must share their structure."""
-    var_x, var_y = as_variable(x), as_variable(y)
+    """Fill one 2D histogram per sample; ``x`` and ``y`` must share their structure.
+
+    With ``y`` omitted, ``x`` must name a 2D histogram stored in the samples'
+    files, which is read instead (see :func:`~rootfig.histograms.stored_mode`).
+    """
+    var_x = as_variable(x)
+    var_y = var_x if y is None else as_variable(y)
+    if stored_mode(samples, [var_x, var_y]):
+        return read_stored(
+            samples,
+            [var_x, var_y],
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            nonfinite=nonfinite,
+            assume_poisson=assume_poisson,
+        )
+    if y is None:
+        msg = (
+            f"plot2d needs two variables, or the name of a 2D histogram stored in the "
+            f"file; {var_x.expression!r} is neither"
+        )
+        raise SourceError(msg)
     columns = [
         load_columns(
             s, [var_x, var_y], selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
@@ -463,14 +494,6 @@ def build_histograms_2d(
     name_y = var_y.safe_name if var_y.safe_name != var_x.safe_name else f"{var_y.safe_name}_y"
     axis_y = resolve_axis(var_y, [c.arrays[1] for c in columns], name=name_y, weights=weights)
     return [
-        Histogram(
-            hist=fill([axis_x, axis_y], cols),
-            label=sample.label,
-            sample=sample,
-            stats=summarize(cols),
-            is_data=sample.is_data,
-            color=sample.color,
-            histtype=sample.histtype,
-        )
+        from_sample(sample, fill([axis_x, axis_y], cols), stats=summarize(cols))
         for sample, cols in zip(samples, columns, strict=True)
     ]

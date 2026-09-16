@@ -1,6 +1,7 @@
 """Declarative descriptions of what to plot: samples, variables, cuts, binning, style."""
 
 from rootfig.model.binning import (
+    DEFAULT_BINS,
     DEFAULT_RANGE,
     Axis,
     Bins,
@@ -21,6 +22,7 @@ from rootfig.model.systematics import (
 from rootfig.model.variables import Variable, as_variable
 
 __all__ = [
+    "DEFAULT_BINS",
     "DEFAULT_RANGE",
     "Axis",
     "Bins",

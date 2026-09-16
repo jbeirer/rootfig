@@ -3,7 +3,6 @@
 ## Top level
 
 ::: rootfig.plot
-::: rootfig.plot_histograms
 ::: rootfig.plot2d
 ::: rootfig.histogram
 ::: rootfig.histograms

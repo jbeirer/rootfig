@@ -31,7 +31,9 @@ fills `hist.Hist` with `Weight` storage (sum of weights and sum of squared
 weights per bin), including under/overflow bins, and returns them unchanged:
 `rf.histogram` gives you the `hist.Hist`, `Plot.hists` lists them. Rebinning,
 projecting, slicing, saving to ROOT files with uproot: all of that is hist
-functionality and works directly on the returned objects.
+functionality and works directly on the returned objects. Histograms stored
+in ROOT files (`TH1`, `TH2`) are converted by uproot's `to_hist()`; rootfig
+adds the summing over files, the scaling and the drawing.
 
 ## mplhep
 

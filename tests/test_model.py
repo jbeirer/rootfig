@@ -72,7 +72,7 @@ class TestCut:
 class TestVariable:
     def test_defaults(self) -> None:
         var = Variable("Muon_pt")
-        assert var.bins == 50
+        assert var.bins is None
         assert var.range == DEFAULT_RANGE == "robust"
         assert var.axis_label == "Muon_pt"
         assert var.safe_name == "Muon_pt"

@@ -9,7 +9,7 @@ import awkward as ak
 import numpy as np
 import pytest
 
-from rootfig.errors import SourceError
+from rootfig.errors import BinningError, RootfigWarning, SourceError
 from rootfig.io import ArraySource, FileSource, Source, as_source, resolve_files
 
 
@@ -333,3 +333,92 @@ class TestEntryRanges:
         assert source.tree == "dir/events"
         assert source.arrays(["x"])["x"].tolist() == [0.0, 1.0, 2.0]
         assert resolve_files("root://host:1094//store/file.root")[1] is None
+
+
+class TestStoredHistograms:
+    def test_listing(self, stored_dir: Path) -> None:
+        source = FileSource(stored_dir / "ZH_sel0_histo.root")
+        assert source.trees() == []
+        assert source.histograms() == ["cutflow", "eventsProcessed", "mz", "mz_raw", "mz_recoil_2D"]
+        assert source.objects()["mz_recoil_2D"] == "TH2D"
+        mixed = FileSource(stored_dir / "branch_and_histogram.root")
+        assert mixed.trees() == ["events"]
+        assert mixed.histograms() == ["mz"]
+        nested = FileSource(stored_dir / "in_directory.root")
+        assert nested.histograms() == ["sub/mz"]
+
+    def test_read_sums_files_and_keeps_flow(self, stored_dir: Path) -> None:
+        one = FileSource(stored_dir / "ZH_sel0_histo.root").read_histogram("mz")
+        both = FileSource(
+            [stored_dir / "ZH_sel0_histo.root", stored_dir / "WW_sel0_histo.root"]
+        ).read_histogram("mz")
+        assert both.axes[0].size == 100
+        assert both.axes[0].label == "m_{Z} [GeV]"
+        assert both.values(flow=True).sum() == pytest.approx(3000.0)  # 0.5 * (4000 + 2000)
+        assert both.values(flow=True).sum() > one.values(flow=True).sum()
+        assert both.storage_type.__name__ == "Weight"
+        plain = FileSource(stored_dir / "ZH_sel0_histo.root").read_histogram("mz_raw")
+        assert plain.storage_type.__name__ == "Weight"  # counts as variances
+        assert plain.values(flow=True).sum() == 4000
+        np.testing.assert_array_equal(plain.variances(flow=True), plain.values(flow=True))
+        two_d = FileSource(stored_dir / "ZH_sel0_histo.root").read_histogram("mz_recoil_2D")
+        assert two_d.ndim == 2
+        assert [a.label for a in two_d.axes] == ["m_{Z} [GeV]", "recoil [GeV]"]
+        nested = FileSource(stored_dir / "in_directory.root").read_histogram("sub/mz")
+        assert nested.values().sum() == 500
+
+    def test_errors_name_the_file(self, stored_dir: Path) -> None:
+        files = [stored_dir / "ZH_sel0_histo.root", stored_dir / "other_binning.root"]
+        with pytest.raises(SourceError, match=r"'mz_raw' not found in .*other_binning.*present"):
+            FileSource(files).read_histogram("mz_raw")  # the second file lacks it
+        with pytest.raises(BinningError, match="different binnings"):
+            FileSource(files).read_histogram("mz")
+        with pytest.raises(SourceError, match="not a 1D or 2D histogram"):
+            FileSource(stored_dir / "branch_and_histogram.root").read_histogram("events")
+        with pytest.raises(
+            SourceError, match=r"is a \w*Directory, not a 1D or 2D histogram.*sub/mz"
+        ):
+            FileSource(stored_dir / "in_directory.root").read_histogram("sub")
+
+    def test_sum_across_storages_and_titles(self, stored_dir: Path) -> None:
+        # one file with Sumw2 and a title, one without either: added bin by bin
+        files = [stored_dir / "ZH_sel0_histo.root", stored_dir / "mixed_storage.root"]
+        total = FileSource(files).read_histogram("mz")
+        assert total.storage_type.__name__ == "Weight"
+        assert total.axes[0].label == "m_{Z} [GeV]"  # the first file's title
+        assert total.values(flow=True).sum() == pytest.approx(0.5 * 4000 + 500)
+        assert total.variances(flow=True).sum() == pytest.approx(0.25 * 4000 + 500)
+        reverse = FileSource(files[::-1]).read_histogram("mz")
+        assert reverse.axes[0].label == "xaxis"
+        np.testing.assert_allclose(reverse.values(flow=True), total.values(flow=True))
+
+    def test_negative_contents_without_sumw2(self, stored_dir: Path) -> None:
+        source = FileSource(stored_dir / "negative.root")
+        with pytest.raises(
+            SourceError, match=r"negative\.root.*negative bin contents.*assume_poisson"
+        ):
+            source.read_histogram("mz")
+        with pytest.warns(RootfigWarning, match="Poisson guess"):
+            h = source.read_histogram("mz", assume_poisson=True)
+        assert (h.variances() >= 0).all()
+        np.testing.assert_array_equal(h.variances(), np.abs(h.values()))
+        # a partner file cannot hide the problem in a sum either
+        both = FileSource([stored_dir / "ZH_sel0_histo.root", stored_dir / "negative.root"])
+        with pytest.raises(SourceError, match="negative bin contents"):
+            both.read_histogram("mz")
+
+    def test_category_axis_round_trip(self, stored_dir: Path) -> None:
+        h = FileSource(stored_dir / "ZH_sel0_histo.root").read_histogram("cutflow")
+        assert type(h.axes[0]).__name__ == "StrCategory"
+        assert list(h.axes[0]) == ["all", "sel0", "sel1"]
+        np.testing.assert_allclose(h.values(), [2000.0, 1000.0, 500.0])
+
+    def test_histogram_classes(self) -> None:
+        from rootfig.io.objects import is_histogram_class, is_tree_class
+
+        assert is_histogram_class("TH1D")
+        assert is_histogram_class("TH2F")
+        assert not is_histogram_class("TH3D")
+        assert not is_histogram_class("TProfile")
+        assert not is_histogram_class("TTree")
+        assert is_tree_class("ROOT::RNTuple")

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from rootfig.model.variables import Variable
 
 __all__ = [
+    "DEFAULT_BINS",
     "DEFAULT_RANGE",
     "ROBUST_COVERAGE_BUDGET",
     "ROBUST_DISCRETE_VALUES",
@@ -62,6 +63,10 @@ RangeSpec: TypeAlias = tuple[float, float] | Literal["auto", "robust"] | None
 DEFAULT_RANGE: RangeSpec = "robust"
 """Range inference used when a :class:`~rootfig.model.Variable` does not ask for one."""
 
+DEFAULT_BINS: int = 50
+"""Number of bins used to fill from a tree when a :class:`~rootfig.model.Variable` names none
+(``bins=None``). A histogram stored in a file keeps its own binning instead."""
+
 
 # --------------------------------------------------------------------------------------
 
@@ -83,8 +88,13 @@ def log_bins(n: int, low: float, high: float) -> np.ndarray:
     return np.geomspace(low, high, n + 1)
 
 
-def validate_bins(bins: Bins, range_: RangeSpec) -> None:
-    """Raise :class:`BinningError` if ``bins``/``range_`` are not a valid specification."""
+def validate_bins(bins: Bins | None, range_: RangeSpec) -> None:
+    """Raise :class:`BinningError` if ``bins``/``range_`` are not a valid specification.
+
+    ``None`` stands for :data:`DEFAULT_BINS` and is validated as that count.
+    """
+    if bins is None:
+        bins = DEFAULT_BINS
     if isinstance(bins, hist.axis.Regular | hist.axis.Variable):
         return
     if isinstance(bins, bool):
@@ -434,7 +444,7 @@ def resolve_axis(
     BinningError
         If the range must be inferred but no data was given.
     """
-    bins = variable.bins
+    bins = DEFAULT_BINS if variable.bins is None else variable.bins
     label = variable.axis_label
     if isinstance(bins, hist.axis.Regular | hist.axis.Variable):
         # Copy so the caller's axis (possibly shared between variables) is never modified;

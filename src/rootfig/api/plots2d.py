@@ -9,12 +9,14 @@ import numpy as np
 
 from rootfig._typing import FloatArray
 from rootfig.api._common import normalize_for_plot, single_sample, style_for
+from rootfig.api._hists import histogram_objects, reject_fill_options, wrap_histograms
 from rootfig.errors import BinningError, SelectionError
 from rootfig.histograms import (
     NormalizeSpec,
     build_histograms_2d,
     correlation_matrix,
     load_columns,
+    stored_mode,
 )
 from rootfig.model import (
     Bins,
@@ -42,8 +44,8 @@ __all__ = ["correlation", "plot2d"]
 
 def plot2d(
     data: Any,
-    x: str | Variable,
-    y: str | Variable,
+    x: str | Variable | None = None,
+    y: str | Variable | None = None,
     *,
     tree: str | None = None,
     selection: CutLike | None = None,
@@ -63,6 +65,7 @@ def plot2d(
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
     nonfinite: NonFinitePolicy = "drop",
+    assume_poisson: bool = False,
     save: str | None = None,
 ) -> Plot:
     """Draw a two-dimensional histogram of ``y`` versus ``x`` for one sample.
@@ -78,16 +81,67 @@ def plot2d(
     indicator, so give every axis that needs its full extent its own
     ``range="auto"``: ``rf.Variable(x, range="auto")`` leaves the y axis
     inferring robustly.
+
+    Like :func:`plot`, it also draws histograms that already exist: ``x`` alone
+    may name a ``TH2`` stored in the file (an integer ``bins`` then merges bins),
+    and ``data`` may be a 2D ``hist.Hist`` or
+    :class:`~rootfig.histograms.Histogram` with ``x`` and ``y`` omitted.
+    ``assume_poisson`` accepts such a histogram without variances, as in
+    :func:`plot`.
     """
-    sample = single_sample(data, tree=tree)
-    x_bins, y_bins = _split_bins(bins)
-    var_x = as_variable(x, bins=x_bins)
-    var_y = as_variable(y, bins=y_bins)
-    logx = var_x.log if logx is None else logx
-    logy = var_y.log if logy is None else logy
-    [histogram_] = build_histograms_2d(
-        [sample], var_x, var_y, selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
-    )
+    objects = histogram_objects(data)
+    if objects is not None:
+        reject_fill_options(
+            "histogram objects",
+            x=x,
+            y=y,
+            tree=tree,
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            bins=bins,
+            nonfinite=nonfinite,
+        )
+        if len(objects) != 1:
+            msg = f"plot2d() draws a single histogram, got {len(objects)}"
+            raise ValueError(msg)
+        [histogram_] = wrap_histograms(objects, assume_poisson=assume_poisson)
+        var_x: Variable | None = None
+        is_data = histogram_.is_data
+        logx, logy = bool(logx), bool(logy)
+    else:
+        if x is None:
+            msg = "plot2d() needs the x and y variables, or the name of a stored 2D histogram"
+            raise TypeError(msg)
+        sample = single_sample(data, tree=tree)
+        x_bins, y_bins = _split_bins(bins)
+        var_x = as_variable(x, bins=x_bins)
+        if y is not None:
+            var_y = as_variable(y, bins=y_bins)
+        else:
+            var_y = var_x.replace(bins=y_bins)  # the y axis of a stored 2D histogram
+            if not stored_mode([sample], [var_x, var_y]):
+                msg = (
+                    "plot2d() needs the x and y variables, or the name of a 2D histogram "
+                    f"stored in the file; {var_x.expression!r} is neither"
+                )
+                raise TypeError(msg)
+        logx = var_x.log if logx is None else logx
+        logy = var_y.log if logy is None else logy
+        [histogram_] = build_histograms_2d(
+            [sample],
+            var_x,
+            var_y,
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            nonfinite=nonfinite,
+            assume_poisson=assume_poisson,
+        )
+        is_data = sample.is_data
+    if histogram_.ndim != 2:
+        msg = f"plot2d() draws two-dimensional histograms, got {histogram_.ndim}D; use plot()"
+        raise ValueError(msg)
     if normalize is not None and normalize is not False:
         histogram_ = normalize_for_plot(histogram_, normalize)
     resolved_style = style_for(style, text, lumi)
@@ -111,7 +165,7 @@ def plot2d(
         if title:
             main_ax.set_title(title)
         # the bins fill the frame: an experiment label goes above it
-        add_experiment_label(main_ax, st, has_data=sample.is_data, above=True)
+        add_experiment_label(main_ax, st, has_data=is_data, above=True)
         finalize_figure(fig)  # last: fonts
     # outside the style context, against the layout the figure is drawn with
     align_experiment_label(main_ax)

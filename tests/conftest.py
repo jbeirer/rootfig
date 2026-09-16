@@ -179,3 +179,74 @@ def tutorials_dir() -> Path:
 @pytest.fixture
 def approx() -> Callable[..., Any]:
     return pytest.approx
+
+
+def write_stored_histograms(directory: Path) -> None:
+    """Write framework-style histogram files (one per process) with uproot.
+
+    Every ``<process>_sel0_histo.root`` holds ``mz`` (``Weight`` storage, so the
+    file carries ``Sumw2``), an unweighted ``mz_raw`` written as a plain count
+    histogram, a 2D ``mz_recoil_2D`` and a one-bin ``eventsProcessed``. Further
+    files exercise the inference rule: a tree with a branch ``mz`` next to a
+    histogram ``mz``, several trees next to it, a tree without that branch, a
+    histogram in a directory, and one with another binning.
+    """
+    import hist
+
+    rng = np.random.default_rng(11)
+    axis = hist.axis.Regular(100, 0.0, 250.0, name="mz", label="m_{Z} [GeV]")
+    for process, mean, n in (("ZH", 91.0, 4000), ("WW", 80.0, 2000), ("ZZ", 91.0, 1000)):
+        values = rng.normal(mean, 6.0, n)
+        weighted = hist.Hist(axis, storage=hist.storage.Weight())
+        weighted.fill(values, weight=0.5)
+        two_d = hist.Hist(
+            hist.axis.Regular(10, 80.0, 100.0, label="m_{Z} [GeV]"),
+            hist.axis.Regular(12, 120.0, 140.0, label="recoil [GeV]"),
+            storage=hist.storage.Weight(),
+        )
+        two_d.fill(rng.normal(91.0, 3.0, n), rng.normal(125.0, 4.0, n), weight=0.5)
+        cutflow = hist.Hist(
+            hist.axis.StrCategory(["all", "sel0", "sel1"], label="Selection"),
+            storage=hist.storage.Weight(),
+        )
+        cutflow.fill(["all"] * n + ["sel0"] * (n // 2) + ["sel1"] * (n // 4), weight=0.5)
+        with uproot.recreate(directory / f"{process}_sel0_histo.root") as file:
+            file["mz"] = weighted
+            file["mz_raw"] = np.histogram(values, bins=100, range=(0.0, 250.0))
+            file["mz_recoil_2D"] = two_d
+            file["cutflow"] = cutflow
+            file["eventsProcessed"] = np.histogram(np.full(n, 0.5), bins=1, range=(0.0, 1.0))
+    # the same binning as ``mz`` but no Sumw2 and ROOT's placeholder axis title
+    with uproot.recreate(directory / "mixed_storage.root") as file:
+        file["mz"] = np.histogram(rng.normal(91.0, 6.0, 500), bins=100, range=(0.0, 250.0))
+    # negative contents without Sumw2: the counts it reports as variances are negative
+    signed = hist.Hist(hist.axis.Regular(100, 0.0, 250.0, label="m_{Z} [GeV]"))
+    signed[...] = np.where(np.arange(100) % 2, 2.0, -1.0)
+    with uproot.recreate(directory / "negative.root") as file:
+        file["mz"] = signed
+    with uproot.recreate(directory / "other_binning.root") as file:
+        file["mz"] = np.histogram(rng.normal(91.0, 6.0, 500), bins=50, range=(0.0, 250.0))
+    with uproot.recreate(directory / "branch_and_histogram.root") as file:
+        file.mktree("events", {"mz": np.float64})
+        file["events"].extend({"mz": rng.normal(91.0, 6.0, 300)})
+        file["mz"] = np.histogram(rng.normal(20.0, 1.0, 500), bins=100, range=(0.0, 250.0))
+    with uproot.recreate(directory / "two_trees.root") as file:
+        file.mktree("a", {"x": np.float64})
+        file["a"].extend({"x": np.arange(3.0)})
+        file.mktree("b", {"y": np.float64})
+        file["b"].extend({"y": np.arange(3.0)})
+        file["mz"] = np.histogram(rng.normal(91.0, 6.0, 500), bins=100, range=(0.0, 250.0))
+    with uproot.recreate(directory / "tree_without_branch.root") as file:
+        file.mktree("events", {"pt": np.float64})
+        file["events"].extend({"pt": np.arange(3.0)})
+        file["mz"] = np.histogram(rng.normal(91.0, 6.0, 500), bins=100, range=(0.0, 250.0))
+    with uproot.recreate(directory / "in_directory.root") as file:
+        file["sub/mz"] = np.histogram(rng.normal(91.0, 6.0, 500), bins=100, range=(0.0, 250.0))
+
+
+@pytest.fixture(scope="session")
+def stored_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Directory with framework-style histogram files (see :func:`write_stored_histograms`)."""
+    directory = tmp_path_factory.mktemp("stored")
+    write_stored_histograms(directory)
+    return directory

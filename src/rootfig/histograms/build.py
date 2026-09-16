@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import hist
 import numpy as np
 
 from rootfig._mapping import FrozenMapping
+from rootfig._storage import as_weight_storage, same_binning
 from rootfig._typing import FloatArray, Hist
-from rootfig.errors import RootfigWarning, SystematicError
+from rootfig.errors import BinningError, SystematicError
 from rootfig.histograms.stats import Summary
 
 if TYPE_CHECKING:
@@ -20,7 +20,14 @@ if TYPE_CHECKING:
     from rootfig.model.samples import HistType, Sample
     from rootfig.selection import Columns
 
-__all__ = ["Histogram", "as_weight_storage", "compatible_binning", "fill", "mirror"]
+__all__ = [
+    "Histogram",
+    "as_weight_storage",
+    "compatible_binning",
+    "fill",
+    "from_sample",
+    "mirror",
+]
 
 
 def compatible_binning(a: Hist, b: Hist) -> bool:
@@ -55,65 +62,6 @@ def fill(axes: Sequence[Axis], columns: Columns) -> Hist:
         else:
             histogram.fill(*columns.arrays, weight=columns.weights)
     return histogram
-
-
-def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
-    """Return ``histogram`` with ``Weight`` storage (a copy if it had another storage).
-
-    Plain count storages (``Double``, ``Int64``, ...) carry no sum of squared
-    weights; their variances are taken as ``hist`` reports them, i.e. the
-    counts (Poisson) for unweighted fills. After a weighted fill or arithmetic
-    on such a storage ``hist`` reports no variances at all: the sum of squared
-    weights is lost and cannot be reconstructed. That is an error unless
-    ``assume_poisson=True``, which uses the absolute bin contents as variances
-    (the Poisson guess; a :class:`~rootfig.errors.RootfigWarning` says so).
-
-    Raises
-    ------
-    TypeError
-        If the storage is not a count or ``Weight`` storage (``Mean``, ...).
-    ValueError
-        If the histogram reports no variances and ``assume_poisson`` is False.
-    """
-    if histogram.storage_type is hist.storage.Weight:
-        return histogram
-    if histogram.ndim and histogram.storage_type not in (
-        hist.storage.Double,
-        hist.storage.Int64,
-        hist.storage.AtomicInt64,
-        hist.storage.Unlimited,
-    ):
-        msg = (
-            f"histograms with {histogram.storage_type.__name__} storage are not supported; "
-            "use Weight (or a plain count) storage"
-        )
-        raise TypeError(msg)
-    values = np.asarray(histogram.values(flow=True), dtype=float)
-    reported = histogram.variances(flow=True)
-    if reported is None:
-        what = (
-            f"histogram with {histogram.storage_type.__name__} storage was filled with weights "
-            "or rescaled, so hist reports no variances (the sum of squared weights is lost)"
-        )
-        if not assume_poisson:
-            msg = (
-                f"{what}. Fill it with hist.storage.Weight() to keep the uncertainties, or pass "
-                "assume_poisson=True to use the absolute bin contents as variances"
-            )
-            raise ValueError(msg)
-        warnings.warn(
-            f"{what}; using the absolute bin contents as variances (Poisson guess)",
-            RootfigWarning,
-            stacklevel=3,
-        )
-        variances = np.abs(values)  # never a negative variance for signed contents
-    else:
-        variances = np.asarray(reported, dtype=float)
-    result = hist.Hist(*histogram.axes, storage=hist.storage.Weight())
-    view: Any = result.view(flow=True)
-    view.value = values
-    view.variance = variances
-    return result
 
 
 @dataclass(frozen=True, init=False)
@@ -210,7 +158,7 @@ class Histogram:
                 msg = f"histogram {self.label!r}: variation {name!r} must be an (up, down) pair"  # type: ignore[unreachable]
                 raise SystematicError(msg)
             given = [as_weight_storage(h, assume_poisson=True) for h in pair if h is not None]
-            if not all(_same_edges(varied, self.hist) for varied in given):
+            if not all(same_binning(varied, self.hist) for varied in given):
                 msg = (
                     f"histogram {self.label!r}: variation {name!r} does not have the binning "
                     "of the nominal histogram"
@@ -334,23 +282,78 @@ class Histogram:
             )
         return replace(self.map_hists(lambda h: h * factor), stats=stats)
 
+    def rebinned(self, factor: int | Sequence[int]) -> Histogram:
+        """Return a copy with every ``factor`` adjacent bins merged (per axis for a sequence).
 
-def _same_edges(a: Hist, b: Hist) -> bool:
-    if a.ndim != b.ndim:
-        return False
-    for axis_a, axis_b in zip(a.axes, b.axes, strict=True):
-        edges_a, edges_b = np.asarray(axis_a.edges), np.asarray(axis_b.edges)
-        if edges_a.shape != edges_b.shape:
-            return False
-        tolerance = 1e-6 * float(min(np.diff(edges_a).min(), np.diff(edges_b).min()))
-        if not np.allclose(edges_a, edges_b, rtol=0.0, atol=tolerance):
-            return False
-        if (axis_a.traits.underflow, axis_a.traits.overflow) != (
-            axis_b.traits.underflow,
-            axis_b.traits.overflow,
-        ):
-            return False
-    return True
+        Contents and variances add up; the flow bins are kept. Variations are
+        rebinned alike, so ratios and uncertainty bands stay consistent. Rebin
+        before normalising: heights per unit width or per unit area do not add.
+
+        Raises
+        ------
+        BinningError
+            If the histogram is normalised, a factor is not a positive integer
+            dividing the axis' bin count, an axis is categorical, or the
+            sequence does not have one entry per axis.
+        """
+        if self.normalization is not None:
+            msg = (
+                f"histogram {self.label!r} is normalised ({self.normalization}); rebin before "
+                "normalising"
+            )
+            raise BinningError(msg)
+        # typed loosely: the checks below are what rejects floats, bools and strings at runtime
+        given: list[Any] = list(factor) if isinstance(factor, Sequence) else [factor] * self.ndim
+        if not all(_is_positive_integer(f) for f in given):
+            msg = f"rebin factors must be positive integers, got {factor!r}"
+            raise BinningError(msg)
+        factors = [int(f) for f in given]
+        if len(factors) != self.ndim:
+            msg = f"got {len(factors)} rebin factors for a {self.ndim}D histogram"
+            raise BinningError(msg)
+        for axis, step in zip(self.hist.axes, factors, strict=True):
+            if isinstance(axis, hist.axis.StrCategory | hist.axis.IntCategory):
+                msg = f"cannot merge the categories of axis {axis.label or axis.name!r}"
+                raise BinningError(msg)
+            if axis.size % step:
+                divisors = [d for d in range(1, axis.size + 1) if axis.size % d == 0]
+                msg = (
+                    f"cannot merge bins of {axis.label or axis.name!r} in groups of {step}: "
+                    f"{axis.size} bins can only be grouped by {divisors}"
+                )
+                raise BinningError(msg)
+        selection = tuple(slice(None, None, hist.rebin(step)) for step in factors)
+
+        def merge(h: Hist) -> Hist:
+            # slicing with rebin keeps every axis, so the result is a Hist, never a float
+            return cast("Hist", h[selection])
+
+        return self.map_hists(merge)
+
+
+def _is_positive_integer(value: object) -> bool:
+    """Return True for ``1``, ``2``, ``numpy.int64(3)``, ...; not for bools, floats or strings."""
+    return isinstance(value, int | np.integer) and not isinstance(value, bool) and int(value) >= 1
+
+
+def from_sample(
+    sample: Sample,
+    hist_: Hist,
+    *,
+    stats: Summary | None = None,
+    variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
+) -> Histogram:
+    """Wrap ``hist_`` as the :class:`Histogram` of ``sample`` (label, data flag, drawing hints)."""
+    return Histogram(
+        hist=hist_,
+        label=sample.label,
+        sample=sample,
+        stats=stats,
+        is_data=sample.is_data,
+        color=sample.color,
+        histtype=sample.histtype,
+        variations=variations,
+    )
 
 
 def mirror(nominal: Hist, up: Hist) -> Hist:

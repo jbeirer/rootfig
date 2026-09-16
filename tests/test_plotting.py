@@ -140,11 +140,12 @@ class TestStyle:
     def test_context_skips_activation_once_backend_is_resolved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        plt.draw_if_interactive()  # resolve the backend, as any earlier drawing would have
         calls = []
         monkeypatch.setattr(plt, "draw_if_interactive", lambda: calls.append(1))
         with style_context():
             pass
-        assert calls == []  # conftest already resolved the backend
+        assert calls == []
 
     @pytest.mark.parametrize("experiment", [None, "ATLAS", "CMS", "LHCb", "ALICE"])
     def test_pin_fonts_pins_only_installed_families(self, experiment: str | None) -> None:

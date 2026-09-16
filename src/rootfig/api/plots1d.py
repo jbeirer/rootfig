@@ -1,19 +1,18 @@
-"""One-dimensional plots, :func:`plot` and :func:`plot_histograms`, with their ratio panels."""
+"""One-dimensional plots: :func:`plot`, from trees, stored histograms or histogram objects."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from rootfig._typing import Hist
 from rootfig.api._common import normalize_for_plot, style_for
+from rootfig.api._hists import histogram_objects, reject_fill_options, unit_of, wrap_histograms
 from rootfig.histograms import (
     SIGNIFICANCE_KINDS,
     Histogram,
     NormalizeSpec,
     RatioUncertainty,
     SignificanceKind,
-    as_weight_storage,
     build_histograms,
     significance,
     sum_histograms,
@@ -59,7 +58,7 @@ from rootfig.plotting import (
 )
 from rootfig.selection import NonFinitePolicy
 
-__all__ = ["plot", "plot_histograms"]
+__all__ = ["plot"]
 
 RatioSpec = bool | str | tuple[str, str]
 """What ``ratio=`` accepts: a flag, a reference label, a significance kind, or (kind, signal)."""
@@ -67,7 +66,7 @@ RatioSpec = bool | str | tuple[str, str]
 
 def plot(
     data: Any,
-    variable: str | Variable,
+    variable: str | Variable | None = None,
     *,
     tree: str | None = None,
     selection: CutLike | None = None,
@@ -103,6 +102,7 @@ def plot(
     ax: AxesLike = None,
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
+    assume_poisson: bool = False,
     save: str | None = None,
 ) -> Plot:
     """Histogram a variable from one or more samples and draw it.
@@ -112,16 +112,28 @@ def plot(
     per-event/per-object semantics, fill ``hist.Hist`` objects with a binning
     shared by all samples, and render them with mplhep.
 
+    The same call draws histograms that already exist. A ``variable`` that is a
+    bare name and addresses a ``TH1`` stored in the files (a histogram written by
+    an analysis framework) is read instead of filled, summed over each sample's
+    files and scaled like a filled one; an explicit ``tree=`` always means a
+    branch. Histogram objects (``hist.Hist`` or
+    :class:`~rootfig.histograms.Histogram`, one or a list) passed as ``data``
+    are drawn as they are, with ``label`` naming them and ``variable`` optional.
+    Options that act on event data (``selection``, ``weight``, ``range``, ...)
+    raise for both.
+
     Parameters
     ----------
     data
         What to plot: a file path or glob, ``"path:tree"``, a list of those (one
         sample each), a ``{label: files}`` mapping, one or more
-        :class:`~rootfig.model.Sample` objects, or in-memory arrays (a mapping
-        of arrays or an Awkward record array).
+        :class:`~rootfig.model.Sample` objects, in-memory arrays (a mapping of
+        arrays or an Awkward record array), or histogram objects.
     variable
-        Branch name or expression (see :mod:`rootfig.expressions`), or a
-        :class:`~rootfig.model.Variable` carrying binning and labels.
+        Branch name or expression (see :mod:`rootfig.expressions`), the name of
+        a histogram stored in the files, or a :class:`~rootfig.model.Variable`
+        carrying binning and labels. Optional for histogram objects, where it
+        only supplies the labels, unit and ``log`` flag.
     tree
         Tree name for file inputs; auto-detected when a file holds one tree.
     selection
@@ -139,7 +151,9 @@ def plot(
         already has a luminosity.
     bins
         Binning: an ``int`` (range inferred from the data), ``(n, low, high)``,
-        bin edges, or a ``hist`` axis. Overrides the ``Variable``'s binning.
+        bin edges, or a ``hist`` axis. Overrides the ``Variable``'s binning. A
+        stored histogram keeps its binning unless an ``int`` asks for fewer bins,
+        which must divide the stored count.
     range
         Range for integer ``bins``: ``(low, high)``, ``"robust"`` (the default)
         or ``"auto"``. ``"robust"`` ignores values far from the bulk of the data,
@@ -149,13 +163,14 @@ def plot(
         under/overflow, which ``flow`` shows. Use ``"auto"`` for the full finite
         minimum and maximum.
     label
-        Legend label(s) for samples given as plain files.
+        Legend label(s) for samples given as plain files or as histogram objects.
     observed
-        A sample of observed data (or the file(s) for one) drawn as points,
-        excluded from stacks and used as numerator of the ratio.
+        A sample of observed data (or the file(s) for one; histogram objects
+        when ``data`` are) drawn as points, excluded from stacks and used as
+        numerator of the ratio.
     xlabel, ylabel, unit, title
-        Axis labels; defaults come from the variable, the normalisation and the
-        bin width (``Events / 2 GeV``).
+        Axis labels; defaults come from the variable (or the stored axis title),
+        the normalisation and the bin width (``Events / 2 GeV``).
     normalize
         ``True``/``"unity"`` (sum to one), ``"density"``, ``"width"`` (divide by
         bin width) or a number to normalise to.
@@ -199,7 +214,8 @@ def plot(
         ``False`` to suppress, or a matplotlib location string.
     stats
         Add a box with entries, mean and standard deviation per sample;
-        ``True`` or a location string.
+        ``True`` or a location string. Needs the unbinned statistics collected
+        while filling, which stored histograms and histogram objects lack.
     text
         Extra text line(s) drawn with the experiment label.
     style
@@ -219,7 +235,13 @@ def plot(
         with variations a light band in their colour, and the ratio panel
         includes them in its band and error bars. Sources of the same name are
         fully correlated across samples, different ones added in quadrature;
-        ``Plot.uncertainty()`` returns the components.
+        ``Plot.uncertainty()`` returns the components. Histogram objects carry
+        theirs in :attr:`~rootfig.histograms.Histogram.variations`.
+    assume_poisson
+        Accept a histogram (stored or object) with a plain count storage that
+        was filled with weights or rescaled, so ``hist`` reports no variances:
+        the absolute bin contents are used instead (a warning says so). Fill
+        with ``hist.storage.Weight()`` to keep the real uncertainties.
     save
         Path to save the figure to (also returned in the :class:`Plot`).
 
@@ -228,26 +250,53 @@ def plot(
     Plot
         The figure, axes, histograms and ratios.
     """
-    samples = as_samples(data, tree=tree, labels=label)
-    if observed is not None:
-        observed_samples = [
-            s if s.is_data else s.replace(is_data=True) for s in as_samples(observed, tree=tree)
-        ]
-        samples = [*samples, *observed_samples]
-    var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
-    hists = build_histograms(
-        samples,
-        var,
-        selection=selection,
-        weight=weight,
-        lumi=lumi,
-        nonfinite=nonfinite,
-        systematics=systematics,
-    )
-    resolved_style = style_for(style, text, lumi)
-    return plot_histograms(
+    objects = histogram_objects(data)
+    if objects is not None:
+        reject_fill_options(
+            "histogram objects",
+            tree=tree,
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            bins=bins,
+            range=range,
+            nonfinite=nonfinite,
+            systematics=systematics,
+        )
+        var = None if variable is None else as_variable(variable, label=xlabel, unit=unit)
+        hists = wrap_histograms(objects, label, assume_poisson=assume_poisson)
+        if observed is not None:
+            observed_objects = histogram_objects(observed)
+            if observed_objects is None:
+                msg = "observed= must be histogram objects when data are histogram objects"
+                raise TypeError(msg)
+            hists += wrap_histograms(observed_objects, assume_poisson=assume_poisson, is_data=True)
+    else:
+        if variable is None:
+            msg = "plot() needs a variable (a branch, expression or stored histogram name)"
+            raise TypeError(msg)
+        samples = as_samples(data, tree=tree, labels=label)
+        if observed is not None:
+            observed_samples = [
+                s if s.is_data else s.replace(is_data=True) for s in as_samples(observed, tree=tree)
+            ]
+            samples = [*samples, *observed_samples]
+        var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
+        hists = build_histograms(
+            samples,
+            var,
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            nonfinite=nonfinite,
+            systematics=systematics,
+            assume_poisson=assume_poisson,
+        )
+    return _draw(
         hists,
         variable=var,
+        xlabel=xlabel,
+        unit=unit,
         ylabel=ylabel,
         title=title,
         normalize=normalize,
@@ -266,70 +315,56 @@ def plot(
         xbreak=xbreak,
         legend=legend,
         stats=stats,
-        style=resolved_style,
+        style=style_for(style, text, lumi),
         figsize=figsize,
         ax=ax,
         save=save,
     )
 
 
-def plot_histograms(
-    hists: Sequence[Histogram | Hist],
+def _draw(
+    histograms_: list[Histogram],
     *,
-    variable: Variable | None = None,
-    labels: Sequence[str] | None = None,
-    xlabel: str | None = None,
-    ylabel: str | None = None,
-    title: str | None = None,
-    normalize: NormalizeSpec = None,
-    stack: bool = False,
-    ratio: RatioSpec = False,
-    ratio_ylim: tuple[float, float] | None = None,
-    ratio_label: str | None = None,
-    ratio_uncertainty: RatioUncertainty | None = None,
-    logx: bool | None = None,
-    logy: bool = False,
-    flow: FlowSpec = "hint",
-    histtype: HistType | None = None,
-    errorbars: bool | None = None,
-    xlim: tuple[float, float] | None = None,
-    ylim: tuple[float | None, float | None] | None = None,
-    xbreak: tuple[float, float] | None = None,
-    legend: bool | str | None = None,
-    stats: bool | str = False,
-    style: StyleLike = None,
-    figsize: tuple[float, float] | None = None,
-    ax: AxesLike = None,
-    assume_poisson: bool = False,
-    save: str | None = None,
+    variable: Variable | None,
+    xlabel: str | None,
+    unit: str | None,
+    ylabel: str | None,
+    title: str | None,
+    normalize: NormalizeSpec,
+    stack: bool,
+    ratio: RatioSpec,
+    ratio_ylim: tuple[float, float] | None,
+    ratio_label: str | None,
+    ratio_uncertainty: RatioUncertainty | None,
+    logx: bool | None,
+    logy: bool,
+    flow: FlowSpec,
+    histtype: HistType | None,
+    errorbars: bool | None,
+    xlim: tuple[float, float] | None,
+    ylim: tuple[float | None, float | None] | None,
+    xbreak: tuple[float, float] | None,
+    legend: bool | str | None,
+    stats: bool | str,
+    style: StyleLike,
+    figsize: tuple[float, float] | None,
+    ax: AxesLike,
+    save: str | None,
 ) -> Plot:
-    """Draw already-filled histograms (``hist.Hist`` or :class:`~rootfig.histograms.Histogram`).
-
-    Accepts the same drawing options as :func:`plot`. Plain ``hist.Hist``
-    objects are labelled from ``labels`` (or numbered) and converted to
-    ``Weight`` storage if they have a plain count storage; mark data by passing
-    :class:`~rootfig.histograms.Histogram` objects with ``is_data=True``.
-    Overlaid histograms may have different binnings; stacks, ratio panels and
-    ``flow="show"`` need identical bin edges.
-
-    A count-storage histogram that was filled with weights (or rescaled) has
-    lost its sum of squared weights and is rejected with a ``ValueError``;
-    ``assume_poisson=True`` draws it anyway with the absolute bin contents as
-    variances (a warning is issued). Fill with ``hist.storage.Weight()`` to keep
-    the real uncertainties.
-
-    Systematic uncertainties come from the histograms' ``variations``
-    (``Histogram(h, label=..., variations={"jes": (h_up, h_down)})``) and are
-    drawn as in :func:`plot`.
-    """
+    """Draw filled :class:`Histogram` objects; see :func:`plot` for the options."""
     if logx is None:
         logx = variable.log if variable is not None else False
-    histograms_ = _wrap_hists(hists, labels, assume_poisson=assume_poisson)
     if not histograms_:
         msg = "no histograms to draw"
         raise ValueError(msg)
     if any(h.ndim != 1 for h in histograms_):
-        msg = "plot_histograms() draws one-dimensional histograms; use plot2d() for 2D"
+        msg = "plot() draws one-dimensional histograms; use plot2d() for 2D"
+        raise ValueError(msg)
+    if stats and all(h.stats is None for h in histograms_):
+        msg = (
+            "stats= needs the unbinned statistics collected while filling from event data; "
+            "stored histograms and histogram objects have none"
+        )
         raise ValueError(msg)
     if normalize is not None and normalize is not False:
         histograms_ = [normalize_for_plot(h, normalize) for h in histograms_]
@@ -390,16 +425,13 @@ def plot_histograms(
         add_experiment_label(layout.main, st, has_data=has_data, right=layout.main_right)
 
         per_object = any(h.stats is not None and h.stats.per_object for h in histograms_)
-        unit = variable.unit if variable is not None else None
+        x_label, bin_unit = _axis_labels(xlabel, unit, variable, reference_hist)
         y_label = ylabel or ylabel_for(
             normalization=histograms_[0].normalization,
-            unit=unit,
+            unit=bin_unit,
             widths=label_widths,
             per_object=per_object,
         )
-        x_label = xlabel or (variable.axis_label if variable is not None else None)
-        if x_label is None:
-            x_label = reference_hist.axis.label or ""
         data_low = drawn.ymin_positive if logy else drawn.ymin
         for index, axis in enumerate(layout.main_axes):
             finish_axes(
@@ -511,6 +543,28 @@ def plot_histograms(
     return result
 
 
+def _axis_labels(
+    xlabel: str | None, unit: str | None, variable: Variable | None, reference: Histogram
+) -> tuple[str, str | None]:
+    """Return the x label and the unit quoted in the bin-width y label.
+
+    The label is the explicit ``xlabel``, else the variable's own, else the
+    histogram's axis label (a stored title or the expression). The unit comes
+    from ``unit``, the variable or a ``[unit]`` the label ends with, and is
+    appended to the label once.
+    """
+    if xlabel:
+        base = xlabel
+    elif variable is not None and variable.label is not None:
+        base = variable.label
+    else:
+        base = str(reference.axis.label or "") or (variable.expression if variable else "")
+    unit = unit or (variable.unit if variable is not None else None)
+    if unit and not base.endswith(f"[{unit}]"):
+        base = f"{base} [{unit}]"
+    return base, unit or unit_of(base)
+
+
 def _significance_spec(ratio: RatioSpec) -> tuple[SignificanceKind, str | None] | None:
     """``(kind, signal label)`` when ``ratio`` asks for a significance panel, else ``None``."""
     if isinstance(ratio, tuple):
@@ -545,30 +599,6 @@ def _significance_setup(
     for h in others[1:]:
         total = total + h.hist
     return signal, Histogram(total, label="Background", normalization=others[0].normalization)
-
-
-def _wrap_hists(
-    hists: Sequence[Histogram | Hist],
-    labels: Sequence[str] | None,
-    *,
-    assume_poisson: bool = False,
-) -> list[Histogram]:
-    if labels is not None and len(labels) != len(hists):
-        msg = f"got {len(labels)} labels for {len(hists)} histograms"
-        raise ValueError(msg)
-    wrapped: list[Histogram] = []
-    for index, item in enumerate(hists):
-        if isinstance(item, Histogram):
-            wrapped.append(item if labels is None else item.replace(label=labels[index]))
-            continue
-        if labels is not None:
-            label = labels[index]
-        else:
-            axis_name = item.axes[0].name if item.ndim == 1 else ""
-            label = axis_name or f"hist {index + 1}"
-        converted = as_weight_storage(item, assume_poisson=assume_poisson)
-        wrapped.append(Histogram(converted, label=str(label)))
-    return wrapped
 
 
 def _ratio_setup(

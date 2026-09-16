@@ -19,11 +19,13 @@ from rootfig.errors import (
     MissingBranchError,
     RootfigWarning,
     SelectionError,
+    SourceError,
     SystematicError,
 )
 from rootfig.histograms import (
     Histogram,
     Summary,
+    as_weight_storage,
     build_histograms,
     build_histograms_2d,
     combined_selection,
@@ -923,6 +925,46 @@ class TestWeightStorage:
             as_weight_storage(mean)
 
 
+class TestNegativeVariances:
+    def test_count_storage_with_negative_contents(self) -> None:
+        h = hist.Hist(hist.axis.Regular(2, 0, 2))
+        h[...] = np.array([2.0, -1.0])
+        assert h.variances() is not None  # boost reports the counts, one of them negative
+        with pytest.raises(ValueError, match=r"negative bin contents.*assume_poisson=True"):
+            as_weight_storage(h)
+        with pytest.warns(RootfigWarning, match="Poisson guess"):
+            converted = as_weight_storage(h, assume_poisson=True)
+        np.testing.assert_allclose(converted.variances(), [2.0, 1.0])
+
+    def test_weight_storage_with_negative_variances(self) -> None:
+        h = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+        h.view().variance = np.array([1.0, -1.0])
+        with pytest.raises(ValueError, match="negative variances"):
+            as_weight_storage(h)
+        with pytest.warns(RootfigWarning):
+            converted = as_weight_storage(h, assume_poisson=True)
+        np.testing.assert_allclose(converted.variances(), np.abs(h.values()))
+
+
+class TestBinwiseAddition:
+    def test_add_hists_consumes_an_iterator(self) -> None:
+        from rootfig._storage import add_hists, add_into
+
+        def make(label: str, value: float) -> Any:
+            h = hist.Hist(hist.axis.Regular(2, 0, 2, label=label), storage=hist.storage.Weight())
+            h.fill([0.5], weight=value)
+            return h
+
+        parts = [make("a", 1.0), make("b", 2.0), make("c", 3.0)]
+        total = add_hists(h for h in parts)  # a generator: nothing is held back
+        np.testing.assert_allclose(total.values(), [6.0, 0.0])
+        np.testing.assert_allclose(total.variances(), [14.0, 0.0])
+        assert total.axes[0].label == "a"  # the first histogram's axes
+        np.testing.assert_allclose(parts[0].values(), [1.0, 0.0])  # inputs untouched
+        add_into(total, parts[0])
+        np.testing.assert_allclose(total.values(), [7.0, 0.0])
+
+
 class TestBinningTolerance:
     @staticmethod
     def _hist(edges: list[float], value: float) -> Any:
@@ -1515,3 +1557,239 @@ class TestSystematicsRegressions:
         (h,) = build_histograms([nominal], Variable("x", bins=(2, 0, 2)), weight="2")
         np.testing.assert_allclose(h.values(), [20, 0])
         np.testing.assert_allclose(h.variations["s"][0].values(), [0, 16])
+
+
+class TestRebinned:
+    def test_merges_bins_and_variations(self) -> None:
+        h = hist.Hist(hist.axis.Regular(6, 0, 6, name="x"), storage=hist.storage.Weight())
+        h.fill([0.5, 1.5, 2.5, 5.5], weight=[1.0, 2.0, 3.0, 4.0])
+        h.fill([-1.0, 7.0])  # flow bins
+        histogram = Histogram(h, label="h", variations={"s": (h * 2.0, None)})
+        merged = histogram.rebinned(2)
+        np.testing.assert_allclose(merged.values(), [3.0, 3.0, 4.0])
+        np.testing.assert_allclose(merged.variances(), [5.0, 9.0, 16.0])
+        assert merged.underflow == 1.0
+        assert merged.overflow == 1.0
+        up, down = merged.variations["s"]
+        np.testing.assert_allclose(up.values(), [6.0, 6.0, 8.0])
+        np.testing.assert_allclose(down.values(), [0.0, 0.0, 0.0])
+        assert merged.label == "h"
+
+    def test_two_dimensional_factors(self) -> None:
+        h = hist.Hist(
+            hist.axis.Regular(4, 0, 4), hist.axis.Regular(6, 0, 6), storage=hist.storage.Weight()
+        )
+        merged = Histogram(h, label="h").rebinned((2, 3))
+        assert [a.size for a in merged.hist.axes] == [2, 2]
+        with pytest.raises(BinningError, match="got 1 rebin factors for a 2D"):
+            Histogram(h, label="h").rebinned([2])
+
+    def test_indivisible(self) -> None:
+        h = hist.Hist(hist.axis.Regular(10, 0, 10, name="x"), storage=hist.storage.Weight())
+        with pytest.raises(BinningError, match=r"grouped by \[1, 2, 5, 10\]"):
+            Histogram(h, label="h").rebinned(3)
+
+    def test_factors_must_be_positive_integers(self) -> None:
+        h = hist.Hist(hist.axis.Regular(10, 0, 10, name="x"), storage=hist.storage.Weight())
+        histogram = Histogram(h, label="h")
+        for bad in (2.9, [2.9], True, 0, -2):
+            with pytest.raises(BinningError, match="positive integers"):
+                histogram.rebinned(bad)  # type: ignore[arg-type]
+        assert histogram.rebinned(np.int64(5)).axis.size == 2
+
+    def test_normalised_histograms_are_refused(self) -> None:
+        h = hist.Hist(hist.axis.Regular(4, 0, 4, name="x"), storage=hist.storage.Weight())
+        h.fill([0.5, 1.5, 2.5, 3.5])
+        density = normalize(Histogram(h, label="h"), "density")
+        with pytest.raises(BinningError, match=r"normalised .*rebin before normalising"):
+            density.rebinned(2)
+        # rebinning first, then normalising, keeps the area at one
+        merged = normalize(Histogram(h, label="h").rebinned(2), "density")
+        assert (merged.values() * merged.widths).sum() == pytest.approx(1.0)
+
+    def test_category_axes_are_refused(self) -> None:
+        h = hist.Hist(
+            hist.axis.StrCategory(["a", "b"], name="cut", label="Cut"),
+            storage=hist.storage.Weight(),
+        )
+        with pytest.raises(BinningError, match="categories of axis 'Cut'"):
+            Histogram(h, label="h").rebinned(1)
+
+
+class TestStoredHistograms:
+    @staticmethod
+    def _zh(stored_dir: Path, **kwargs: Any) -> Sample:
+        return Sample(stored_dir / "ZH_sel0_histo.root", label="ZH", **kwargs)
+
+    def test_stored_mode_rule(self, stored_dir: Path) -> None:
+        from rootfig.histograms import stored_mode
+
+        zh = self._zh(stored_dir)
+        assert stored_mode([zh], [Variable("mz")])
+        assert not stored_mode([zh], [Variable("mz * 2")])  # an expression fills
+        assert not stored_mode([zh], [Variable("nope")])
+        # explicit intent wins: a tree name or an entry range means a branch
+        assert not stored_mode(
+            [Sample(stored_dir / "ZH_sel0_histo.root", tree="events")], [Variable("mz")]
+        )
+        assert not stored_mode(
+            [Sample(stored_dir / "ZH_sel0_histo.root", entry_stop=5)], [Variable("mz")]
+        )
+        # a branch of the same name wins over the histogram
+        assert not stored_mode([Sample(stored_dir / "branch_and_histogram.root")], [Variable("mz")])
+        # a tree without that branch does not
+        assert stored_mode([Sample(stored_dir / "tree_without_branch.root")], [Variable("mz")])
+        # histograms inside directories are not matched by a bare name
+        assert not stored_mode([Sample(stored_dir / "in_directory.root")], [Variable("mz")])
+        with pytest.raises(SourceError, match="several trees"):
+            stored_mode([Sample(stored_dir / "two_trees.root")], [Variable("mz")])
+        with pytest.raises(SourceError, match="stored in the files of \\['ZH'\\] but a branch"):
+            stored_mode(
+                [zh, Sample(stored_dir / "branch_and_histogram.root", label="b")], [Variable("mz")]
+            )
+        # equally labelled samples are still judged one by one, in either order
+        twin = Sample(stored_dir / "branch_and_histogram.root", label="ZH")
+        with pytest.raises(SourceError, match="but a branch for \\['ZH'\\]"):
+            stored_mode([zh, twin], [Variable("mz")])
+        with pytest.raises(SourceError, match="but a branch for \\['ZH'\\]"):
+            stored_mode([twin, zh], [Variable("mz")])
+        assert not stored_mode([Sample({"mz": [1.0, 2.0]})], [Variable("mz")])
+
+    def test_read_scaled_and_labelled(self, stored_dir: Path) -> None:
+        zh = self._zh(stored_dir, scale=2.0, color="C3")
+        vv = Sample(
+            [stored_dir / "WW_sel0_histo.root", stored_dir / "ZZ_sel0_histo.root"], label="VV"
+        )
+        h_zh, h_vv = build_histograms([zh, vv], "mz")
+        assert h_zh.label == "ZH"
+        assert h_zh.color == "C3"
+        assert h_zh.sample is zh
+        assert h_zh.stats is None
+        assert h_zh.axis.name == "mz"
+        assert h_zh.axis.label == "m_{Z} [GeV]"
+        assert h_zh.sum_weights == pytest.approx(2.0 * 0.5 * 4000)
+        assert h_vv.sum_weights == pytest.approx(0.5 * 3000)
+        # variances scale with the square of the factor
+        assert h_zh.variances(flow=True).sum() == pytest.approx(4.0 * 0.25 * 4000)
+        # the stored title is kept unless the variable has a label; a unit is appended once
+        (h,) = build_histograms([zh], Variable("mz", label="$m_Z$", unit="GeV"))
+        assert h.axis.label == "$m_Z$ [GeV]"
+        (h,) = build_histograms([zh], Variable("mz", unit="GeV"))
+        assert h.axis.label == "m_{Z} [GeV]"
+        (h,) = build_histograms([zh], Variable("mz", unit="MeV"))
+        assert h.axis.label == "m_{Z} [GeV] [MeV]"
+        # ROOT's placeholder title gives way to the variable
+        (h,) = build_histograms([Sample(stored_dir / "other_binning.root")], "mz")
+        assert h.axis.label == "mz"
+
+    def test_luminosity_and_plain_storage(self, stored_dir: Path) -> None:
+        zh = self._zh(stored_dir, xsec=2.0, ngen="eventsProcessed")  # 2 pb, 4000 events
+        (h,) = build_histograms(
+            [zh], "mz", lumi=1.0
+        )  # 1 fb^-1 -> 2000 pb^-1... in pb: 2 * 1000 / 4000
+        assert h.sum_weights == pytest.approx(0.5 * 4000 * 2.0 * 1000.0 / 4000)
+        (plain,) = build_histograms([self._zh(stored_dir)], "mz_raw")
+        assert plain.hist.storage_type is hist.storage.Weight
+        np.testing.assert_allclose(plain.variances(flow=True), plain.values(flow=True))
+
+    def test_rebin_by_bins(self, stored_dir: Path) -> None:
+        zh = self._zh(stored_dir)
+        (h,) = build_histograms([zh], Variable("mz", bins=25))
+        assert h.axis.size == 25
+        assert h.sum_weights == pytest.approx(0.5 * 4000)
+        (h,) = build_histograms([zh], Variable("mz"))  # no preference keeps the stored binning
+        assert h.axis.size == 100
+        with pytest.raises(BinningError, match=r"stored with 100 bins.*not 30"):
+            build_histograms([zh], Variable("mz", bins=30))
+        with pytest.raises(BinningError, match="integer dividing its bin count"):
+            build_histograms([zh], Variable("mz", bins=(10, 0, 100)))
+        with pytest.raises(BinningError, match="range is fixed"):
+            build_histograms([zh], Variable("mz", range=(0, 100)))
+
+    def test_event_options_are_refused(self, stored_dir: Path) -> None:
+        zh = self._zh(stored_dir)
+        with pytest.raises(SelectionError, match="selection cannot be applied"):
+            build_histograms([zh], "mz", selection="mz > 1")
+        with pytest.raises(SelectionError, match="weight cannot be applied"):
+            build_histograms([zh], "mz", weight="w")
+        with pytest.raises(SelectionError, match="nonfinite= applies only"):
+            build_histograms([zh], "mz", nonfinite="error")
+        with pytest.raises(SelectionError, match="sample's selection"):
+            build_histograms([self._zh(stored_dir, selection="x > 1")], "mz")
+        with pytest.raises(SelectionError, match="sample's weight"):
+            build_histograms([self._zh(stored_dir, weight="w")], "mz")
+        with pytest.raises(SourceError, match="2D histogram; draw it with plot2d"):
+            build_histograms([zh], "mz_recoil_2D")
+        with pytest.raises(SourceError, match="1D histogram; draw it with plot"):
+            build_histograms_2d([zh], "mz")
+
+    def test_systematics(self, stored_dir: Path) -> None:
+        alternative = stored_dir / "WW_sel0_histo.root"
+        zh = self._zh(
+            stored_dir,
+            systematics={"norm": 0.1, "model": Systematic.samples(alternative)},
+        )
+        (h,) = build_histograms([zh], "mz", systematics={"lumi": (1.02, 0.97)})
+        assert set(h.variations) == {"norm", "model", "lumi"}
+        up, down = h.variations["norm"]
+        assert up.values().sum() == pytest.approx(1.1 * h.integral)
+        assert down.values().sum() == pytest.approx(0.9 * h.integral)
+        assert h.variations["lumi"][1].values().sum() == pytest.approx(0.97 * h.integral)
+        assert h.variations["model"][0].values(flow=True).sum() == pytest.approx(0.5 * 2000)
+        with pytest.raises(SystematicError, match="varies the weight"):
+            build_histograms([self._zh(stored_dir, systematics={"w": "w_up"})], "mz")
+        with pytest.raises(SystematicError, match="varies the branches"):
+            build_histograms([self._zh(stored_dir, systematics={"r": {"mz": ("a", "b")}})], "mz")
+        with pytest.raises(SystematicError, match="other ROOT files"):
+            build_histograms(
+                [self._zh(stored_dir, systematics={"s": Systematic.samples({"mz": [1.0]})})], "mz"
+            )
+        # rebinning applies to the variations too
+        (h,) = build_histograms([zh], Variable("mz", bins=50))
+        assert h.variations["model"][0].axes[0].size == 50
+
+    def test_variation_samples_are_checked_like_the_nominal(self, stored_dir: Path) -> None:
+        ww = stored_dir / "WW_sel0_histo.root"
+        for bad, message in (
+            (Sample(ww, selection="x > 100"), "selection cannot be applied"),
+            (Sample(ww, weight="100"), "weight cannot be applied"),
+            (Sample(ww, entry_stop=0), "entry range"),
+            (Sample(ww, tree="nope"), "tree='nope' addresses a branch"),
+            (f"{ww}:events", "tree='events' addresses a branch"),
+            ({"mz": [1.0]}, "other ROOT files"),
+        ):
+            zh = self._zh(stored_dir, systematics={"model": Systematic.samples(bad)})
+            with pytest.raises(SystematicError, match=message) as info:
+                build_histograms([zh], "mz")
+            assert "[model up]" in str(info.value) or any(
+                "[model up]" in note for note in getattr(info.value, "__notes__", [])
+            )
+        # a file lacking the histogram names itself
+        zh = self._zh(
+            stored_dir, systematics={"model": Systematic.samples(stored_dir / "in_directory.root")}
+        )
+        with pytest.raises(SourceError, match=r"in_directory\.root.*histograms present"):
+            build_histograms([zh], "mz")
+
+    def test_category_axis_is_kept(self, stored_dir: Path) -> None:
+        (h,) = build_histograms([self._zh(stored_dir, scale=2.0)], "cutflow")
+        assert type(h.axis).__name__ == "StrCategory"
+        assert list(h.axis) == ["all", "sel0", "sel1"]
+        assert h.axis.name == "cutflow"
+        assert h.axis.label == "Selection"
+        np.testing.assert_allclose(h.values(), [4000.0, 2000.0, 1000.0])
+        with pytest.raises(BinningError, match="categories of axis"):
+            build_histograms([self._zh(stored_dir)], Variable("cutflow", bins=1))
+
+    def test_two_dimensional(self, stored_dir: Path) -> None:
+        zh = self._zh(stored_dir)
+        (h,) = build_histograms_2d([zh], "mz_recoil_2D")
+        assert h.ndim == 2
+        assert [a.name for a in h.hist.axes] == ["mz_recoil_2D", "mz_recoil_2D_y"]
+        assert [a.label for a in h.hist.axes] == ["m_{Z} [GeV]", "recoil [GeV]"]
+        (h,) = build_histograms_2d(
+            [zh], Variable("mz_recoil_2D", bins=5), Variable("mz_recoil_2D", bins=4)
+        )
+        assert [a.size for a in h.hist.axes] == [5, 4]
+        with pytest.raises(SourceError, match="needs two variables"):
+            build_histograms_2d([zh], "mz * 2")
