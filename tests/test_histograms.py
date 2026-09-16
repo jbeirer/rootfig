@@ -999,6 +999,74 @@ class TestRebinnedTo:
         assert histogram.rebinned_to(3) is histogram  # the same count is a no-op
         with pytest.raises(BinningError, match="categories"):
             histogram.rebinned_to(1)
+        with pytest.raises(BinningError, match="categories of axis 'cut' into bin edges"):
+            histogram.rebinned_to([0, 3])
+
+    def test_edges_merge_aligned_bins(self) -> None:
+        h = hist.Hist(
+            hist.axis.Regular(6, 0, 6, name="x", label="X"), storage=hist.storage.Weight()
+        )
+        h.fill([0.5, 1.5, 2.5, 5.5], weight=[1.0, 2.0, 3.0, 4.0])
+        h.fill([-1.0, 7.0])  # flow bins
+        histogram = Histogram(h, label="h", variations={"s": (h * 2.0, None)})
+        assert histogram.rebinned_to([0, 1, 2, 3, 4, 5, 6]) is histogram  # its own edges
+        uniform = histogram.rebinned_to([0, 2, 4, 6])
+        assert isinstance(uniform.axis, hist.axis.Regular)  # a plain rebin keeps the axis type
+        np.testing.assert_allclose(uniform.values(), [3.0, 3.0, 4.0])
+        merged = histogram.rebinned_to([0, 1, 3, 6])
+        assert isinstance(merged.axis, hist.axis.Variable)
+        assert (merged.axis.name, merged.axis.label) == ("x", "X")
+        np.testing.assert_allclose(merged.edges, [0, 1, 3, 6])
+        np.testing.assert_allclose(merged.values(), [1.0, 5.0, 4.0])
+        np.testing.assert_allclose(merged.variances(), [1.0, 13.0, 16.0])
+        assert (merged.underflow, merged.overflow) == (1.0, 1.0)
+        np.testing.assert_allclose(merged.variations["s"][0].values(), [2.0, 10.0, 8.0])
+        np.testing.assert_allclose(merged.variations["s"][1].values(), [0.0, 0.0, 0.0])
+        np.testing.assert_allclose(
+            histogram.rebinned_to(np.array([0.0, 3.0, 6.0])).values(), [6.0, 4.0]
+        )
+        for bad, message in (
+            ([0, 2.5, 6], "no bin edge at 2.5"),
+            ([1, 3, 6], "range of a histogram that already exists is fixed"),
+            ([0, 3, 7], "range of a histogram that already exists is fixed"),
+            ([0, 6, 3], "strictly increasing"),
+            ([3, None], "got 2 bin counts for a 1D"),
+        ):
+            with pytest.raises(BinningError, match=message):
+                histogram.rebinned_to(bad)
+        # a uniform merge of a transformed axis keeps the transform
+        log = hist.Hist(
+            hist.axis.Regular(4, 1, 1e4, name="l", transform=hist.axis.transform.log),
+            storage=hist.storage.Weight(),
+        )
+        kept = Histogram(log, label="l").rebinned_to([1, 100, 1e4]).axis
+        assert isinstance(kept, hist.axis.Regular)
+        np.testing.assert_allclose(kept.edges, [1, 100, 1e4])
+
+    def test_edges_per_axis_and_flowless_axes(self) -> None:
+        h = hist.Hist(
+            hist.axis.Regular(4, 0, 4, name="x"),
+            hist.axis.Regular(6, 0, 6, name="y"),
+            storage=hist.storage.Weight(),
+        )
+        h.fill([0.5, 1.5, 2.5, 3.5], [0.5, 1.5, 4.5, 5.5])
+        h.fill([-1.0], [7.0])
+        merged = Histogram(h, label="h").rebinned_to([[0, 1, 4], 3])
+        assert [(type(a).__name__, a.size) for a in merged.hist.axes] == [
+            ("Variable", 2),
+            ("Regular", 3),
+        ]
+        np.testing.assert_allclose(merged.values(), [[1, 0, 0], [1, 0, 2]])
+        assert merged.hist.values(flow=True).sum() == h.values(flow=True).sum()
+        with pytest.raises(BinningError, match="got 3 bin counts for a 2D"):
+            Histogram(h, label="h").rebinned_to([0, 1, 4])
+        no_flow = hist.Hist(
+            hist.axis.Regular(4, 0, 4, name="x", flow=False), storage=hist.storage.Weight()
+        ).fill([0.5, 3.5])
+        merged = Histogram(no_flow, label="n").rebinned_to([0, 1, 4])
+        np.testing.assert_allclose(merged.values(), [1.0, 1.0])
+        assert not merged.axis.traits.underflow
+        assert not merged.axis.traits.overflow
 
 
 class TestAxisRenaming:
@@ -1716,17 +1784,44 @@ class TestStoredHistograms:
         assert not stored_mode([Sample(stored_dir / "in_directory.root")], [Variable("mz")])
         with pytest.raises(SourceError, match="several trees"):
             stored_mode([Sample(stored_dir / "two_trees.root")], [Variable("mz")])
-        with pytest.raises(SourceError, match="stored in the files of \\['ZH'\\] but a branch"):
+        with pytest.raises(
+            SourceError,
+            match=r"stored in the files of \['ZH'\], but not for every sample \('b': tree "
+            r"'events' has a branch of that name, which wins\)",
+        ):
             stored_mode(
                 [zh, Sample(stored_dir / "branch_and_histogram.root", label="b")], [Variable("mz")]
             )
         # equally labelled samples are still judged one by one, in either order
         twin = Sample(stored_dir / "branch_and_histogram.root", label="ZH")
-        with pytest.raises(SourceError, match="but a branch for \\['ZH'\\]"):
-            stored_mode([zh, twin], [Variable("mz")])
-        with pytest.raises(SourceError, match="but a branch for \\['ZH'\\]"):
-            stored_mode([twin, zh], [Variable("mz")])
+        for order in ([zh, twin], [twin, zh]):
+            with pytest.raises(
+                SourceError, match=r"\['ZH'\], but not for every sample \('ZH': tree"
+            ):
+                stored_mode(order, [Variable("mz")])
+        # the diagnostic says why each other sample is not read that way
+        for other, reason in (
+            (Sample({"mz": [1.0, 2.0]}, label="m"), "'m': in-memory arrays .* hold no stored"),
+            (
+                Sample(stored_dir / "ZH_sel0_histo.root", tree="events", label="t"),
+                "'t': tree='events' addresses a branch",
+            ),
+            (
+                Sample(stored_dir / "ZH_sel0_histo.root", entry_stop=5, label="e"),
+                "'e': an entry range addresses a tree",
+            ),
+            (
+                Sample(stored_dir / "in_directory.root", label="d"),
+                r"'d': '.*in_directory\.root' holds no histogram of that name",
+            ),
+        ):
+            with pytest.raises(SourceError, match=reason):
+                stored_mode([zh, other], [Variable("mz")])
         assert not stored_mode([Sample({"mz": [1.0, 2.0]})], [Variable("mz")])
+        # a histogram inside a directory is named by its path in backticks
+        assert stored_mode([Sample(stored_dir / "in_directory.root")], [Variable("`sub/mz`")])
+        (nested,) = build_histograms([Sample(stored_dir / "in_directory.root")], "`sub/mz`")
+        assert nested.sum_weights == 500
 
     def test_read_scaled_and_labelled(self, stored_dir: Path) -> None:
         zh = self._zh(stored_dir, scale=2.0, color="C3")
@@ -1774,9 +1869,21 @@ class TestStoredHistograms:
         assert h.axis.size == 100
         with pytest.raises(BinningError, match=r"has 100 bins.*not 30"):
             build_histograms([zh], Variable("mz", bins=30))
-        with pytest.raises(BinningError, match="integer dividing its bin count"):
+        # edges that coincide with the stored ones merge the bins between them
+        (h,) = build_histograms([zh], Variable("mz", bins=(50, 0, 250)))
+        assert h.axis.size == 50
+        (h,) = build_histograms([zh], Variable("mz", bins=10, range=(0, 250)))
+        assert h.axis.size == 10
+        (h,) = build_histograms([zh], Variable("mz", bins=[0, 100, 150, 250]))
+        assert isinstance(h.axis, hist.axis.Variable)
+        np.testing.assert_allclose(h.edges, [0, 100, 150, 250])
+        assert h.sum_weights == pytest.approx(0.5 * 4000)
+        # the stored range is fixed and only its own edges can be kept
+        with pytest.raises(BinningError, match="range of a histogram that already exists is fixed"):
             build_histograms([zh], Variable("mz", bins=(10, 0, 100)))
-        with pytest.raises(BinningError, match="range is fixed"):
+        with pytest.raises(BinningError, match="no bin edge at 101"):
+            build_histograms([zh], Variable("mz", bins=[0, 101, 250]))
+        with pytest.raises(BinningError, match="axis range is fixed"):
             build_histograms([zh], Variable("mz", range=(0, 100)))
 
     def test_event_options_are_refused(self, stored_dir: Path) -> None:

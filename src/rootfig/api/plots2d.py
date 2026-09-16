@@ -13,6 +13,7 @@ from rootfig.api._hists import (
     histogram_objects,
     rebin_ready_made,
     reject_fill_options,
+    require_dimension,
     wrap_histograms,
 )
 from rootfig.errors import BinningError, SelectionError
@@ -91,7 +92,8 @@ def plot2d(
     may name a ``TH2`` stored in the file (its label, unit and ``log`` flag then
     describe the x axis; the y axis keeps the stored title), and ``data`` may be
     a 2D ``hist.Hist`` or :class:`~rootfig.histograms.Histogram` with ``x`` and
-    ``y`` omitted. For both, integer ``bins`` merge bins per axis.
+    ``y`` omitted. For both, ``bins`` merges bins per axis as in :func:`plot`:
+    an integer count, or edges that coincide with the existing ones.
     ``assume_poisson`` accepts such a histogram without variances, as in
     :func:`plot`.
     """
@@ -110,9 +112,9 @@ def plot2d(
         if len(objects) != 1:
             msg = f"plot2d() draws a single histogram, got {len(objects)}"
             raise ValueError(msg)
-        [histogram_] = rebin_ready_made(
-            wrap_histograms(objects, assume_poisson=assume_poisson), _split_bins(bins)
-        )
+        wrapped = wrap_histograms(objects, assume_poisson=assume_poisson)
+        require_dimension(wrapped, 2, "plot2d")
+        [histogram_] = rebin_ready_made(wrapped, _split_bins(bins))
         var_x: Variable | None = None
         is_data = histogram_.is_data
         logx, logy = bool(logx), bool(logy)

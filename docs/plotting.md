@@ -491,21 +491,27 @@ no branch of that name. Anything else fills from the tree as usual: an explicit
 `tree=` always means a branch, a branch of the same name wins over a histogram,
 a file with several trees next to the histogram raises (pass `tree=` for a
 branch, or read the histogram with `FileSource.read_histogram`), and samples
-that disagree raise. Histograms inside directories are not matched by a bare
-name; `FileSource.read_histogram("dir/name")` reads them.
+that disagree raise with the reason per sample. A histogram inside a directory
+is named by its path in backticks, like a branch with odd characters:
+`` rf.plot("histo.root", "`selection/mz`") ``.
 
 What a stored histogram supports:
 
 - The files of one `Sample` are summed (they must agree on the binning);
   `scale`, `color`, `is_data`, `histtype` and the luminosity scaling
   (`Sample(xsec=..., ngen=...)` with `lumi=`, `ngen` may name a `TParameter`
-  in the same file) apply as for trees.
+  or a sum-of-weights histogram in the same file) apply as for trees. A file
+  without a tree has no entries to count, so it needs `ngen`.
 - The stored axis title is the x label unless `xlabel=`/a `Variable` label is
   given; a `unit=` is appended to it and, as for trees, feeds the bin-width y
   label (`Events / 5 GeV`). A title that ends in `[unit]` already supplies it.
-- An integer `bins=` merges adjacent bins down to that count (it must divide
-  the stored count); with `bins=None` the stored binning is kept. Edges or a
-  range cannot be applied: use `xlim=` to zoom.
+- `bins=` merges the stored bins: an integer count (it must divide the stored
+  count), or edges that coincide with the stored ones (`(n, low, high)`, a
+  sequence of edges, or an `int` with `range=(low, high)`) and merge the bins
+  between them. The `Variable` written for the tree therefore also describes
+  the histogram filled from it, as its own edges or a coarser aligned set. With
+  `bins=None` the stored binning is kept. Other edges cannot be made, and a
+  range alone cannot be applied: use `xlim=` to zoom.
 - Normalisation, stacks, ratios, `flow` and the other drawing options work
   unchanged. Systematics of the normalisation kind (`{"lumi": 0.02}`) and
   `Systematic.samples(other_files)` (the same histogram read from other files)
@@ -527,10 +533,14 @@ drawn as they are: `rf.plot([h_sig, h_bkg], label=["Signal", "Background"],
 ratio=True)`. `label=` names plain `hist.Hist` objects (otherwise their first
 axis name is used), `observed=` takes histogram objects for the data,
 `variable=` optionally supplies the axis label, unit and `log` flag, and
-`rf.plot2d(h2)` draws a 2D one. As for stored histograms, an integer `bins=`
-(given directly or on the `Variable`) merges bins down to that count; other
-binning specifications, a `range`, and the options that fill from event data
-(`tree`, `selection`, `weight`, `lumi`, `systematics`) raise.
-`Histogram.variations` carries systematics instead. Stacks, sums and ratios
-of histograms with category axes (ROOT bin labels) require the same
-categories in the same order.
+`rf.plot2d(h2)` draws a 2D one. As for stored histograms, `bins=` (given
+directly or on the `Variable`) merges bins: an integer count, or edges that
+coincide with the existing ones, so the `Variable` a histogram was filled with
+can be passed along with it (`rf.plot(rf.histogram(sample, pt), pt)`). A
+`range` alone and the options that fill from event data (`tree`, `selection`,
+`weight`, `lumi`, `systematics`) raise. `Histogram.variations` carries
+systematics instead. Stacks, sums and ratios of histograms with category axes
+(ROOT bin labels) require the same categories in the same order; the flow bins
+of such an axis hold entries of categories it does not list, which
+`flow="hint"` marks with an arrow and `flow="show"`/`flow="sum"` refuse, since
+they have no bin beyond the last category.

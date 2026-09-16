@@ -10,7 +10,7 @@ import hist
 
 from rootfig._typing import Hist
 from rootfig.histograms import Histogram, as_weight_storage
-from rootfig.model import DEFAULT_RANGE
+from rootfig.model.binning import Bins, RangeSpec, merge_target
 
 _UNIT_SUFFIX = re.compile(r"\[([^\[\]]+)\]\s*$")
 
@@ -87,38 +87,39 @@ def reject_fill_options(what: str, **options: Any) -> None:
         raise ValueError(msg)
 
 
-def rebin_ready_made(
-    histograms: Sequence[Histogram], bins: Sequence[Any], *, range_: Any = None
-) -> list[Histogram]:
-    """Merge the bins of ready-made histograms down to ``bins`` counts, one per axis.
+def require_dimension(histograms: Sequence[Histogram], ndim: int, function: str) -> None:
+    """Raise if a histogram object has another dimensionality than ``function`` draws.
 
-    A ready-made histogram (stored in a file or given as an object) keeps its
-    binning unless an integer count asks for fewer bins, exactly as
-    :func:`~rootfig.histograms.read_stored` does; ``None`` keeps an axis.
-    Anything else is refused: edges or ``(n, low, high)`` cannot be applied
-    to bins that already exist, and neither can a range (``xlim=`` zooms).
+    Checked before anything is done to the histograms, so the message names the
+    function to use instead of failing on an axis that does not exist.
     """
-    if range_ not in (None, DEFAULT_RANGE):
-        msg = (
-            "the axis range of a ready-made histogram is fixed; use xlim= to zoom, or merge "
-            "bins with an integer bins="
-        )
-        raise ValueError(msg)
-    counts: list[int | None] = []
-    for spec in bins:
-        if spec is None:
-            counts.append(None)
-        elif isinstance(spec, int) and not isinstance(spec, bool):
-            counts.append(spec)
-        else:
+    for histogram_ in histograms:
+        if histogram_.ndim != ndim:
             msg = (
-                "a ready-made histogram can only be rebinned by merging adjacent bins, so bins= "
-                f"must be an integer dividing its bin count, not {spec!r}"
+                f"{function}() draws {'one' if ndim == 1 else 'two'}-dimensional histograms, got "
+                f"{histogram_.ndim}D ({histogram_.label!r}); use "
+                f"{'plot2d' if ndim == 1 else 'plot'}()"
             )
             raise ValueError(msg)
-    if all(count is None for count in counts):
+
+
+def rebin_ready_made(
+    histograms: Sequence[Histogram], bins: Sequence[Bins | None], *, range_: RangeSpec = None
+) -> list[Histogram]:
+    """Merge the bins of ready-made histograms as the ``bins`` specifications ask, one per axis.
+
+    A ready-made histogram (stored in a file or given as an object) keeps its
+    binning unless a specification asks for fewer bins: an integer count merges
+    adjacent bins down to it, and explicit edges (also ``(n, low, high)`` or an
+    ``int`` with a ``(low, high)`` range) must coincide with the existing edges
+    and merge the bins between them, exactly as
+    :func:`~rootfig.histograms.read_stored` does (see
+    :func:`~rootfig.model.binning.merge_target`). ``None`` keeps an axis.
+    """
+    targets = [merge_target(spec, range_) for spec in bins]
+    if all(target is None for target in targets):
         return list(histograms)
-    return [histogram_.rebinned_to(counts) for histogram_ in histograms]
+    return [histogram_.rebinned_to(targets) for histogram_ in histograms]
 
 
 def unit_of(axis_label: str | None) -> str | None:

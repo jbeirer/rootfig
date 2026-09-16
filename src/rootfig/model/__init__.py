@@ -5,9 +5,11 @@ from rootfig.model.binning import (
     DEFAULT_RANGE,
     Axis,
     Bins,
+    MergeTarget,
     RangeSpec,
     auto_range,
     log_bins,
+    merge_target,
     resolve_axis,
 )
 from rootfig.model.cuts import Cut, CutLike, as_cut
@@ -28,6 +30,7 @@ __all__ = [
     "Bins",
     "Cut",
     "CutLike",
+    "MergeTarget",
     "RangeSpec",
     "Sample",
     "Style",
@@ -43,5 +46,6 @@ __all__ = [
     "as_variable",
     "auto_range",
     "log_bins",
+    "merge_target",
     "resolve_axis",
 ]

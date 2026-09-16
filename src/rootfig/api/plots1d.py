@@ -10,6 +10,7 @@ from rootfig.api._hists import (
     histogram_objects,
     rebin_ready_made,
     reject_fill_options,
+    require_dimension,
     unit_of,
     wrap_histograms,
 )
@@ -139,7 +140,8 @@ def plot(
         Branch name or expression (see :mod:`rootfig.expressions`), the name of
         a histogram stored in the files, or a :class:`~rootfig.model.Variable`
         carrying binning and labels. Optional for histogram objects, where it
-        only supplies the labels, unit and ``log`` flag.
+        supplies the labels, unit and ``log`` flag and, through ``bins``, a
+        binning to merge them to.
     tree
         Tree name for file inputs; auto-detected when a file holds one tree.
     selection
@@ -159,7 +161,10 @@ def plot(
         Binning: an ``int`` (range inferred from the data), ``(n, low, high)``,
         bin edges, or a ``hist`` axis. Overrides the ``Variable``'s binning. A
         histogram that already exists (stored or object) keeps its binning
-        unless an ``int`` asks for fewer bins, which must divide its count.
+        unless asked for fewer bins: an ``int`` must divide its count, and
+        explicit edges must coincide with its own (a ``Variable`` written for
+        the tree describes the histogram filled from it) and merge the bins
+        between them.
     range
         Range for integer ``bins``: ``(low, high)``, ``"robust"`` (the default)
         or ``"auto"``. ``"robust"`` ignores values far from the bulk of the data,
@@ -279,6 +284,7 @@ def plot(
                 msg = "observed= must be histogram objects when data are histogram objects"
                 raise TypeError(msg)
             hists += wrap_histograms(observed_objects, assume_poisson=assume_poisson, is_data=True)
+        require_dimension(hists, 1, "plot")
         hists = rebin_ready_made(
             hists,
             [bins if var is None else var.bins],
@@ -608,10 +614,8 @@ def _significance_setup(
             raise ValueError(msg)
         signal = matches[0]
     others = [h for h in mc if h is not signal]
-    total = others[0].hist.copy()
-    for h in others[1:]:
-        total = total + h.hist
-    return signal, Histogram(total, label="Background", normalization=others[0].normalization)
+    # summed like a stack total: bin by bin, whatever the axis names and labels, checked
+    return signal, sum_histograms(others, label="Background")
 
 
 def _ratio_setup(

@@ -24,9 +24,11 @@ __all__ = [
     "ROBUST_THRESHOLD",
     "Axis",
     "Bins",
+    "MergeTarget",
     "RangeSpec",
     "auto_range",
     "log_bins",
+    "merge_target",
     "resolve_axis",
     "validate_bins",
 ]
@@ -66,6 +68,10 @@ DEFAULT_RANGE: RangeSpec = "robust"
 DEFAULT_BINS: int = 50
 """Number of bins used to fill from a tree when a :class:`~rootfig.model.Variable` names none
 (``bins=None``). A histogram stored in a file keeps its own binning instead."""
+
+MergeTarget: TypeAlias = int | np.ndarray | None
+"""What the axis of a histogram that already exists is merged to: a bin count, the edges to
+end up with, or ``None`` to keep it (see :func:`merge_target`)."""
 
 
 # --------------------------------------------------------------------------------------
@@ -126,6 +132,48 @@ def validate_bins(bins: Bins | None, range_: RangeSpec) -> None:
     if not np.all(np.isfinite(edges)):
         msg = "bin edges must be finite"
         raise BinningError(msg)
+
+
+def merge_target(bins: Bins | None, range_: RangeSpec = None) -> MergeTarget:
+    """Interpret a binning specification for a histogram that already exists.
+
+    A stored or ready-made histogram has its bins; a specification can only ask
+    to merge them. ``None`` keeps the axis. An ``int`` whose range would be
+    inferred (``"auto"``, ``"robust"`` or unset) is a bin count: the axis is
+    merged down to that many bins. Everything that pins the edges (an ``int``
+    with a ``(low, high)`` range, ``(n, low, high)``, a sequence of edges, a
+    ``hist`` axis) returns those edges, and the caller merges the bins between
+    them (:meth:`~rootfig.histograms.Histogram.rebinned_to`), so a
+    :class:`~rootfig.model.Variable` written for a tree also describes the
+    histogram it was filled into.
+
+    Raises
+    ------
+    BinningError
+        If the specification is invalid, or a ``(low, high)`` range comes
+        without a bin count: the range of an existing histogram is fixed, so a
+        range alone can only mean a zoom, which is ``xlim=``.
+    """
+    validate_bins(bins, range_)
+    if bins is None:
+        if isinstance(range_, tuple):
+            msg = (
+                f"range={range_!r} cannot be applied to a histogram that already exists: its "
+                "axis range is fixed. Use xlim= to zoom, or bins= with the edges to merge its "
+                "bins to"
+            )
+            raise BinningError(msg)
+        return None
+    if isinstance(bins, hist.axis.Regular | hist.axis.Variable):
+        return np.asarray(bins.edges, dtype=float)
+    if isinstance(bins, int):
+        if isinstance(range_, tuple):
+            return np.linspace(range_[0], range_[1], bins + 1)
+        return bins
+    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):
+        n, low, high = bins
+        return np.linspace(float(low), float(high), int(n) + 1)
+    return _edges_from(bins)
 
 
 def _validate_range(range_: tuple[float, float]) -> None:

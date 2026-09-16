@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import hist
 import numpy as np
 
 from rootfig._mapping import FrozenMapping
-from rootfig._storage import as_weight_storage, same_axis, same_binning
+from rootfig._storage import as_weight_storage, is_category, same_axis, same_binning
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, SystematicError
 from rootfig.histograms.stats import Summary
@@ -22,12 +22,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Histogram",
+    "RebinTarget",
     "as_weight_storage",
     "compatible_binning",
     "fill",
     "from_sample",
     "mirror",
 ]
+
+RebinTarget: TypeAlias = int | Sequence[float] | np.ndarray | None
+"""What :meth:`Histogram.rebinned_to` makes of one axis: a bin count, the edges to merge to,
+or ``None`` to keep it."""
 
 
 def compatible_binning(a: Hist, b: Hist) -> bool:
@@ -312,7 +317,7 @@ class Histogram:
         for axis, step in zip(self.hist.axes, factors, strict=True):
             if step == 1:
                 continue
-            if isinstance(axis, hist.axis.StrCategory | hist.axis.IntCategory):
+            if is_category(axis):
                 msg = f"cannot merge the categories of axis {axis.label or axis.name!r}"
                 raise BinningError(msg)
             if axis.size % step:
@@ -332,42 +337,170 @@ class Histogram:
 
         return self.map_hists(merge)
 
-    def rebinned_to(self, bins: int | Sequence[int | None]) -> Histogram:
-        """Return a copy whose axes have ``bins`` bins (one count per axis, ``None`` keeps one).
+    def rebinned_to(self, bins: RebinTarget | Sequence[RebinTarget]) -> Histogram:
+        """Return a copy whose axes are merged to ``bins``: a bin count or edges per axis.
 
-        Adjacent bins are merged as by :meth:`rebinned`, so every count must
-        divide the axis' bin count; the message names the counts that would.
+        A count merges adjacent bins as :meth:`rebinned` does, so it must divide
+        the axis' bin count (the message names the counts that would). Edges
+        must each coincide with an edge of the axis, the first and last with its
+        ends, and the bins between two of them are merged into one; uniform
+        groups keep the axis type (a ``Regular`` axis stays ``Regular``), others
+        give a ``Variable`` axis. Edges that are exactly the axis' own leave it
+        unchanged. ``None`` keeps an axis. A one-dimensional histogram takes the
+        count or the edges directly; otherwise give one entry per axis.
 
         Raises
         ------
         BinningError
-            If a count does not divide the axis' bin count, is not a positive
-            integer, or the sequence does not have one entry per axis; and
-            whatever :meth:`rebinned` refuses.
+            If a count does not divide the axis' bin count or is not a positive
+            integer, an edge is not one of the axis' edges or the first and last
+            are not its ends (the range of an existing histogram is fixed), the
+            sequence does not have one entry per axis, or the axis is
+            categorical; and whatever :meth:`rebinned` refuses.
         """
-        wanted: list[Any] = list(bins) if isinstance(bins, Sequence) else [bins] * self.ndim
-        if len(wanted) != self.ndim:
-            msg = f"got {len(wanted)} bin counts for a {self.ndim}D histogram"
-            raise BinningError(msg)
-        factors = []
-        for axis, count in zip(self.hist.axes, wanted, strict=True):
-            if count is None:
-                factors.append(1)
-            elif not _is_positive_integer(count) or axis.size % int(count):
+        wanted = _targets_per_axis(bins, self.ndim)
+        factors: list[int] = []
+        boundaries: list[np.ndarray | None] = []
+        for axis, target in zip(self.hist.axes, wanted, strict=True):
+            groups: np.ndarray | None = None
+            if target is None:
+                factor = 1
+            elif _is_edges(target):
+                groups = _merge_boundaries(axis, np.asarray(target, dtype=float))
+                steps = np.diff(groups)
+                # uniform groups are a plain rebin, which keeps the axis type and transform
+                factor, groups = (int(steps[0]), None) if np.all(steps == steps[0]) else (1, groups)
+            elif not _is_positive_integer(target) or axis.size % int(target):
                 possible = [axis.size // d for d in range(1, axis.size + 1) if axis.size % d == 0]
                 msg = (
                     f"axis {axis.label or axis.name!r} has {axis.size} bins, which can be merged "
-                    f"into {possible} bins, not {count!r}"
+                    f"into {possible} bins, not {target!r}"
                 )
                 raise BinningError(msg)
             else:
-                factors.append(axis.size // int(count))
-        return self.rebinned(factors)
+                factor = axis.size // int(target)
+            factors.append(factor)
+            boundaries.append(groups)
+        result = self.rebinned(factors)
+        if all(groups is None for groups in boundaries):
+            return result
+        return result.map_hists(lambda h: _merge_to_edges(h, boundaries))
 
 
 def _is_positive_integer(value: object) -> bool:
     """Return True for ``1``, ``2``, ``numpy.int64(3)``, ...; not for bools, floats or strings."""
     return isinstance(value, int | np.integer) and not isinstance(value, bool) and int(value) >= 1
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, int | float | np.number) and not isinstance(value, bool)
+
+
+def _is_edges(value: object) -> bool:
+    """Return True for a flat sequence of at least two numbers (bin edges, not a count)."""
+    if isinstance(value, np.ndarray):
+        return value.ndim == 1 and value.size >= 2 and np.issubdtype(value.dtype, np.number)
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, str)
+        and len(value) >= 2
+        and all(_is_number(v) for v in value)
+    )
+
+
+def _targets_per_axis(bins: Any, ndim: int) -> list[Any]:
+    """Return one :data:`RebinTarget` per axis for the ``bins`` given to :meth:`rebinned_to`."""
+    if bins is None or _is_number(bins):
+        return [bins] * ndim
+    if ndim == 1 and _is_edges(bins):
+        return [bins]
+    wanted = list(bins)
+    if len(wanted) != ndim:
+        msg = (
+            f"got {len(wanted)} bin counts for a {ndim}D histogram; give one count or edge "
+            "sequence per axis"
+        )
+        raise BinningError(msg)
+    return wanted
+
+
+def _merge_boundaries(axis: Any, edges: np.ndarray) -> np.ndarray:
+    """Return the positions of ``edges`` among the edges of ``axis`` (a merge of its bins).
+
+    Every requested edge must coincide with one of the axis' edges (to a
+    millionth of its smallest bin width, as :func:`~rootfig._storage.same_axis`
+    compares), the first and last with its ends: the range of a histogram that
+    already exists cannot change.
+    """
+    name = axis.label or axis.name
+    if is_category(axis):
+        msg = f"cannot merge the categories of axis {name!r} into bin edges"
+        raise BinningError(msg)
+    if edges.ndim != 1 or edges.size < 2 or not np.all(np.diff(edges) > 0):
+        msg = f"bin edges must be strictly increasing, got {edges.tolist()!r}"
+        raise BinningError(msg)
+    own = np.asarray(axis.edges, dtype=float)
+    extent = f"its {axis.size} bins run from {own[0]:g} to {own[-1]:g}"
+    if not (np.isclose(edges[0], own[0]) and np.isclose(edges[-1], own[-1])):
+        msg = (
+            f"the range of a histogram that already exists is fixed: {extent}, and bins from "
+            f"{edges[0]:g} to {edges[-1]:g} were asked for. Use xlim= to zoom, or edges that end "
+            "where the axis does"
+        )
+        raise BinningError(msg)
+    positions = np.clip(np.searchsorted(own, edges), 1, own.size - 1)
+    positions = np.where(
+        np.abs(own[positions - 1] - edges) < np.abs(own[positions] - edges),
+        positions - 1,
+        positions,
+    )
+    tolerance = 1e-6 * float(np.diff(own).min())
+    missing = edges[np.abs(own[positions] - edges) > tolerance]
+    if missing.size:
+        msg = (
+            f"axis {name!r} has no bin edge at {missing[0]:g}: {extent} and only its own edges "
+            "can be kept when merging its bins. Fill from the tree to bin freely"
+        )
+        raise BinningError(msg)
+    return positions
+
+
+def _merge_to_edges(h: Hist, boundaries: Sequence[np.ndarray | None]) -> Hist:
+    """Merge the bins of ``h`` between the ``boundaries`` of each axis (``None`` keeps an axis).
+
+    Contents and variances add up and the flow bins are kept; a merged axis
+    becomes a ``Variable`` axis with the same name, label and flow bins.
+    """
+    axes = []
+    values = np.asarray(h.values(flow=True), dtype=float)
+    variances = np.asarray(h.variances(flow=True), dtype=float)
+    for index, (axis, groups) in enumerate(zip(h.axes, boundaries, strict=True)):
+        if groups is None:
+            axes.append(axis)
+            continue
+        traits = axis.traits
+        axes.append(
+            hist.axis.Variable(
+                np.asarray(axis.edges, dtype=float)[groups],
+                name=axis.name,
+                label=axis.label,
+                underflow=traits.underflow,
+                overflow=traits.overflow,
+            )
+        )
+        # groups are visible edge positions; in flow coordinates the underflow cell comes
+        # first and the overflow cell last, each as a group of its own
+        offset = 1 if traits.underflow else 0
+        starts = [*([0] if traits.underflow else []), *(offset + groups[:-1])]
+        if traits.overflow:
+            starts.append(offset + axis.size)
+        values = np.add.reduceat(values, starts, axis=index)
+        variances = np.add.reduceat(variances, starts, axis=index)
+    merged = hist.Hist(*axes, storage=hist.storage.Weight())
+    view: Any = merged.view(flow=True)
+    view.value = values
+    view.variance = variances
+    return merged
 
 
 def from_sample(

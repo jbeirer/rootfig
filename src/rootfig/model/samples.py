@@ -161,10 +161,20 @@ class Sample:
                 raise LuminosityError(msg)
             return float(reader(self.ngen))
         counter = getattr(self.source, "num_entries", None)
-        if callable(counter):
-            return float(counter())
-        first = self.source.branches()[:1]
-        return float(len(next(iter(self.source.arrays(first).values()))))
+        try:
+            if callable(counter):
+                return float(counter())
+            first = self.source.branches()[:1]
+            return float(len(next(iter(self.source.arrays(first).values()))))
+        except SourceError as exc:
+            # a file of stored histograms has no tree whose entries could stand in for ngen
+            msg = (
+                f"sample {self.label!r} has a cross section but no ngen=, so its generated "
+                f"events would be counted from the tree, which cannot be read ({exc}). Pass "
+                "ngen=<number>, or ngen='<object>' naming a sum-of-weights histogram or "
+                "TParameter in the file (such as 'eventsProcessed')"
+            )
+            raise LuminosityError(msg) from exc
 
     def lumi_scale(self, lumi: float | str | None) -> float:
         """Factor turning weights into expected yields at ``lumi``; 1 without a cross section.

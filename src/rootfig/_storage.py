@@ -17,7 +17,7 @@ import numpy as np
 from rootfig._typing import Hist
 from rootfig.errors import RootfigWarning
 
-__all__ = ["add_hists", "add_into", "as_weight_storage", "same_axis", "same_binning"]
+__all__ = ["add_hists", "add_into", "as_weight_storage", "is_category", "same_axis", "same_binning"]
 
 _COUNT_STORAGES = (
     hist.storage.Double,
@@ -125,8 +125,8 @@ def same_axis(axis_a: Any, axis_b: Any, *, flow: bool = True) -> bool:
         axis_b.traits.overflow,
     ):
         return False
-    if _is_category(axis_a) or _is_category(axis_b):
-        both = _is_category(axis_a) and _is_category(axis_b)
+    if is_category(axis_a) or is_category(axis_b):
+        both = is_category(axis_a) and is_category(axis_b)
         return both and list(axis_a) == list(axis_b)
     edges_a, edges_b = np.asarray(axis_a.edges, dtype=float), np.asarray(axis_b.edges, dtype=float)
     if edges_a.shape != edges_b.shape:
@@ -135,7 +135,8 @@ def same_axis(axis_a: Any, axis_b: Any, *, flow: bool = True) -> bool:
     return bool(np.allclose(edges_a, edges_b, rtol=0.0, atol=tolerance))
 
 
-def _is_category(axis: Any) -> bool:
+def is_category(axis: Any) -> bool:
+    """Return True for a category axis (``StrCategory``/``IntCategory``: labelled bins)."""
     return isinstance(axis, hist.axis.StrCategory | hist.axis.IntCategory)
 
 

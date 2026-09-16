@@ -835,3 +835,23 @@ class TestSystematic:
             restored.systematics["new"] = Systematic("norm", 1.1)
         with pytest.raises(TypeError):
             restored.systematics["shape"].up["x"] = "changed"
+
+
+class TestMergeTarget:
+    def test_count_edges_or_nothing(self) -> None:
+        from rootfig.model import merge_target
+
+        assert merge_target(None) is None
+        assert merge_target(None, "auto") is None
+        assert merge_target(20) == 20
+        assert merge_target(20, "robust") == 20
+        np.testing.assert_allclose(merge_target(2, (0.0, 4.0)), [0.0, 2.0, 4.0])  # type: ignore[arg-type]
+        np.testing.assert_allclose(merge_target((2, 0, 4)), [0.0, 2.0, 4.0])  # type: ignore[arg-type]
+        np.testing.assert_allclose(merge_target([0, 1, 4]), [0.0, 1.0, 4.0])  # type: ignore[arg-type]
+        np.testing.assert_allclose(merge_target(hist.axis.Regular(2, 0, 4)), [0.0, 2.0, 4.0])  # type: ignore[arg-type]
+        with pytest.raises(BinningError, match="axis range is fixed"):
+            merge_target(None, (0.0, 4.0))
+        with pytest.raises(BinningError, match="strictly increasing"):
+            merge_target([0, 4, 1])
+        with pytest.raises(BinningError, match="positive"):
+            merge_target(0)

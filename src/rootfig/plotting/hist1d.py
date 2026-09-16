@@ -13,6 +13,7 @@ import numpy as np
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 
+from rootfig._storage import is_category
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram
 from rootfig.histograms.ratio import compatible_binning
@@ -95,6 +96,7 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
     if not histograms:
         return [], (False, False)
     _require_same_binning(histograms, "flow='show'")
+    _reject_category_flow(histograms, "flow='show'")
     edges = histograms[0].edges
     under = any(_flow_content(h, 0) for h in histograms)
     over = any(_flow_content(h, -1) for h in histograms)
@@ -135,6 +137,7 @@ def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
     same way. The flow bins of the returned histograms are empty (values and
     variances).
     """
+    _reject_category_flow(histograms, "flow='sum'")
 
     def fold(h: Any) -> Any:
         new = h.copy()
@@ -178,6 +181,27 @@ def _flow_content(histogram: Histogram, side: int) -> bool:
 def _has_content(value: float, variance: float) -> bool:
     """Return True if a flow bin holds any weight (also negative or cancelling to zero)."""
     return bool(value != 0.0 or variance > 0.0)
+
+
+def _reject_category_flow(histograms: Sequence[Histogram], what: str) -> None:
+    """Refuse ``what`` for a category axis whose flow bin holds entries.
+
+    The overflow of a category axis collects the entries of categories the axis
+    does not list. They have no place beyond the last category, so neither an
+    extra bin nor folding them into that category represents them; the arrow of
+    ``flow="hint"`` only says they exist.
+    """
+    for histogram in histograms:
+        if is_category(histogram.axis) and (
+            _flow_content(histogram, 0) or _flow_content(histogram, -1)
+        ):
+            msg = (
+                f"{what} needs numeric bins: the flow bins of the category axis of "
+                f"{histogram.label!r} hold entries of categories it does not list "
+                f"({list(histogram.axis)}), which have no bin beyond the last category. Use "
+                "flow='hint' or flow='none', or add the category to the histogram"
+            )
+            raise BinningError(msg)
 
 
 def _require_same_binning(histograms: Sequence[Histogram], what: str) -> None:

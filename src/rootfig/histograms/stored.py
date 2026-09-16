@@ -1,7 +1,8 @@
 """Histograms already stored in ROOT files, read instead of filled.
 
-A variable that is a bare name (``"mz"``) may address a ``TH1``/``TH2`` object
-stored under that name rather than a branch. :func:`stored_mode` decides,
+A variable that is a bare name (``"mz"``, or ``"`sel/mz`"`` for a histogram
+inside a directory) may address a ``TH1``/``TH2`` object stored under that name
+rather than a branch. :func:`stored_mode` decides,
 deterministically, whether a set of samples is read that way, and
 :func:`read_stored` turns the stored histograms into
 :class:`~rootfig.histograms.Histogram` objects with the sample's label, colour,
@@ -18,10 +19,10 @@ from os import PathLike
 from typing import Any
 
 from rootfig._typing import Hist
-from rootfig.errors import BinningError, SelectionError, SourceError, SystematicError, annotate
+from rootfig.errors import SelectionError, SourceError, SystematicError, annotate
 from rootfig.histograms.build import Histogram, from_sample
 from rootfig.io import FileSource
-from rootfig.model.binning import DEFAULT_RANGE
+from rootfig.model.binning import merge_target
 from rootfig.model.cuts import CutLike
 from rootfig.model.samples import Sample
 from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
@@ -38,28 +39,34 @@ def stored_mode(samples: Sequence[Sample], variables: Sequence[Variable]) -> boo
 
     Stored mode applies when every sample reads files without an explicit tree
     or entry range, the variable is a bare name and the first file of every
-    sample holds a 1D/2D histogram of that name at top level, and the file has
-    no tree or its only tree has no branch of that name. Explicit intent wins:
-    a ``tree=`` or an entry range always means a branch. For a 2D plot both
-    variables must be stored histograms of the same name.
+    sample holds a 1D/2D histogram of that name, and the file has no tree or its
+    only tree has no branch of that name. A histogram inside a directory is
+    named by its path in backticks (``"`sel/mz`"``), like a branch with odd
+    characters. Explicit intent wins: a ``tree=`` or an entry range always means
+    a branch. For a 2D plot both variables must be stored histograms of the same
+    name.
 
     Raises
     ------
     SourceError
-        If some samples resolve to a stored histogram and others to a branch,
-        or a file holds several trees besides the histogram (pass ``tree=`` to
-        read a branch).
+        If some samples resolve to a stored histogram and others do not (the
+        message says why for each: a branch of the same name, a tree or entry
+        range given explicitly, in-memory data, no such histogram), or a file
+        holds several trees besides the histogram (pass ``tree=`` to read a
+        branch).
     """
     name = _stored_name(variables)
     if name is None:
         return False
-    verdicts = [(sample, _sample_reads_stored(sample, name)) for sample in samples]
-    stored = [sample.label for sample, verdict in verdicts if verdict]
+    verdicts = [(sample, _why_not_stored(sample, name)) for sample in samples]
+    stored = [sample.label for sample, reason in verdicts if reason is None]
     if stored and len(stored) != len(verdicts):
-        branch = [sample.label for sample, verdict in verdicts if not verdict]
+        others = "; ".join(
+            f"{sample.label!r}: {reason}" for sample, reason in verdicts if reason is not None
+        )
         msg = (
-            f"{name!r} is a histogram stored in the files of {stored} but a branch for "
-            f"{branch}; every sample of one plot must provide it the same way"
+            f"{name!r} is a histogram stored in the files of {stored}, but not for every sample "
+            f"({others}); every sample of one plot must provide it the same way"
         )
         raise SourceError(msg)
     return bool(stored)
@@ -76,24 +83,35 @@ def _stored_name(variables: Sequence[Variable]) -> str | None:
     return names.pop() if len(names) == 1 else None
 
 
-def _sample_reads_stored(sample: Sample, name: str) -> bool:
+def _why_not_stored(sample: Sample, name: str) -> str | None:
+    """Why ``sample`` does not read ``name`` as a stored histogram; ``None`` when it does."""
     source = sample.source
     if not isinstance(source, FileSource):
-        return False
-    if source.tree is not None or source.entry_start is not None or source.entry_stop is not None:
-        return False
+        return f"{source.describe()} hold no stored histograms"
+    explicit = _addresses_a_tree(source)
+    if explicit is not None:
+        return explicit
     if name not in source.histograms():
-        return False
+        return f"{source.files[0]!r} holds no histogram of that name"
     trees = source.trees()
-    if not trees:
-        return True
     if len(trees) > 1:
         msg = (
             f"{source.files[0]!r} holds a histogram {name!r} and several trees {trees}; "
             "pass tree=... to read a branch, or FileSource.read_histogram() for the histogram"
         )
         raise SourceError(msg)
-    return name not in source.branches()
+    if trees and name in source.branches():
+        return f"tree {trees[0]!r} has a branch of that name, which wins"
+    return None
+
+
+def _addresses_a_tree(source: FileSource) -> str | None:
+    """Why ``source`` addresses a tree rather than stored histograms, else ``None``."""
+    if source.tree is not None:
+        return f"tree={source.tree!r} addresses a branch"
+    if source.entry_start is not None or source.entry_stop is not None:
+        return "an entry range addresses a tree"
+    return None
 
 
 def read_stored(
@@ -110,26 +128,29 @@ def read_stored(
     """Read the histogram named by ``variables`` from every sample's files.
 
     One :class:`~rootfig.histograms.Histogram` per sample, in ``Weight``
-    storage, scaled by the sample's ``scale`` and luminosity factor. An integer
-    ``bins`` on a variable rebins the stored histogram to that many bins;
-    ``label`` and ``unit`` replace the stored axis title. Systematics of kind
-    ``"norm"`` scale the histogram and ``Systematic.samples`` reads the same
-    name from other files, which are checked like the nominal ones; the other
-    kinds need event data.
+    storage, scaled by the sample's ``scale`` and luminosity factor. A
+    variable's ``bins`` merges the stored bins: an integer count, or edges that
+    coincide with the stored ones (see
+    :func:`~rootfig.model.binning.merge_target`); ``label`` and ``unit``
+    replace the stored axis title. Systematics of kind ``"norm"`` scale the
+    histogram and ``Systematic.samples`` reads the same name from other files,
+    which are checked like the nominal ones; the other kinds need event data.
 
     Raises
     ------
     SelectionError
-        For a selection, weight, ``nonfinite="error"`` or range request: those
-        act on event data, which a stored histogram no longer has.
+        For a selection, weight or ``nonfinite="error"`` request: those act on
+        event data, which a stored histogram no longer has.
     BinningError
-        If ``bins`` is not an integer dividing the stored bin count.
+        If ``bins`` asks for anything but a merge of the stored bins, or a
+        ``range`` comes without bins (the stored range is fixed; ``xlim=`` zooms).
     SystematicError
         For weight or branch-replacement systematics, or a variation whose
-        sample cannot read the stored histogram.
+        sample addresses a tree or in-memory data instead of stored histograms.
     SourceError
         If the stored histogram has another dimensionality than ``variables``,
-        or its variances are unusable (see ``assume_poisson``).
+        its variances are unusable (see ``assume_poisson``), or a file (of a
+        sample or of a variation) lacks it.
     """
     name = _stored_name(variables)
     if name is None:
@@ -139,7 +160,9 @@ def read_stored(
             "samples provide one"
         )
         raise SourceError(msg)
-    _reject_event_options(name, variables, selection=selection, weight=weight, nonfinite=nonfinite)
+    _reject_event_options(name, selection=selection, weight=weight, nonfinite=nonfinite)
+    # what each axis is merged to; checked before any file is read
+    targets = [merge_target(variable.bins, variable.range) for variable in variables]
     plot_level = as_systematics(systematics, "plot") or {}
     result = []
     for sample in samples:
@@ -162,21 +185,12 @@ def read_stored(
             for syst_name, syst in sources.items()
         }
         histogram = from_sample(sample, nominal, variations=variations)
-        # integer bin counts were checked above; None keeps the stored binning of that axis
-        counts = [
-            variable.bins if isinstance(variable.bins, int) else None for variable in variables
-        ]
-        result.append(histogram.rebinned_to(counts))
+        result.append(histogram.rebinned_to(targets))
     return result
 
 
 def _reject_event_options(
-    name: str,
-    variables: Sequence[Variable],
-    *,
-    selection: CutLike | None,
-    weight: str | None,
-    nonfinite: NonFinitePolicy,
+    name: str, *, selection: CutLike | None, weight: str | None, nonfinite: NonFinitePolicy
 ) -> None:
     hint = f"{name!r} is a histogram stored in the file, not a branch"
     if selection is not None:
@@ -188,19 +202,6 @@ def _reject_event_options(
     if nonfinite != "drop":
         msg = f"{hint}; nonfinite= applies only when filling from event data"
         raise SelectionError(msg)
-    for variable in variables:
-        if variable.range not in (None, DEFAULT_RANGE):
-            msg = (
-                f"{hint}; its axis range is fixed. Use xlim= to zoom, or rebin with an "
-                "integer bins="
-            )
-            raise BinningError(msg)
-        if variable.bins is not None and not isinstance(variable.bins, int):
-            msg = (
-                f"{hint}; it can only be rebinned by merging adjacent bins, so bins= must be "
-                f"an integer dividing its bin count, not {variable.bins!r}"
-            )
-            raise BinningError(msg)
 
 
 def _stored_source(sample: Sample, name: str, *, variation: bool = False) -> FileSource:
