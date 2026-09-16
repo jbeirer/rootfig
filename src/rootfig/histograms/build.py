@@ -10,7 +10,7 @@ import hist
 import numpy as np
 
 from rootfig._mapping import FrozenMapping
-from rootfig._storage import as_weight_storage, same_binning
+from rootfig._storage import as_weight_storage, same_axis, same_binning
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, SystematicError
 from rootfig.histograms.stats import Summary
@@ -31,19 +31,17 @@ __all__ = [
 
 
 def compatible_binning(a: Hist, b: Hist) -> bool:
-    """Return True if both histograms are one-dimensional with identical edges.
+    """Return True if both histograms are one-dimensional and bin the same way.
 
-    Edges may differ by round-off only: the tolerance is a millionth of the
+    Numeric axes must have the same edges up to round-off (a millionth of the
     smallest bin width, so bins shifted by a whole width at large coordinates
-    (where NumPy's default relative tolerance would accept them) are rejected.
+    are rejected); category axes the same categories in the same order. Flow
+    bins and axis names or labels do not matter here: this decides whether two
+    histograms can be stacked, summed or divided bin by bin.
     """
     if a.ndim != 1 or b.ndim != 1:
         return False
-    ea, eb = np.asarray(a.axes[0].edges, dtype=float), np.asarray(b.axes[0].edges, dtype=float)
-    if ea.shape != eb.shape:
-        return False
-    tolerance = 1e-6 * float(min(np.diff(ea).min(), np.diff(eb).min()))
-    return bool(np.allclose(ea, eb, rtol=0.0, atol=tolerance))
+    return same_axis(a.axes[0], b.axes[0], flow=False)
 
 
 def fill(axes: Sequence[Axis], columns: Columns) -> Hist:
@@ -312,6 +310,8 @@ class Histogram:
             msg = f"got {len(factors)} rebin factors for a {self.ndim}D histogram"
             raise BinningError(msg)
         for axis, step in zip(self.hist.axes, factors, strict=True):
+            if step == 1:
+                continue
             if isinstance(axis, hist.axis.StrCategory | hist.axis.IntCategory):
                 msg = f"cannot merge the categories of axis {axis.label or axis.name!r}"
                 raise BinningError(msg)
@@ -322,6 +322,8 @@ class Histogram:
                     f"{axis.size} bins can only be grouped by {divisors}"
                 )
                 raise BinningError(msg)
+        if all(step == 1 for step in factors):
+            return self
         selection = tuple(slice(None, None, hist.rebin(step)) for step in factors)
 
         def merge(h: Hist) -> Hist:
@@ -329,6 +331,38 @@ class Histogram:
             return cast("Hist", h[selection])
 
         return self.map_hists(merge)
+
+    def rebinned_to(self, bins: int | Sequence[int | None]) -> Histogram:
+        """Return a copy whose axes have ``bins`` bins (one count per axis, ``None`` keeps one).
+
+        Adjacent bins are merged as by :meth:`rebinned`, so every count must
+        divide the axis' bin count; the message names the counts that would.
+
+        Raises
+        ------
+        BinningError
+            If a count does not divide the axis' bin count, is not a positive
+            integer, or the sequence does not have one entry per axis; and
+            whatever :meth:`rebinned` refuses.
+        """
+        wanted: list[Any] = list(bins) if isinstance(bins, Sequence) else [bins] * self.ndim
+        if len(wanted) != self.ndim:
+            msg = f"got {len(wanted)} bin counts for a {self.ndim}D histogram"
+            raise BinningError(msg)
+        factors = []
+        for axis, count in zip(self.hist.axes, wanted, strict=True):
+            if count is None:
+                factors.append(1)
+            elif not _is_positive_integer(count) or axis.size % int(count):
+                possible = [axis.size // d for d in range(1, axis.size + 1) if axis.size % d == 0]
+                msg = (
+                    f"axis {axis.label or axis.name!r} has {axis.size} bins, which can be merged "
+                    f"into {possible} bins, not {count!r}"
+                )
+                raise BinningError(msg)
+            else:
+                factors.append(axis.size // int(count))
+        return self.rebinned(factors)
 
 
 def _is_positive_integer(value: object) -> bool:

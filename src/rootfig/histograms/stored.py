@@ -132,7 +132,13 @@ def read_stored(
         or its variances are unusable (see ``assume_poisson``).
     """
     name = _stored_name(variables)
-    assert name is not None  # callers check stored_mode() first
+    if name is None:
+        msg = (
+            "read_stored() needs the bare name of a stored histogram, not "
+            f"{[variable.expression for variable in variables]}; stored_mode() tells whether "
+            "samples provide one"
+        )
+        raise SourceError(msg)
     _reject_event_options(name, variables, selection=selection, weight=weight, nonfinite=nonfinite)
     plot_level = as_systematics(systematics, "plot") or {}
     result = []
@@ -156,10 +162,11 @@ def read_stored(
             for syst_name, syst in sources.items()
         }
         histogram = from_sample(sample, nominal, variations=variations)
-        factors = _rebin_factors(histogram.hist, variables)
-        if factors is not None:
-            histogram = histogram.rebinned(factors)
-        result.append(histogram)
+        # integer bin counts were checked above; None keeps the stored binning of that axis
+        counts = [
+            variable.bins if isinstance(variable.bins, int) else None for variable in variables
+        ]
+        result.append(histogram.rebinned_to(counts))
     return result
 
 
@@ -264,34 +271,19 @@ def _named(stored: Hist, variables: Sequence[Variable]) -> Hist:
             label = f"{title} [{variable.unit}]"
         else:
             label = title
-        name = variable.safe_name if index == 0 else f"{variable.safe_name}_y"
-        # hist exposes the name read-only (it identifies the axis inside a histogram);
-        # this is a fresh copy, so renaming it here affects nothing else.
-        axis._raw_metadata["name"] = name
+        _rename_axis(axis, variable.safe_name if index == 0 else f"{variable.safe_name}_y")
         axis.label = label
     return result
 
 
-def _rebin_factors(stored: Hist, variables: Sequence[Variable]) -> list[int] | None:
-    """Bin-merging factors that bring each axis to the count its variable asks for."""
-    if all(variable.bins is None for variable in variables):
-        return None
-    factors = []
-    for axis, variable in zip(stored.axes, variables, strict=True):
-        wanted = variable.bins
-        if wanted is None:
-            factors.append(1)
-            continue
-        assert isinstance(wanted, int)  # other specifications were rejected
-        if wanted < 1 or axis.size % wanted:
-            counts = [axis.size // d for d in range(1, axis.size + 1) if axis.size % d == 0]
-            msg = (
-                f"{variable.expression!r} is stored with {axis.size} bins, which can be merged "
-                f"into {counts} bins, not {wanted}"
-            )
-            raise BinningError(msg)
-        factors.append(axis.size // wanted)
-    return factors
+def _rename_axis(axis: Any, name: str) -> None:
+    """Set the name of ``axis`` in place.
+
+    hist exposes an axis name read-only, because it identifies the axis inside
+    a histogram, and keeps it in the axis' metadata mapping; this is the one
+    place that writes there, and only on a copy nothing else refers to.
+    """
+    axis._raw_metadata["name"] = name
 
 
 def _variation(

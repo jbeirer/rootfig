@@ -446,8 +446,9 @@ def expressions(signal: rf.Sample, pt: rf.Variable, style: rf.Style) -> rf.Plot:
     momentum = rf.histogram(signal, pt.replace(expression="Muon_pt * cosh(Muon_eta)"))
     return rf.plot(
         [all_muons, leading, momentum],
-        pt.replace(label=r"$p_T^{\mu}$ or $|\vec{p}^{\,\mu}|$"),
         label=["All muons", "Leading muon", r"Muon $|\vec{p}|$"],
+        xlabel=r"$p_T^{\mu}$ or $|\vec{p}^{\,\mu}|$",
+        unit="GeV",
         logy=True,
         style=style,
     )

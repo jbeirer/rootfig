@@ -454,8 +454,9 @@ table.get("MET", "Signal").mean  # a Summary: entries, mean, std, sem, skewness,
 
 ## Histograms that already exist
 
-`rf.plot`, `rf.histogram(s)` and `rf.plot2d` accept two kinds of ready-made
-histograms with the drawing options above.
+`rf.plot`, `rf.histogram(s)` and `rf.plot2d` read histograms stored in ROOT
+files; `rf.plot` and `rf.plot2d` also draw histogram objects you already have.
+Both take the drawing options above.
 
 ### Histograms already in ROOT files
 
@@ -526,6 +527,10 @@ drawn as they are: `rf.plot([h_sig, h_bkg], label=["Signal", "Background"],
 ratio=True)`. `label=` names plain `hist.Hist` objects (otherwise their first
 axis name is used), `observed=` takes histogram objects for the data,
 `variable=` optionally supplies the axis label, unit and `log` flag, and
-`rf.plot2d(h2)` draws a 2D one. Options that fill from event data (`tree`,
-`selection`, `weight`, `lumi`, `bins`, `range`, `systematics`) raise;
-`Histogram.variations` carries systematics instead.
+`rf.plot2d(h2)` draws a 2D one. As for stored histograms, an integer `bins=`
+(given directly or on the `Variable`) merges bins down to that count; other
+binning specifications, a `range`, and the options that fill from event data
+(`tree`, `selection`, `weight`, `lumi`, `systematics`) raise.
+`Histogram.variations` carries systematics instead. Stacks, sums and ratios
+of histograms with category axes (ROOT bin labels) require the same
+categories in the same order.

@@ -6,7 +6,13 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from rootfig.api._common import normalize_for_plot, style_for
-from rootfig.api._hists import histogram_objects, reject_fill_options, unit_of, wrap_histograms
+from rootfig.api._hists import (
+    histogram_objects,
+    rebin_ready_made,
+    reject_fill_options,
+    unit_of,
+    wrap_histograms,
+)
 from rootfig.histograms import (
     SIGNIFICANCE_KINDS,
     Histogram,
@@ -152,8 +158,8 @@ def plot(
     bins
         Binning: an ``int`` (range inferred from the data), ``(n, low, high)``,
         bin edges, or a ``hist`` axis. Overrides the ``Variable``'s binning. A
-        stored histogram keeps its binning unless an ``int`` asks for fewer bins,
-        which must divide the stored count.
+        histogram that already exists (stored or object) keeps its binning
+        unless an ``int`` asks for fewer bins, which must divide its count.
     range
         Range for integer ``bins``: ``(low, high)``, ``"robust"`` (the default)
         or ``"auto"``. ``"robust"`` ignores values far from the bulk of the data,
@@ -258,12 +264,14 @@ def plot(
             selection=selection,
             weight=weight,
             lumi=lumi,
-            bins=bins,
-            range=range,
             nonfinite=nonfinite,
             systematics=systematics,
         )
-        var = None if variable is None else as_variable(variable, label=xlabel, unit=unit)
+        var = (
+            None
+            if variable is None
+            else as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
+        )
         hists = wrap_histograms(objects, label, assume_poisson=assume_poisson)
         if observed is not None:
             observed_objects = histogram_objects(observed)
@@ -271,6 +279,11 @@ def plot(
                 msg = "observed= must be histogram objects when data are histogram objects"
                 raise TypeError(msg)
             hists += wrap_histograms(observed_objects, assume_poisson=assume_poisson, is_data=True)
+        hists = rebin_ready_made(
+            hists,
+            [bins if var is None else var.bins],
+            range_=range if var is None else var.range,
+        )
     else:
         if variable is None:
             msg = "plot() needs a variable (a branch, expression or stored histogram name)"

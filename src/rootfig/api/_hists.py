@@ -10,6 +10,7 @@ import hist
 
 from rootfig._typing import Hist
 from rootfig.histograms import Histogram, as_weight_storage
+from rootfig.model import DEFAULT_RANGE
 
 _UNIT_SUFFIX = re.compile(r"\[([^\[\]]+)\]\s*$")
 
@@ -84,6 +85,40 @@ def reject_fill_options(what: str, **options: Any) -> None:
             f"event data; {what} are already filled"
         )
         raise ValueError(msg)
+
+
+def rebin_ready_made(
+    histograms: Sequence[Histogram], bins: Sequence[Any], *, range_: Any = None
+) -> list[Histogram]:
+    """Merge the bins of ready-made histograms down to ``bins`` counts, one per axis.
+
+    A ready-made histogram (stored in a file or given as an object) keeps its
+    binning unless an integer count asks for fewer bins, exactly as
+    :func:`~rootfig.histograms.read_stored` does; ``None`` keeps an axis.
+    Anything else is refused: edges or ``(n, low, high)`` cannot be applied
+    to bins that already exist, and neither can a range (``xlim=`` zooms).
+    """
+    if range_ not in (None, DEFAULT_RANGE):
+        msg = (
+            "the axis range of a ready-made histogram is fixed; use xlim= to zoom, or merge "
+            "bins with an integer bins="
+        )
+        raise ValueError(msg)
+    counts: list[int | None] = []
+    for spec in bins:
+        if spec is None:
+            counts.append(None)
+        elif isinstance(spec, int) and not isinstance(spec, bool):
+            counts.append(spec)
+        else:
+            msg = (
+                "a ready-made histogram can only be rebinned by merging adjacent bins, so bins= "
+                f"must be an integer dividing its bin count, not {spec!r}"
+            )
+            raise ValueError(msg)
+    if all(count is None for count in counts):
+        return list(histograms)
+    return [histogram_.rebinned_to(counts) for histogram_ in histograms]
 
 
 def unit_of(axis_label: str | None) -> str | None:

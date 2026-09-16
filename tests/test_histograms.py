@@ -946,6 +946,78 @@ class TestNegativeVariances:
         np.testing.assert_allclose(converted.variances(), np.abs(h.values()))
 
 
+class TestCategoryCompatibility:
+    @staticmethod
+    def _cutflow(categories: list[str], values: list[float]) -> Histogram:
+        h = hist.Hist(hist.axis.StrCategory(categories, name="cut"), storage=hist.storage.Weight())
+        for category, value in zip(categories, values, strict=True):
+            h.fill([category], weight=value)
+        return Histogram(h, label=" ".join(categories))
+
+    def test_same_index_edges_different_categories(self) -> None:
+        from rootfig.histograms import compatible_binning, ratio, sum_histograms
+
+        a = self._cutflow(["all", "preselection", "final"], [10.0, 5.0, 2.0])
+        b = self._cutflow(["all", "preselection", "control"], [10.0, 4.0, 1.0])
+        same = self._cutflow(["all", "preselection", "final"], [8.0, 4.0, 1.0])
+        assert compatible_binning(a.hist, same.hist)
+        assert not compatible_binning(a.hist, b.hist)
+        numeric = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
+        assert not compatible_binning(a.hist, numeric)  # index edges agree, kinds do not
+        np.testing.assert_allclose(sum_histograms([a, same]).values(), [18.0, 9.0, 3.0])
+        with pytest.raises(BinningError, match="different bin edges"):
+            sum_histograms([a, b])
+        with pytest.raises(BinningError):
+            ratio(a.hist, b.hist)
+        np.testing.assert_allclose(ratio(a.hist, same.hist).values, [1.25, 1.25, 2.0])
+
+
+class TestRebinnedTo:
+    def test_counts_per_axis(self) -> None:
+        h = hist.Hist(
+            hist.axis.Regular(12, 0, 12, name="x"),
+            hist.axis.Regular(4, 0, 4, name="y"),
+            storage=hist.storage.Weight(),
+        )
+        h.fill([0.5] * 3, [0.5] * 3)
+        merged = Histogram(h, label="h").rebinned_to([3, None])
+        assert [a.size for a in merged.hist.axes] == [3, 4]
+        assert Histogram(h, label="h").rebinned_to(2).hist.axes[1].size == 2
+        assert Histogram(h, label="h").rebinned_to([None, None]) is not None
+        with pytest.raises(BinningError, match=r"has 12 bins.*\[12, 6, 4, 3, 2, 1\].*not 5"):
+            Histogram(h, label="h").rebinned_to([5, None])
+        with pytest.raises(BinningError, match=r"not 2\.5"):
+            Histogram(h, label="h").rebinned_to([2.5, None])  # type: ignore[list-item]
+        with pytest.raises(BinningError, match="got 1 bin counts for a 2D"):
+            Histogram(h, label="h").rebinned_to([3])
+
+    def test_category_axis_keeps_its_count_only(self) -> None:
+        h = hist.Hist(
+            hist.axis.StrCategory(["a", "b", "c"], name="cut"), storage=hist.storage.Weight()
+        )
+        histogram = Histogram(h, label="h")
+        assert histogram.rebinned_to(3) is histogram  # the same count is a no-op
+        with pytest.raises(BinningError, match="categories"):
+            histogram.rebinned_to(1)
+
+
+class TestAxisRenaming:
+    def test_renames_a_copy_only(self) -> None:
+        from rootfig.histograms.stored import _rename_axis
+
+        for axis in (
+            hist.axis.Regular(4, 0, 4, name="xaxis", label="X"),
+            hist.axis.StrCategory(["a", "b"], name="xaxis", label="Cut"),
+        ):
+            h = hist.Hist(axis, storage=hist.storage.Weight())
+            copy_ = h.copy()
+            _rename_axis(copy_.axes[0], "mz")
+            assert copy_.axes[0].name == "mz"
+            assert copy_.axes[0].label == h.axes[0].label
+            assert h.axes[0].name == "xaxis"
+            assert type(copy_.axes[0]) is type(axis)
+
+
 class TestBinwiseAddition:
     def test_add_hists_consumes_an_iterator(self) -> None:
         from rootfig._storage import add_hists, add_into
@@ -1613,7 +1685,8 @@ class TestRebinned:
             storage=hist.storage.Weight(),
         )
         with pytest.raises(BinningError, match="categories of axis 'Cut'"):
-            Histogram(h, label="h").rebinned(1)
+            Histogram(h, label="h").rebinned(2)
+        assert Histogram(h, label="h").rebinned(1).values().tolist() == [0.0, 0.0]  # a no-op
 
 
 class TestStoredHistograms:
@@ -1699,7 +1772,7 @@ class TestStoredHistograms:
         assert h.sum_weights == pytest.approx(0.5 * 4000)
         (h,) = build_histograms([zh], Variable("mz"))  # no preference keeps the stored binning
         assert h.axis.size == 100
-        with pytest.raises(BinningError, match=r"stored with 100 bins.*not 30"):
+        with pytest.raises(BinningError, match=r"has 100 bins.*not 30"):
             build_histograms([zh], Variable("mz", bins=30))
         with pytest.raises(BinningError, match="integer dividing its bin count"):
             build_histograms([zh], Variable("mz", bins=(10, 0, 100)))
@@ -1780,6 +1853,12 @@ class TestStoredHistograms:
         np.testing.assert_allclose(h.values(), [4000.0, 2000.0, 1000.0])
         with pytest.raises(BinningError, match="categories of axis"):
             build_histograms([self._zh(stored_dir)], Variable("cutflow", bins=1))
+
+    def test_read_stored_needs_a_bare_name(self, stored_dir: Path) -> None:
+        from rootfig.histograms import read_stored
+
+        with pytest.raises(SourceError, match="bare name of a stored histogram"):
+            read_stored([self._zh(stored_dir)], [Variable("mz * 2")])
 
     def test_two_dimensional(self, stored_dir: Path) -> None:
         zh = self._zh(stored_dir)

@@ -175,9 +175,8 @@ def _tree_names(classnames: Mapping[str, str]) -> list[str]:
     return sorted(k for k, cls in classnames.items() if objects.is_tree_class(cls))
 
 
-def _detect_tree(path: str) -> str:
-    """Return the name of the only tree-like object in ``path`` or raise."""
-    classnames = objects.object_classes(path)
+def _detect_tree(path: str, classnames: Mapping[str, str]) -> str:
+    """Return the only tree-like object among ``classnames`` (the objects of ``path``) or raise."""
     trees = _tree_names(classnames)
     if len(trees) == 1:
         return trees[0]
@@ -237,7 +236,8 @@ class FileSource:
         if self.tree is not None:
             return self.tree
         if "tree" not in self._cache:
-            self._cache["tree"] = _detect_tree(self.files[0])
+            # the object map is read once and shared with the stored-histogram lookup
+            self._cache["tree"] = _detect_tree(self.files[0], self.objects())
         return str(self._cache["tree"])
 
     def branches(self) -> list[str]:

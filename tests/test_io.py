@@ -413,6 +413,25 @@ class TestStoredHistograms:
         assert list(h.axes[0]) == ["all", "sel0", "sel1"]
         np.testing.assert_allclose(h.values(), [2000.0, 1000.0, 500.0])
 
+    def test_object_map_is_read_once(
+        self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from rootfig.io import objects
+
+        calls: list[str] = []
+        original = objects.object_classes
+
+        def counted(path: str) -> dict[str, str]:
+            calls.append(path)
+            return original(path)
+
+        monkeypatch.setattr(objects, "object_classes", counted)
+        source = FileSource(stored_dir / "tree_without_branch.root")
+        assert source.histograms() == ["mz"]  # the stored-histogram lookup
+        assert source.resolved_tree() == "events"  # tree detection reuses the same map
+        assert source.trees() == ["events"]
+        assert len(calls) == 1
+
     def test_histogram_classes(self) -> None:
         from rootfig.io.objects import is_histogram_class, is_tree_class
 

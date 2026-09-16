@@ -17,7 +17,7 @@ import numpy as np
 from rootfig._typing import Hist
 from rootfig.errors import RootfigWarning
 
-__all__ = ["add_hists", "add_into", "as_weight_storage", "same_binning"]
+__all__ = ["add_hists", "add_into", "as_weight_storage", "same_axis", "same_binning"]
 
 _COUNT_STORAGES = (
     hist.storage.Double,
@@ -98,22 +98,29 @@ def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
     return result
 
 
-def same_binning(a: Hist, b: Hist) -> bool:
+def same_binning(a: Hist, b: Hist, *, flow: bool = True) -> bool:
     """Return True if two histograms have the same axes up to their names and labels.
 
-    Axis by axis: the same flow bins, and either both category axes with the
-    same categories in the same order, or both numeric axes (``Regular``,
-    ``Variable`` and ``Integer`` interchangeably) with the same edges to a
-    millionth of the smallest bin width, so bins shifted by a whole width at
-    large coordinates are rejected.
+    Axis by axis as :func:`same_axis`; ``flow`` asks for the same flow bins too.
     """
     if a.ndim != b.ndim:
         return False
-    return all(_same_axis(axis_a, axis_b) for axis_a, axis_b in zip(a.axes, b.axes, strict=True))
+    return all(
+        same_axis(axis_a, axis_b, flow=flow) for axis_a, axis_b in zip(a.axes, b.axes, strict=True)
+    )
 
 
-def _same_axis(axis_a: Any, axis_b: Any) -> bool:
-    if (axis_a.traits.underflow, axis_a.traits.overflow) != (
+def same_axis(axis_a: Any, axis_b: Any, *, flow: bool = True) -> bool:
+    """Return True if two axes bin the same way, whatever their names and labels.
+
+    Two category axes agree when they list the same categories in the same
+    order; two numeric axes (``Regular``, ``Variable`` and ``Integer``
+    interchangeably) when their edges agree to a millionth of the smallest bin
+    width, so bins shifted by a whole width at large coordinates are rejected.
+    A category and a numeric axis never agree. With ``flow`` the under- and
+    overflow bins must be present or absent alike.
+    """
+    if flow and (axis_a.traits.underflow, axis_a.traits.overflow) != (
         axis_b.traits.underflow,
         axis_b.traits.overflow,
     ):
@@ -121,7 +128,7 @@ def _same_axis(axis_a: Any, axis_b: Any) -> bool:
     if _is_category(axis_a) or _is_category(axis_b):
         both = _is_category(axis_a) and _is_category(axis_b)
         return both and list(axis_a) == list(axis_b)
-    edges_a, edges_b = np.asarray(axis_a.edges), np.asarray(axis_b.edges)
+    edges_a, edges_b = np.asarray(axis_a.edges, dtype=float), np.asarray(axis_b.edges, dtype=float)
     if edges_a.shape != edges_b.shape:
         return False
     tolerance = 1e-6 * float(min(np.diff(edges_a).min(), np.diff(edges_b).min()))

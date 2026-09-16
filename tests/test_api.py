@@ -1865,6 +1865,17 @@ class TestStoredHistogramPlots:
         again = rf.plot2d(p.histograms[0], cmap="magma", title="again")
         assert again.histograms[0] is p.histograms[0]
         assert again.ax.get_title() == "again"
+        merged = rf.plot2d(p.histograms[0], bins=(1, 2))
+        assert [a.size for a in merged.histograms[0].hist.axes] == [1, 2]
+        # a single Variable describes the stored histogram and its x axis only
+        described = rf.plot2d(
+            stored_dir / "ZH_sel0_histo.root",
+            rf.Variable("mz_recoil_2D", label="Mass", unit="GeV", log=True),
+        )
+        assert described.ax.get_xlabel() == "Mass [GeV]"
+        assert described.ax.get_ylabel() == "recoil [GeV]"
+        assert described.ax.get_xscale() == "log"
+        assert described.ax.get_yscale() == "linear"
         with pytest.raises(TypeError, match="needs the x and y variables"):
             rf.plot2d(stored_dir / "ZH_sel0_histo.root")
         with pytest.raises(ValueError, match="two-dimensional histograms"):
@@ -1890,6 +1901,29 @@ class TestStoredHistogramPlots:
         assert p.histograms[0].stats is None
         assert p.histograms[0].sum_weights == 500
 
+    def test_category_axes_need_the_same_categories(self) -> None:
+        def cutflow(categories: list[str]) -> hist.Hist:
+            h = hist.Hist(
+                hist.axis.StrCategory(categories, name="cut"), storage=hist.storage.Weight()
+            )
+            h.fill(categories)
+            return h
+
+        a, b = (
+            cutflow(["all", "preselection", "final"]),
+            cutflow(["all", "preselection", "control"]),
+        )
+        p = rf.plot([a, cutflow(["all", "preselection", "final"])], label=["A", "B"], stack=True)
+        assert [t.get_text() for t in p.ax.get_xticklabels()][:3] == [
+            "all",
+            "preselection",
+            "final",
+        ]
+        with pytest.raises(BinningError, match="a stack"):
+            rf.plot([a, b], label=["A", "B"], stack=True)
+        with pytest.raises(BinningError):
+            rf.plot([a, b], label=["A", "B"], ratio=True)
+
     def test_stats_needs_filled_statistics(self, stored_dir: Path) -> None:
         with pytest.raises(ValueError, match="stats= needs the unbinned statistics"):
             rf.plot(stored_dir / "ZH_sel0_histo.root", "mz", stats=True)
@@ -1910,8 +1944,19 @@ class TestStoredHistogramPlots:
         assert p.ax.get_xscale() == "log"
         assert p.ratio_ax is None
         assert p.ax.get_xlabel() == "$x$ [cm]"
-        with pytest.raises(ValueError, match="bins, selection apply when filling"):
-            rf.plot([mc], selection="x > 1", bins=10)
+        with pytest.raises(ValueError, match="selection applies when filling"):
+            rf.plot([mc], selection="x > 1")
+        # an integer bins= merges bins, as for stored histograms; the rest is refused
+        assert rf.plot(mc, bins=2).histograms[0].axis.size == 2
+        assert rf.plot(mc, rf.Variable("x", bins=2)).histograms[0].axis.size == 2
+        with pytest.raises(BinningError, match=r"has 4 bins.*not 3"):
+            rf.plot(mc, bins=3)
+        with pytest.raises(ValueError, match="range of a ready-made histogram is fixed"):
+            rf.plot(mc, rf.Variable("x", bins=2, range=(0, 100)))
+        with pytest.raises(ValueError, match="range of a ready-made histogram is fixed"):
+            rf.plot(mc, range=(0, 2))
+        with pytest.raises(ValueError, match="integer dividing its bin count, not \\(2, 0, 4\\)"):
+            rf.plot(mc, bins=(2, 0, 4))
         # a unit given for histogram objects reaches both axes, once
         p = rf.plot(mc, unit="cm")
         assert p.ax.get_xlabel() == "$x$ [cm]"
