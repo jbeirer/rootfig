@@ -126,8 +126,9 @@ def plot(
     branch. Histogram objects (``hist.Hist`` or
     :class:`~rootfig.histograms.Histogram`, one or a list) passed as ``data``
     are drawn as they are, with ``label`` naming them and ``variable`` optional.
-    Options that act on event data (``selection``, ``weight``, ``range``, ...)
-    raise for both.
+    Options that need event data, such as ``selection`` and ``weight``, raise
+    for both. Range inference (``"auto"``, ``"robust"``) is a no-op for them; an
+    explicit range is only meaningful with ``bins`` that merge their bins.
 
     Parameters
     ----------

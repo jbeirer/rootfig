@@ -456,9 +456,11 @@ table.get("MET", "Signal").mean  # a Summary: entries, mean, std, sem, skewness,
 
 `rf.plot`, `rf.histogram(s)` and `rf.plot2d` read histograms stored in ROOT
 files; `rf.plot` and `rf.plot2d` also draw histogram objects you already have.
-Each keeps its usual plotting options: the 1D options above for `rf.plot`
-(stacks, ratios, `flow`, `stats`, ...), those of the [2D section](#2d-histograms-and-correlations)
-for `rf.plot2d`. Only what needs event data is refused.
+Each keeps its usual drawing options where they apply: the 1D options above
+for `rf.plot` (stacks, ratios, `flow`, ...), those of the
+[2D section](#2d-histograms-and-correlations) for `rf.plot2d`. Options that
+need information a ready-made histogram no longer has (a selection, a weight,
+`stats` on one without statistics) are refused.
 
 ### Histograms already in ROOT files
 
@@ -511,7 +513,10 @@ What a stored histogram supports:
   variable's name. The y axis of a `TH2` named by a single variable gets no
   label from that name, which describes the histogram rather than the axis; as
   for any unlabelled axis, hist shows the axis name (`mz_recoil_2D_y`) instead.
-  Pass a `Variable` for `y` to label it.
+  To label it, pass a `Variable` for `y` that names the same histogram, since
+  both axes must resolve to one stored object:
+  `` rf.plot2d(f, "my_hist", rf.Variable("my_hist", name="recoil", label="Recoil")) ``.
+  A `Variable` with another expression asks for a branch instead.
 - `bins=` merges the stored bins: an integer count (it must divide the stored
   count), or edges that coincide with the stored ones (`(n, low, high)`, a
   sequence of edges, or an `int` with `range=(low, high)`) and merge the bins
