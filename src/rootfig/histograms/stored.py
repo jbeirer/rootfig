@@ -259,12 +259,14 @@ def _read_scaled(
 def _named(stored: Hist, variables: Sequence[Variable]) -> Hist:
     """Copy ``stored`` with its axes named after the variables, keeping their kind.
 
-    Category axes (labelled bins) survive as such. The stored axis titles are
+    Axis names follow the rule for histograms filled from trees (see
+    :func:`_axis_names`). Category axes (labelled bins) survive as such. The stored axis titles are
     kept unless the variable has a label of its own or the title is ROOT's
     placeholder (``"xaxis"``); a unit on the variable is appended once.
     """
     result = stored.copy()
-    for index, (axis, variable) in enumerate(zip(result.axes, variables, strict=True)):
+    names = _axis_names(variables)
+    for axis, variable, name in zip(result.axes, variables, names, strict=True):
         title = str(axis.label or "")
         if variable.label is not None or title in _ROOT_DEFAULT_AXIS_TITLES:
             label = variable.axis_label
@@ -272,9 +274,21 @@ def _named(stored: Hist, variables: Sequence[Variable]) -> Hist:
             label = f"{title} [{variable.unit}]"
         else:
             label = title
-        _rename_axis(axis, variable.safe_name if index == 0 else f"{variable.safe_name}_y")
+        _rename_axis(axis, name)
         axis.label = label
     return result
+
+
+def _axis_names(variables: Sequence[Variable]) -> list[str]:
+    """Return one axis name per variable, as a histogram filled from a tree would carry.
+
+    The y axis gets a ``_y`` suffix only when both variables share a name (the
+    same stored ``TH2`` read for both axes), since hist requires distinct names.
+    """
+    names = [variable.safe_name for variable in variables]
+    if len(names) > 1 and names[1] == names[0]:
+        names[1] = f"{names[1]}_y"
+    return names
 
 
 def _rename_axis(axis: Any, name: str) -> None:

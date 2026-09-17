@@ -486,8 +486,8 @@ rf.plot2d("final/p8_ee_ZH_ecm240_sel0_histo.root", "mz_recoil_2D")  # a stored T
 The decision is made per call and is deterministic. A variable that is a bare
 name is read as a stored histogram when every sample reads files without an
 explicit `tree=` or entry range, the first file of each sample holds a `TH1` or
-`TH2` of that name at top level, and the file has no tree or its only tree has
-no branch of that name. Anything else fills from the tree as usual: an explicit
+`TH2` of that name, and the file has no tree or its only tree has no branch of
+that name. Anything else fills from the tree as usual: an explicit
 `tree=` always means a branch, a branch of the same name wins over a histogram,
 a file with several trees next to the histogram raises (pass `tree=` for a
 branch, or read the histogram with `FileSource.read_histogram`), and samples
@@ -517,8 +517,9 @@ What a stored histogram supports:
   `Systematic.samples(other_files)` (the same histogram read from other files)
   are supported.
 - `selection=`, `weight=` (on the call or the `Sample`), `nonfinite="error"`,
-  `range=`, weight and branch-replacement systematics and `stats=` need event
-  data and raise with a message that says so.
+  a `range=` without a bin count to pair it with, weight and branch-replacement
+  systematics and `stats=` need event data and raise with a message that says
+  so.
 - A `TH1` written with `Sumw2` keeps its uncertainties; one without it arrives
   with its bin contents as variances (uproot cannot know the weights). Negative
   contents without `Sumw2` leave no usable variances: rootfig refuses them unless

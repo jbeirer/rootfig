@@ -462,6 +462,15 @@ def _merge_boundaries(axis: Any, edges: np.ndarray) -> np.ndarray:
             "can be kept when merging its bins. Fill from the tree to bin freely"
         )
         raise BinningError(msg)
+    if np.any(np.diff(positions) <= 0):
+        # requested edges increase, but two of them may lie within tolerance of the same
+        # stored edge and merge to an empty bin
+        repeated = own[positions[1:][np.diff(positions) <= 0][0]]
+        msg = (
+            f"two of the requested bin edges resolve to the same edge {repeated:g} of axis "
+            f"{name!r}: {extent}, and each of its edges can be kept only once"
+        )
+        raise BinningError(msg)
     return positions
 
 

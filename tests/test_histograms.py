@@ -1030,6 +1030,7 @@ class TestRebinnedTo:
             ([1, 3, 6], "range of a histogram that already exists is fixed"),
             ([0, 3, 7], "range of a histogram that already exists is fixed"),
             ([0, 6, 3], "strictly increasing"),
+            ([0, 2.9999999, 3.0000001, 6], "resolve to the same edge 3"),
             ([3, None], "got 2 bin counts for a 1D"),
         ):
             with pytest.raises(BinningError, match=message):
@@ -1977,5 +1978,10 @@ class TestStoredHistograms:
             [zh], Variable("mz_recoil_2D", bins=5), Variable("mz_recoil_2D", bins=4)
         )
         assert [a.size for a in h.hist.axes] == [5, 4]
+        # distinct variable names name the axes as a tree fill would, without a suffix
+        (h,) = build_histograms_2d(
+            [zh], Variable("mz_recoil_2D", name="mass"), Variable("mz_recoil_2D", name="recoil")
+        )
+        assert [a.name for a in h.hist.axes] == ["mass", "recoil"]
         with pytest.raises(SourceError, match="needs two variables"):
             build_histograms_2d([zh], "mz * 2")
