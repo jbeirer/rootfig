@@ -1856,9 +1856,18 @@ class TestStoredHistogramPlots:
         (only,) = rf.histograms(stored_dir / "ZH_sel0_histo.root", "mz", label="ZH", normalize=True)
         assert only.label == "ZH"
         assert only.integral == pytest.approx(1.0)
+        # the Variable the histogram was filled with describes it, also once normalised
+        mz = rf.Variable("mz", bins=only.edges)
+        assert rf.plot(only, mz).histograms[0] is only
+        assert rf.plot(only, rf.Variable("mz", bins=only.axis.size)).histograms[0] is only
+        with pytest.raises(rf.BinningError, match="rebin before normalising"):
+            rf.plot(only, rf.Variable("mz", bins=only.axis.size // 2))
 
     def test_plot2d_stored_and_object(self, stored_dir: Path) -> None:
         p = rf.plot2d(stored_dir / "ZH_sel0_histo.root", "mz_recoil_2D", bins=(5, 6), logz=True)
+        # plot2d ignores systematics, for a stored histogram as for a tree
+        varied = rf.Sample(stored_dir / "ZH_sel0_histo.root", systematics={"w": ("w_up", "w_dn")})
+        assert rf.plot2d(varied, "mz_recoil_2D").histograms[0].variations == {}
         assert [a.size for a in p.histograms[0].hist.axes] == [5, 6]
         assert p.ax.get_xlabel() == "m_{Z} [GeV]"
         assert p.ax.get_ylabel() == "recoil [GeV]"
@@ -1883,8 +1892,14 @@ class TestStoredHistogramPlots:
         # the dimensionality is checked before any rebinning
         with pytest.raises(ValueError, match="two-dimensional histograms, got 1D"):
             rf.plot2d(p.histograms[0].hist[:, :: hist.sum], bins=2)
-        with pytest.raises(ValueError, match="one-dimensional histograms, got 2D"):
+        with pytest.raises(ValueError, match=r"one-dimensional histograms, got 2D.*use plot2d"):
             rf.plot(p.histograms[0], bins=5)
+        # neither function draws a 3D histogram, so none is suggested
+        cube = hist.Hist(*[hist.axis.Regular(2, 0, 1, name=n) for n in "abc"])
+        with pytest.raises(ValueError, match=r"got 3D \(.*\)$"):
+            rf.plot2d(cube)
+        with pytest.raises(ValueError, match=r"got 3D \(.*\)$"):
+            rf.plot(cube)
         with pytest.raises(ValueError, match="selection, weight apply when filling"):
             rf.plot2d(p.histograms[0], selection="x > 1", weight="w")
 

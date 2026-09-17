@@ -1744,6 +1744,14 @@ class TestRebinned:
         density = normalize(Histogram(h, label="h"), "density")
         with pytest.raises(BinningError, match=r"normalised .*rebin before normalising"):
             density.rebinned(2)
+        # asking for the bins it already has is not a merge, so the Variable a histogram was
+        # filled with still describes it after normalising; any real merge is refused
+        assert density.rebinned_to(density.axis.size) is density
+        assert density.rebinned_to(density.edges) is density
+        assert density.rebinned_to(None) is density
+        for merge in (2, [0, 2, 4], [0, 1, 4]):
+            with pytest.raises(BinningError, match="rebin before normalising"):
+                density.rebinned_to(merge)
         # rebinning first, then normalising, keeps the area at one
         merged = normalize(Histogram(h, label="h").rebinned(2), "density")
         assert (merged.values() * merged.widths).sum() == pytest.approx(1.0)
@@ -1983,5 +1991,11 @@ class TestStoredHistograms:
             [zh], Variable("mz_recoil_2D", name="mass"), Variable("mz_recoil_2D", name="recoil")
         )
         assert [a.name for a in h.hist.axes] == ["mass", "recoil"]
+        # 2D plots draw no variations, so systematics are ignored as for trees: a weight
+        # systematic that a 1D read would refuse is not even looked at, and the sample stays
+        varied = self._zh(stored_dir, systematics={"w": ("w_up", "w_down"), "lumi": 0.02})
+        (h,) = build_histograms_2d([varied], "mz_recoil_2D")
+        assert h.variations == {}
+        assert h.sample is varied
         with pytest.raises(SourceError, match="needs two variables"):
             build_histograms_2d([zh], "mz * 2")

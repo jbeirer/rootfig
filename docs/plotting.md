@@ -510,16 +510,19 @@ What a stored histogram supports:
   sequence of edges, or an `int` with `range=(low, high)`) and merge the bins
   between them. The `Variable` written for the tree therefore also describes
   the histogram filled from it, as its own edges or a coarser aligned set. With
-  `bins=None` the stored binning is kept. Other edges cannot be made, and a
-  range alone cannot be applied: use `xlim=` to zoom.
+  `bins=None` the stored binning is kept. Other edges cannot be made, and an
+  explicit `(low, high)` range without a bin count cannot be applied: use
+  `xlim=` to zoom. `range="auto"` and `"robust"` have no effect on a histogram
+  that is already filled.
 - Normalisation, stacks, ratios, `flow` and the other drawing options work
   unchanged. Systematics of the normalisation kind (`{"lumi": 0.02}`) and
   `Systematic.samples(other_files)` (the same histogram read from other files)
-  are supported.
+  are supported by `plot` and `histograms`; `plot2d` ignores systematics, for
+  stored histograms as for trees.
 - `selection=`, `weight=` (on the call or the `Sample`), `nonfinite="error"`,
-  a `range=` without a bin count to pair it with, weight and branch-replacement
-  systematics and `stats=` need event data and raise with a message that says
-  so.
+  an explicit `(low, high)` range without a bin count, weight and
+  branch-replacement systematics and `stats=` need event data and raise with a
+  message that says so.
 - A `TH1` written with `Sumw2` keeps its uncertainties; one without it arrives
   with its bin contents as variances (uproot cannot know the weights). Negative
   contents without `Sumw2` leave no usable variances: rootfig refuses them unless
@@ -537,9 +540,11 @@ axis name is used), `observed=` takes histogram objects for the data,
 `rf.plot2d(h2)` draws a 2D one. As for stored histograms, `bins=` (given
 directly or on the `Variable`) merges bins: an integer count, or edges that
 coincide with the existing ones, so the `Variable` a histogram was filled with
-can be passed along with it (`rf.plot(rf.histogram(sample, pt), pt)`). A
-`range` alone and the options that fill from event data (`tree`, `selection`,
-`weight`, `lumi`, `systematics`) raise. `Histogram.variations` carries
+can be passed along with it (`rf.plot(rf.histogram(sample, pt), pt)`), also
+after normalising it, as long as it asks for the bins the histogram has. An
+explicit `(low, high)` range without a bin count and the options that fill
+from event data (`tree`, `selection`, `weight`, `lumi`, `systematics`) raise;
+`range="auto"`/`"robust"` are no-ops. `Histogram.variations` carries
 systematics instead. Stacks, sums and ratios of histograms with category axes
 (ROOT bin labels) require the same categories in the same order; the flow bins
 of such an axis hold entries of categories it does not list, which

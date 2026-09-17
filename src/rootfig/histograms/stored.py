@@ -124,6 +124,7 @@ def read_stored(
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
     assume_poisson: bool = False,
+    include_systematics: bool = True,
 ) -> list[Histogram]:
     """Read the histogram named by ``variables`` from every sample's files.
 
@@ -135,6 +136,9 @@ def read_stored(
     replace the stored axis title. Systematics of kind ``"norm"`` scale the
     histogram and ``Systematic.samples`` reads the same name from other files,
     which are checked like the nominal ones; the other kinds need event data.
+    ``include_systematics=False`` reads the nominal histograms only and leaves
+    the samples' systematics unexamined, for callers that draw no variations
+    (2D plots); the samples themselves are kept on the result as given.
 
     Raises
     ------
@@ -143,7 +147,8 @@ def read_stored(
         event data, which a stored histogram no longer has.
     BinningError
         If ``bins`` asks for anything but a merge of the stored bins, or a
-        ``range`` comes without bins (the stored range is fixed; ``xlim=`` zooms).
+        ``(low, high)`` range comes without bins (the stored range is fixed;
+        ``xlim=`` zooms).
     SystematicError
         For weight or branch-replacement systematics, or a variation whose
         sample addresses a tree or in-memory data instead of stored histograms.
@@ -170,7 +175,11 @@ def read_stored(
         nominal = _read_scaled(
             sample, source, name, variables, lumi=lumi, assume_poisson=assume_poisson
         )
-        sources = {} if sample.is_data else {**plot_level, **sample.systematics}
+        sources = (
+            {}
+            if sample.is_data or not include_systematics
+            else {**plot_level, **sample.systematics}
+        )
         variations = {
             syst_name: _variation(
                 sample,

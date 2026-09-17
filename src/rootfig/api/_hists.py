@@ -93,13 +93,15 @@ def require_dimension(histograms: Sequence[Histogram], ndim: int, function: str)
     Checked before anything is done to the histograms, so the message names the
     function to use instead of failing on an axis that does not exist.
     """
+    drawn_by = {1: "plot", 2: "plot2d"}
     for histogram_ in histograms:
         if histogram_.ndim != ndim:
             msg = (
                 f"{function}() draws {'one' if ndim == 1 else 'two'}-dimensional histograms, got "
-                f"{histogram_.ndim}D ({histogram_.label!r}); use "
-                f"{'plot2d' if ndim == 1 else 'plot'}()"
+                f"{histogram_.ndim}D ({histogram_.label!r})"
             )
+            if histogram_.ndim in drawn_by:
+                msg += f"; use {drawn_by[histogram_.ndim]}()"
             raise ValueError(msg)
 
 

@@ -345,8 +345,9 @@ class Histogram:
         must each coincide with an edge of the axis, the first and last with its
         ends, and the bins between two of them are merged into one; uniform
         groups keep the axis type (a ``Regular`` axis stays ``Regular``), others
-        give a ``Variable`` axis. Edges that are exactly the axis' own leave it
-        unchanged. ``None`` keeps an axis. A one-dimensional histogram takes the
+        give a ``Variable`` axis. Edges that are exactly the axis' own, or its
+        bin count, leave it unchanged, also when the histogram is normalised.
+        ``None`` keeps an axis. A one-dimensional histogram takes the
         count or the edges directly; otherwise give one entry per axis.
 
         Raises
@@ -381,6 +382,10 @@ class Histogram:
                 factor = axis.size // int(target)
             factors.append(factor)
             boundaries.append(groups)
+        if all(factor == 1 for factor in factors) and all(groups is None for groups in boundaries):
+            # the axes already have these bins: nothing to merge, so a normalised histogram
+            # passes too (its Variable still describes it); any real merge is refused below
+            return self
         result = self.rebinned(factors)
         if all(groups is None for groups in boundaries):
             return result

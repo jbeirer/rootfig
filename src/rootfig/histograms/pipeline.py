@@ -462,6 +462,8 @@ def build_histograms_2d(
 
     With ``y`` omitted, ``x`` must name a 2D histogram stored in the samples'
     files, which is read instead (see :func:`~rootfig.histograms.stored_mode`).
+    Systematics are ignored either way: a 2D plot draws no variations, so the
+    samples' sources are neither filled nor checked.
     """
     var_x = as_variable(x)
     var_y = var_x if y is None else as_variable(y)
@@ -474,6 +476,7 @@ def build_histograms_2d(
             lumi=lumi,
             nonfinite=nonfinite,
             assume_poisson=assume_poisson,
+            include_systematics=False,
         )
     if y is None:
         msg = (
