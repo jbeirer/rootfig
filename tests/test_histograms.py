@@ -1999,3 +1999,20 @@ class TestStoredHistograms:
         assert h.sample is varied
         with pytest.raises(SourceError, match="needs two variables"):
             build_histograms_2d([zh], "mz * 2")
+
+    def test_two_dimensional_placeholder_titles(self, stored_dir: Path) -> None:
+        # the object name labels the x axis, not the y axis it merely names: that one has
+        # no label of its own, which hist presents as the axis name
+        untitled = Sample(stored_dir / "untitled_2D.root")
+        for name in ("mz_recoil_2D", "hist_2D"):  # ROOT's empty titles, uproot's "Axis 0"
+            (h,) = build_histograms_2d([untitled], name)
+            assert [a.label for a in h.hist.axes] == [name, f"{name}_y"]
+            assert h.hist.axes[1]._raw_metadata["label"] == ""
+        (h,) = build_histograms_2d([untitled], Variable("mz_recoil_2D", label="Mass", unit="GeV"))
+        assert [a.label for a in h.hist.axes] == ["Mass [GeV]", "mz_recoil_2D_y"]
+        (h,) = build_histograms_2d(
+            [untitled],
+            Variable("mz_recoil_2D", label="Mass"),
+            Variable("mz_recoil_2D", label="Recoil", unit="GeV"),
+        )
+        assert [a.label for a in h.hist.axes] == ["Mass", "Recoil [GeV]"]

@@ -505,6 +505,11 @@ What a stored histogram supports:
 - The stored axis title is the x label unless `xlabel=`/a `Variable` label is
   given; a `unit=` is appended to it and, as for trees, feeds the bin-width y
   label (`Events / 5 GeV`). A title that ends in `[unit]` already supplies it.
+  A placeholder title (none, ROOT's `xaxis`, uproot's `Axis 0`) gives way to the
+  variable's name. The y axis of a `TH2` named by a single variable gets no
+  label from that name, which describes the histogram rather than the axis; as
+  for any unlabelled axis, hist shows the axis name (`mz_recoil_2D_y`) instead.
+  Pass a `Variable` for `y` to label it.
 - `bins=` merges the stored bins: an integer count (it must divide the stored
   count), or edges that coincide with the stored ones (`(n, low, high)`, a
   sequence of edges, or an `int` with `range=(low, high)`) and merge the bins

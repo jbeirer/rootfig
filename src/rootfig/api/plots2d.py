@@ -90,7 +90,8 @@ def plot2d(
 
     Like :func:`plot`, it also draws histograms that already exist: ``x`` alone
     may name a ``TH2`` stored in the file (its label, unit and ``log`` flag then
-    describe the x axis; the y axis keeps the stored title), and ``data`` may be
+    describe the x axis; the y axis keeps the stored title, and shows its axis
+    name when the file has none), and ``data`` may be
     a 2D ``hist.Hist`` or :class:`~rootfig.histograms.Histogram` with ``x`` and
     ``y`` omitted. For both, ``bins`` merges bins per axis as in :func:`plot`:
     an integer count, or edges that coincide with the existing ones.

@@ -189,7 +189,9 @@ def write_stored_histograms(directory: Path) -> None:
     histogram, a 2D ``mz_recoil_2D`` and a one-bin ``eventsProcessed``. Further
     files exercise the inference rule: a tree with a branch ``mz`` next to a
     histogram ``mz``, several trees next to it, a tree without that branch, a
-    histogram in a directory, and one with another binning.
+    histogram in a directory, and one with another binning. ``untitled_2D.root``
+    holds 2D histograms whose axes carry only placeholder titles: ROOT's empty
+    ones (``mz_recoil_2D``) and uproot's ``Axis 0``/``Axis 1`` (``hist_2D``).
     """
     import hist
 
@@ -216,6 +218,16 @@ def write_stored_histograms(directory: Path) -> None:
             file["mz_recoil_2D"] = two_d
             file["cutflow"] = cutflow
             file["eventsProcessed"] = np.histogram(np.full(n, 0.5), bins=1, range=(0.0, 1.0))
+    with uproot.recreate(directory / "untitled_2D.root") as file:
+        file["mz_recoil_2D"] = np.histogram2d(
+            rng.normal(91.0, 3.0, 300),
+            rng.normal(130.0, 3.0, 300),
+            bins=(10, 12),
+            range=((80.0, 100.0), (120.0, 140.0)),
+        )
+        file["hist_2D"] = hist.Hist(
+            hist.axis.Regular(10, 80.0, 100.0), hist.axis.Regular(12, 120.0, 140.0)
+        )
     # the same binning as ``mz`` but no Sumw2 and ROOT's placeholder axis title
     with uproot.recreate(directory / "mixed_storage.root") as file:
         file["mz"] = np.histogram(rng.normal(91.0, 6.0, 500), bins=100, range=(0.0, 250.0))

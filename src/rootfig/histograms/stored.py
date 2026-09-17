@@ -14,6 +14,7 @@ variation reads alike.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from os import PathLike
 from typing import Any
@@ -32,6 +33,7 @@ from rootfig.selection import NonFinitePolicy
 __all__ = ["read_stored", "stored_mode"]
 
 _ROOT_DEFAULT_AXIS_TITLES = frozenset({"", "xaxis", "yaxis", "zaxis"})
+_UPROOT_DEFAULT_AXIS_TITLE = re.compile(r"Axis \d+")  # what uproot writes for a label-less axis
 
 
 def stored_mode(samples: Sequence[Sample], variables: Sequence[Variable]) -> bool:
@@ -269,16 +271,24 @@ def _named(stored: Hist, variables: Sequence[Variable]) -> Hist:
     """Copy ``stored`` with its axes named after the variables, keeping their kind.
 
     Axis names follow the rule for histograms filled from trees (see
-    :func:`_axis_names`). Category axes (labelled bins) survive as such. The stored axis titles are
-    kept unless the variable has a label of its own or the title is ROOT's
-    placeholder (``"xaxis"``); a unit on the variable is appended once.
+    :func:`_axis_names`). Category axes (labelled bins) survive as such. The
+    stored axis titles are kept unless the variable has a label of its own or
+    the title is a placeholder (ROOT's ``"xaxis"`` or empty, uproot's
+    ``"Axis 1"``), which gives way to the variable; a unit on the variable is
+    appended once. A ``TH2`` addressed by one variable lends it to the y axis
+    too, where the object name would describe the histogram rather than that
+    axis: a placeholder title there leaves the axis without a label of its own
+    (hist then presents the axis name, ``<name>_y``).
     """
     result = stored.copy()
     names = _axis_names(variables)
-    for axis, variable, name in zip(result.axes, variables, names, strict=True):
+    for index, (axis, variable, name) in enumerate(zip(result.axes, variables, names, strict=True)):
         title = str(axis.label or "")
-        if variable.label is not None or title in _ROOT_DEFAULT_AXIS_TITLES:
+        borrowed = index > 0 and variable.expression == variables[0].expression
+        if variable.label is not None:
             label = variable.axis_label
+        elif _is_placeholder_title(title):
+            label = "" if borrowed else variable.axis_label
         elif variable.unit and not title.endswith(f"[{variable.unit}]"):
             label = f"{title} [{variable.unit}]"
         else:
@@ -286,6 +296,14 @@ def _named(stored: Hist, variables: Sequence[Variable]) -> Hist:
         _rename_axis(axis, name)
         axis.label = label
     return result
+
+
+def _is_placeholder_title(title: str) -> bool:
+    """Return True for an axis title that names no quantity, only the axis itself."""
+    return (
+        title in _ROOT_DEFAULT_AXIS_TITLES
+        or _UPROOT_DEFAULT_AXIS_TITLE.fullmatch(title) is not None
+    )
 
 
 def _axis_names(variables: Sequence[Variable]) -> list[str]:

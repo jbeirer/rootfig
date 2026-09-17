@@ -1885,6 +1885,16 @@ class TestStoredHistogramPlots:
         assert described.ax.get_ylabel() == "recoil [GeV]"
         assert described.ax.get_xscale() == "log"
         assert described.ax.get_yscale() == "linear"
+        # a stored TH2 without axis titles: the y axis does not take the object name
+        untitled = rf.plot2d(stored_dir / "untitled_2D.root", "mz_recoil_2D")
+        assert untitled.ax.get_xlabel() == "mz_recoil_2D"
+        assert untitled.ax.get_ylabel() == "mz_recoil_2D_y"
+        titled = rf.plot2d(
+            stored_dir / "untitled_2D.root",
+            "mz_recoil_2D",
+            rf.Variable("mz_recoil_2D", label="Recoil", unit="GeV"),
+        )
+        assert titled.ax.get_ylabel() == "Recoil [GeV]"
         with pytest.raises(TypeError, match="needs the x and y variables"):
             rf.plot2d(stored_dir / "ZH_sel0_histo.root")
         with pytest.raises(ValueError, match="two-dimensional histograms"):
