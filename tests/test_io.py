@@ -346,6 +346,9 @@ class TestStoredHistograms:
         assert mixed.histograms() == ["mz"]
         nested = FileSource(stored_dir / "in_directory.root")
         assert nested.histograms() == ["sub/mz"]
+        unsupported = FileSource(stored_dir / "unsupported.root")
+        assert unsupported.histograms() == []
+        assert unsupported.objects() == {"h3": "TH3D", "prof": "TProfile"}
 
     def test_read_sums_files_and_keeps_flow(self, stored_dir: Path) -> None:
         one = FileSource(stored_dir / "ZH_sel0_histo.root").read_histogram("mz")

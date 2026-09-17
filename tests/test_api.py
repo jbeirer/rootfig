@@ -1895,6 +1895,26 @@ class TestStoredHistogramPlots:
             rf.Variable("mz_recoil_2D", label="Recoil", unit="GeV"),
         )
         assert titled.ax.get_ylabel() == "Recoil [GeV]"
+        # an explicit name on x names the y axis too, as build_histograms_2d does
+        named = rf.plot2d(
+            stored_dir / "untitled_2D.root",
+            rf.Variable("mz_recoil_2D", name="mass", label="Mass", unit="GeV"),
+        )
+        assert [a.name for a in named.histograms[0].hist.axes] == ["mass", "mass_y"]
+        assert named.ax.get_xlabel() == "Mass [GeV]"
+        assert named.ax.get_ylabel() == "mass_y"
+        from rootfig.histograms import build_histograms_2d
+
+        (low_level,) = build_histograms_2d(
+            [rf.Sample(stored_dir / "untitled_2D.root")], rf.Variable("mz_recoil_2D", name="mass")
+        )
+        assert [a.name for a in low_level.hist.axes] == ["mass", "mass_y"]
+        # an object rootfig cannot plot is reported as such through the public functions
+        with pytest.raises(rf.SourceError, match=r"'prof' .* is a TProfile, which rootfig cannot"):
+            rf.plot(stored_dir / "unsupported.root", "prof")
+        with pytest.raises(rf.SourceError, match=r"'h3' .* is a TH3D"):
+            rf.plot2d(stored_dir / "unsupported_with_tree.root", "h3")
+
         with pytest.raises(TypeError, match="needs the x and y variables"):
             rf.plot2d(stored_dir / "ZH_sel0_histo.root")
         with pytest.raises(ValueError, match="two-dimensional histograms"):
@@ -1912,6 +1932,56 @@ class TestStoredHistogramPlots:
             rf.plot(cube)
         with pytest.raises(ValueError, match="selection, weight apply when filling"):
             rf.plot2d(p.histograms[0], selection="x > 1", weight="w")
+
+    def test_plot2d_object_described_by_variables(self) -> None:
+        h2 = hist.Hist(
+            hist.axis.Regular(10, 0.0, 100.0, name="x", label="X"),
+            hist.axis.Regular(6, 0.0, 3.0, name="y"),
+            storage=hist.storage.Weight(),
+        )
+        h2.fill([5.0, 15.0, 95.0], [0.5, 1.5, 2.5], weight=[1.0, 2.0, 3.0])
+        before = h2.copy()
+        plain = rf.plot2d(h2)
+        assert (plain.ax.get_xlabel(), plain.ax.get_ylabel()) == ("X", "y")
+        described = rf.plot2d(
+            h2,
+            rf.Variable("mass", label="Mass", unit="GeV", log=True),
+            rf.Variable("recoil", label="Recoil", bins=3),
+        )
+        assert described.ax.get_xlabel() == "Mass [GeV]"
+        assert described.ax.get_ylabel() == "Recoil"
+        assert (described.ax.get_xscale(), described.ax.get_yscale()) == ("log", "linear")
+        assert [a.name for a in described.histograms[0].hist.axes] == ["mass", "recoil"]
+        assert [a.size for a in described.histograms[0].hist.axes] == [10, 3]
+        assert described.variable is not None
+        assert described.variable.expression == "mass"
+        np.testing.assert_allclose(described.histograms[0].values().sum(), 6.0)
+        # a unit alone is appended to the existing title; x alone leaves y as it is
+        unit_only = rf.plot2d(h2, rf.Variable("mass", unit="GeV"))
+        assert (unit_only.ax.get_xlabel(), unit_only.ax.get_ylabel()) == ("X [GeV]", "y")
+        # explicit arguments override the variables, as in plot()
+        overridden = rf.plot2d(
+            h2,
+            rf.Variable("mass", bins=2, log=True),
+            rf.Variable("recoil", bins=3),
+            bins=(5, 6),
+            logx=False,
+        )
+        assert [a.size for a in overridden.histograms[0].hist.axes] == [5, 6]
+        assert overridden.ax.get_xscale() == "linear"
+        # only merges of the existing bins are possible
+        with pytest.raises(rf.BinningError, match="can be merged into"):
+            rf.plot2d(h2, rf.Variable("mass", bins=7))
+        with pytest.raises(rf.BinningError, match="range of a histogram that already exists"):
+            rf.plot2d(h2, rf.Variable("mass", bins=(5, 0.0, 50.0)))
+        with pytest.raises(rf.BinningError, match="cannot be applied to a histogram"):
+            rf.plot2d(h2, rf.Variable("mass", range=(0.0, 50.0)))
+        with pytest.raises(ValueError, match="tree applies when filling"):
+            rf.plot2d(h2, rf.Variable("mass"), tree="events")
+        # the histogram given is untouched by all of this
+        assert [(a.name, a.label) for a in h2.axes] == [("x", "X"), ("y", "y")]
+        np.testing.assert_array_equal(h2.values(), before.values())
+        np.testing.assert_array_equal(h2.variances(), before.variances())
 
     def test_explicit_intent_wins(self, stored_dir: Path) -> None:
         # tree= means a branch even when a histogram of that name exists

@@ -288,7 +288,7 @@ def plot(
         hists = rebin_ready_made(
             hists,
             [bins if var is None else var.bins],
-            range_=range if var is None else var.range,
+            [range if var is None else var.range],
         )
     else:
         if variable is None:

@@ -2000,6 +2000,33 @@ class TestStoredHistograms:
         with pytest.raises(SourceError, match="needs two variables"):
             build_histograms_2d([zh], "mz * 2")
 
+    def test_unsupported_objects_are_named(self, stored_dir: Path) -> None:
+        from rootfig.histograms import stored_mode
+
+        # an object of that name exists but is no TH1/TH2: say so, instead of failing later
+        # on the missing tree or branch
+        alone = Sample(stored_dir / "unsupported.root")
+        with pytest.raises(
+            SourceError, match=r"'prof' .* is a TProfile, which rootfig cannot plot"
+        ):
+            build_histograms([alone], "prof")
+        with pytest.raises(SourceError, match=r"is a TH3D, .*read as TH1 and TH2 only"):
+            build_histograms_2d([alone], "h3")
+        beside_tree = Sample(stored_dir / "unsupported_with_tree.root")
+        with pytest.raises(SourceError, match=r"'h3' .* is a TH3D"):
+            build_histograms([beside_tree], "h3")
+        # a branch of the same name wins over any stored object
+        assert not stored_mode([beside_tree], [Variable("prof")])
+        (h,) = build_histograms([beside_tree], Variable("prof", bins=(3, -0.5, 2.5)))
+        np.testing.assert_allclose(h.values(), [1.0, 1.0, 1.0])
+        # with several trees the tree lookup reports the ambiguity, as for any branch
+        assert not stored_mode([Sample(stored_dir / "two_trees.root")], [Variable("prof")])
+        with pytest.raises(SourceError, match="several trees"):
+            build_histograms([Sample(stored_dir / "two_trees.root")], "prof")
+        # a name no object carries is left to the tree lookup as well
+        with pytest.raises(SourceError, match="no TTree or RNTuple"):
+            build_histograms([alone], "missing")
+
     def test_two_dimensional_placeholder_titles(self, stored_dir: Path) -> None:
         # the object name labels the x axis, not the y axis it merely names: that one has
         # no label of its own, which hist presents as the axis name

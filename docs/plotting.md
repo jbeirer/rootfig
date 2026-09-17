@@ -456,7 +456,9 @@ table.get("MET", "Signal").mean  # a Summary: entries, mean, std, sem, skewness,
 
 `rf.plot`, `rf.histogram(s)` and `rf.plot2d` read histograms stored in ROOT
 files; `rf.plot` and `rf.plot2d` also draw histogram objects you already have.
-Both take the drawing options above.
+Each keeps its usual plotting options: the 1D options above for `rf.plot`
+(stacks, ratios, `flow`, `stats`, ...), those of the [2D section](#2d-histograms-and-correlations)
+for `rf.plot2d`. Only what needs event data is refused.
 
 ### Histograms already in ROOT files
 
@@ -542,7 +544,10 @@ drawn as they are: `rf.plot([h_sig, h_bkg], label=["Signal", "Background"],
 ratio=True)`. `label=` names plain `hist.Hist` objects (otherwise their first
 axis name is used), `observed=` takes histogram objects for the data,
 `variable=` optionally supplies the axis label, unit and `log` flag, and
-`rf.plot2d(h2)` draws a 2D one. As for stored histograms, `bins=` (given
+`rf.plot2d(h2)` draws a 2D one, with `x` and `y` `Variable`s optionally
+describing its axes the same way (`rf.plot2d(h2, rf.Variable("mass",
+label="Mass", unit="GeV"), rf.Variable("recoil", bins=6))`; a `name=` renames
+the axis, the histogram you passed is left untouched). As for stored histograms, `bins=` (given
 directly or on the `Variable`) merges bins: an integer count, or edges that
 coincide with the existing ones, so the `Variable` a histogram was filled with
 can be passed along with it (`rf.plot(rf.histogram(sample, pt), pt)`), also

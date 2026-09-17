@@ -23,6 +23,7 @@ from rootfig._typing import Hist
 from rootfig.errors import SelectionError, SourceError, SystematicError, annotate
 from rootfig.histograms.build import Histogram, from_sample
 from rootfig.io import FileSource
+from rootfig.io.objects import is_tree_class
 from rootfig.model.binning import merge_target
 from rootfig.model.cuts import CutLike
 from rootfig.model.samples import Sample
@@ -30,7 +31,7 @@ from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.variables import Variable
 from rootfig.selection import NonFinitePolicy
 
-__all__ = ["read_stored", "stored_mode"]
+__all__ = ["describe_axes", "read_stored", "stored_mode"]
 
 _ROOT_DEFAULT_AXIS_TITLES = frozenset({"", "xaxis", "yaxis", "zaxis"})
 _UPROOT_DEFAULT_AXIS_TITLE = re.compile(r"Axis \d+")  # what uproot writes for a label-less axis
@@ -94,7 +95,7 @@ def _why_not_stored(sample: Sample, name: str) -> str | None:
     if explicit is not None:
         return explicit
     if name not in source.histograms():
-        return f"{source.files[0]!r} holds no histogram of that name"
+        return _no_histogram(source, name)
     trees = source.trees()
     if len(trees) > 1:
         msg = (
@@ -105,6 +106,34 @@ def _why_not_stored(sample: Sample, name: str) -> str | None:
     if trees and name in source.branches():
         return f"tree {trees[0]!r} has a branch of that name, which wins"
     return None
+
+
+def _no_histogram(source: FileSource, name: str) -> str:
+    """Why ``name`` is not a stored histogram of ``source`` although no branch has been checked yet.
+
+    An object of that name that is neither a ``TH1``/``TH2`` nor a tree (a
+    ``TProfile``, ``TH3``, ``TParameter``, ...) cannot be plotted at all, so it
+    is reported as such instead of leaving the tree lookup to fail on a missing
+    branch, unless a branch of that name takes the name (a branch wins over any
+    stored object). With several trees the tree lookup reports the ambiguity.
+
+    Raises
+    ------
+    SourceError
+        For an object rootfig cannot plot, naming its class.
+    """
+    path = source.files[0]
+    classname = source.objects().get(name)
+    if classname is None or is_tree_class(classname):
+        return f"{path!r} holds no histogram of that name"
+    trees = source.trees()
+    if len(trees) > 1 or (trees and name in source.branches()):
+        return f"{path!r} holds a {classname} of that name, which is not a histogram to read"
+    msg = (
+        f"object {name!r} in {path!r} is a {classname}, which rootfig cannot plot; stored ROOT "
+        "histograms are read as TH1 and TH2 only"
+    )
+    raise SourceError(msg)
 
 
 def _addresses_a_tree(source: FileSource) -> str | None:
@@ -262,29 +291,36 @@ def _read_scaled(
             f"{name!r} in {source.files[0]!r} is a {stored.ndim}D histogram; draw it with {other}()"
         )
         raise SourceError(msg)
-    named = _named(stored, variables)
+    named = describe_axes(stored, variables)
     factor = sample.scale * sample.lumi_scale(lumi)
     return named if factor == 1.0 else named * factor
 
 
-def _named(stored: Hist, variables: Sequence[Variable]) -> Hist:
-    """Copy ``stored`` with its axes named after the variables, keeping their kind.
+def describe_axes(h: Hist, variables: Sequence[Variable | None]) -> Hist:
+    """Copy ``h`` with its axes named and labelled after ``variables``, keeping their kind.
 
-    Axis names follow the rule for histograms filled from trees (see
-    :func:`_axis_names`). Category axes (labelled bins) survive as such. The
-    stored axis titles are kept unless the variable has a label of its own or
-    the title is a placeholder (ROOT's ``"xaxis"`` or empty, uproot's
-    ``"Axis 1"``), which gives way to the variable; a unit on the variable is
-    appended once. A ``TH2`` addressed by one variable lends it to the y axis
-    too, where the object name would describe the histogram rather than that
-    axis: a placeholder title there leaves the axis without a label of its own
-    (hist then presents the axis name, ``<name>_y``).
+    One entry per axis; ``None`` leaves an axis as it is. Axis names follow the
+    rule for histograms filled from trees (see :func:`_axis_names`). Category
+    axes (labelled bins) survive as such. The existing axis titles are kept
+    unless the variable has a label of its own or the title is a placeholder
+    (ROOT's ``"xaxis"`` or empty, uproot's ``"Axis 1"``), which gives way to the
+    variable; a unit on the variable is appended once. A ``TH2`` addressed by
+    one variable lends it to the y axis too, where the object name would
+    describe the histogram rather than that axis: a placeholder title there
+    leaves the axis without a label of its own (hist then presents the axis
+    name, ``<name>_y``). The histogram given is not modified.
     """
-    result = stored.copy()
-    names = _axis_names(variables)
+    result = h.copy()
+    names = _axis_names(result.axes, variables)
+    first = variables[0]
     for index, (axis, variable, name) in enumerate(zip(result.axes, variables, names, strict=True)):
-        title = str(axis.label or "")
-        borrowed = index > 0 and variable.expression == variables[0].expression
+        if variable is None:
+            _rename_axis(axis, name)
+            continue
+        title = str(
+            axis.label or ""
+        )  # read before renaming: hist presents an unlabelled axis by name
+        borrowed = index > 0 and first is not None and variable.expression == first.expression
         if variable.label is not None:
             label = variable.axis_label
         elif _is_placeholder_title(title):
@@ -306,13 +342,18 @@ def _is_placeholder_title(title: str) -> bool:
     )
 
 
-def _axis_names(variables: Sequence[Variable]) -> list[str]:
+def _axis_names(axes: Sequence[Any], variables: Sequence[Variable | None]) -> list[str]:
     """Return one axis name per variable, as a histogram filled from a tree would carry.
 
-    The y axis gets a ``_y`` suffix only when both variables share a name (the
-    same stored ``TH2`` read for both axes), since hist requires distinct names.
+    An axis without a variable keeps its name. The y axis gets a ``_y`` suffix
+    only when both axes would share a name (the same stored ``TH2`` read for
+    both, or a variable named like the axis left alone), since hist requires
+    distinct names.
     """
-    names = [variable.safe_name for variable in variables]
+    names = [
+        axis.name if variable is None else variable.safe_name
+        for axis, variable in zip(axes, variables, strict=True)
+    ]
     if len(names) > 1 and names[1] == names[0]:
         names[1] = f"{names[1]}_y"
     return names

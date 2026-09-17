@@ -29,7 +29,7 @@ from rootfig.histograms.ratio import (
     significance,
 )
 from rootfig.histograms.stats import Summary, correlation_matrix, describe_table, summarize
-from rootfig.histograms.stored import read_stored, stored_mode
+from rootfig.histograms.stored import describe_axes, read_stored, stored_mode
 from rootfig.histograms.systematics import Uncertainty, sum_histograms, uncertainty
 
 __all__ = [
@@ -55,6 +55,7 @@ __all__ = [
     "compatible_binning",
     "correlation_matrix",
     "cutflow",
+    "describe_axes",
     "describe_table",
     "efficiency",
     "fill",

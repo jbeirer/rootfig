@@ -106,7 +106,9 @@ def require_dimension(histograms: Sequence[Histogram], ndim: int, function: str)
 
 
 def rebin_ready_made(
-    histograms: Sequence[Histogram], bins: Sequence[Bins | None], *, range_: RangeSpec = None
+    histograms: Sequence[Histogram],
+    bins: Sequence[Bins | None],
+    ranges: Sequence[RangeSpec] | None = None,
 ) -> list[Histogram]:
     """Merge the bins of ready-made histograms as the ``bins`` specifications ask, one per axis.
 
@@ -117,8 +119,11 @@ def rebin_ready_made(
     and merge the bins between them, exactly as
     :func:`~rootfig.histograms.read_stored` does (see
     :func:`~rootfig.model.binning.merge_target`). ``None`` keeps an axis.
+    ``ranges`` pairs one range specification with each entry of ``bins``.
     """
-    targets = [merge_target(spec, range_) for spec in bins]
+    if ranges is None:
+        ranges = [None] * len(bins)
+    targets = [merge_target(spec, range_) for spec, range_ in zip(bins, ranges, strict=True)]
     if all(target is None for target in targets):
         return list(histograms)
     return [histogram_.rebinned_to(targets) for histogram_ in histograms]

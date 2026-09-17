@@ -192,6 +192,9 @@ def write_stored_histograms(directory: Path) -> None:
     histogram in a directory, and one with another binning. ``untitled_2D.root``
     holds 2D histograms whose axes carry only placeholder titles: ROOT's empty
     ones (``mz_recoil_2D``) and uproot's ``Axis 0``/``Axis 1`` (``hist_2D``).
+    ``unsupported.root`` holds objects rootfig cannot plot (a ``TProfile``
+    ``prof`` and a ``TH3`` ``h3``), ``unsupported_with_tree.root`` the same
+    next to a tree whose branch ``prof`` takes that name.
     """
     import hist
 
@@ -242,12 +245,24 @@ def write_stored_histograms(directory: Path) -> None:
         file.mktree("events", {"mz": np.float64})
         file["events"].extend({"mz": rng.normal(91.0, 6.0, 300)})
         file["mz"] = np.histogram(rng.normal(20.0, 1.0, 500), bins=100, range=(0.0, 250.0))
+    profile = hist.Hist(hist.axis.Regular(3, 0.0, 1.0), storage=hist.storage.Mean())
+    profile.fill([0.1, 0.5, 0.9], sample=[1.0, 2.0, 3.0])
+    cube = hist.Hist(*[hist.axis.Regular(2, 0.0, 1.0) for _ in range(3)])
     with uproot.recreate(directory / "two_trees.root") as file:
         file.mktree("a", {"x": np.float64})
         file["a"].extend({"x": np.arange(3.0)})
         file.mktree("b", {"y": np.float64})
         file["b"].extend({"y": np.arange(3.0)})
         file["mz"] = np.histogram(rng.normal(91.0, 6.0, 500), bins=100, range=(0.0, 250.0))
+        file["prof"] = profile
+    with uproot.recreate(directory / "unsupported.root") as file:
+        file["prof"] = profile
+        file["h3"] = cube
+    with uproot.recreate(directory / "unsupported_with_tree.root") as file:
+        file.mktree("events", {"pt": np.float64, "prof": np.float64})
+        file["events"].extend({"pt": np.arange(3.0), "prof": np.arange(3.0)})
+        file["prof"] = profile
+        file["h3"] = cube
     with uproot.recreate(directory / "tree_without_branch.root") as file:
         file.mktree("events", {"pt": np.float64})
         file["events"].extend({"pt": np.arange(3.0)})

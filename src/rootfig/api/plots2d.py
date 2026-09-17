@@ -21,6 +21,7 @@ from rootfig.histograms import (
     NormalizeSpec,
     build_histograms_2d,
     correlation_matrix,
+    describe_axes,
     load_columns,
     stored_mode,
 )
@@ -91,19 +92,21 @@ def plot2d(
     Like :func:`plot`, it also draws histograms that already exist: ``x`` alone
     may name a ``TH2`` stored in the file (its label, unit and ``log`` flag then
     describe the x axis; the y axis keeps the stored title, and shows its axis
-    name when the file has none), and ``data`` may be
-    a 2D ``hist.Hist`` or :class:`~rootfig.histograms.Histogram` with ``x`` and
-    ``y`` omitted. For both, ``bins`` merges bins per axis as in :func:`plot`:
-    an integer count, or edges that coincide with the existing ones.
-    ``assume_poisson`` accepts such a histogram without variances, as in
-    :func:`plot`.
+    name when the file has none), and ``data`` may be a 2D ``hist.Hist`` or
+    :class:`~rootfig.histograms.Histogram`. For such an object ``x`` and ``y``
+    are optional and describe its axes as ``variable`` does in :func:`plot`:
+    label, unit, ``log`` flag, a ``name`` for the axis and ``bins`` to merge to;
+    the object itself is left untouched. For both, ``bins`` merges bins per axis
+    as in :func:`plot`: an integer count, or edges that coincide with the
+    existing ones. ``assume_poisson`` accepts such a histogram without
+    variances, as in :func:`plot`.
     """
     objects = histogram_objects(data)
+    x_bins, y_bins = _split_bins(bins)
+    var_x: Variable | None
     if objects is not None:
         reject_fill_options(
             "histogram objects",
-            x=x,
-            y=y,
             tree=tree,
             selection=selection,
             weight=weight,
@@ -113,25 +116,35 @@ def plot2d(
         if len(objects) != 1:
             msg = f"plot2d() draws a single histogram, got {len(objects)}"
             raise ValueError(msg)
-        wrapped = wrap_histograms(objects, assume_poisson=assume_poisson)
-        require_dimension(wrapped, 2, "plot2d")
-        [histogram_] = rebin_ready_made(wrapped, _split_bins(bins))
-        var_x: Variable | None = None
+        # x and y describe the axes of the histogram given; an explicit bins= overrides theirs
+        var_x = None if x is None else as_variable(x, bins=x_bins)
+        var_y = None if y is None else as_variable(y, bins=y_bins)
+        [histogram_] = wrap_histograms(objects, assume_poisson=assume_poisson)
+        require_dimension([histogram_], 2, "plot2d")
+        if var_x is not None or var_y is not None:
+            described = [var_x, var_y]
+            histogram_ = histogram_.map_hists(lambda h: describe_axes(h, described))
+        [histogram_] = rebin_ready_made(
+            [histogram_],
+            [x_bins if var_x is None else var_x.bins, y_bins if var_y is None else var_y.bins],
+            [None if var_x is None else var_x.range, None if var_y is None else var_y.range],
+        )
         is_data = histogram_.is_data
-        logx, logy = bool(logx), bool(logy)
+        logx = (var_x is not None and var_x.log) if logx is None else logx
+        logy = (var_y is not None and var_y.log) if logy is None else logy
     else:
         if x is None:
             msg = "plot2d() needs the x and y variables, or the name of a stored 2D histogram"
             raise TypeError(msg)
         sample = single_sample(data, tree=tree)
-        x_bins, y_bins = _split_bins(bins)
         var_x = as_variable(x, bins=x_bins)
         if y is not None:
             var_y = as_variable(y, bins=y_bins)
         else:
-            # the y axis of a stored 2D histogram: the same name, its own bin count, and none
-            # of x's label, unit or log flag, which describe the x axis only
-            var_y = Variable(var_x.expression, bins=y_bins)
+            # the y axis of a stored 2D histogram: the same name (so the axes are told apart by
+            # a suffix), its own bin count, and none of x's label, unit or log flag, which
+            # describe the x axis only
+            var_y = Variable(var_x.expression, bins=y_bins, name=var_x.name)
             if not stored_mode([sample], [var_x, var_y]):
                 msg = (
                     "plot2d() needs the x and y variables, or the name of a 2D histogram "
