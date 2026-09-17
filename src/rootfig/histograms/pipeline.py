@@ -466,7 +466,9 @@ def build_histograms_2d(
     samples' sources are neither filled nor checked.
     """
     var_x = as_variable(x)
-    var_y = var_x if y is None else as_variable(y)
+    # the y axis of a stored 2D histogram named by x alone: the same name (so the axes are
+    # told apart by a suffix), none of x's label, unit or bins, which describe the x axis only
+    var_y = Variable(var_x.expression, name=var_x.name) if y is None else as_variable(y)
     if stored_mode(samples, [var_x, var_y]):
         return read_stored(
             samples,
