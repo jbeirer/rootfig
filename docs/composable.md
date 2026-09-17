@@ -45,6 +45,9 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
   ```
 
   Without a luminosity such samples raise a [`LuminosityError`][rootfig.LuminosityError].
+  The same samples can point at files of ready-made histograms instead of
+  trees; naming the histogram in place of the branch reads it (see
+  [stored histograms](plotting.md#histograms-already-in-root-files)).
 - `entry_start`/`entry_stop` restrict reading for quick looks at large files
   (a plot reads every needed branch of every file into memory at once). For a
   ready-made `FileSource`, give the range to the source itself; passing it to
@@ -75,6 +78,10 @@ met = rf.Variable(
 
 - `bins`: an `int` (range inferred from the data), `(n, low, high)`, a sequence
   of edges (e.g. `rf.log_bins(30, 1, 1000)`), or a `hist.axis.Regular`/`Variable`.
+  Applied to a histogram that already exists (stored in a file, or filled
+  earlier and passed back with the variable), an `int` merges its bins down to
+  that count and explicit edges must coincide with its own; see
+  [Histograms that already exist](plotting.md#histograms-that-already-exist).
 - `range`: `(low, high)`, `"robust"` (the default: ignores far outliers such as
   `-999` sentinels and cuts a thin tail, both of which then land in the
   under/overflow) or `"auto"` (the finite min/max over all samples). See

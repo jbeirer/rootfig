@@ -10,6 +10,7 @@ repos:
       - id: check-merge-conflict
       - id: check-toml
       - id: check-yaml
+        args: ["--unsafe"]  # mkdocs.yml uses !!python tags for pymdownx slugify
       - id: debug-statements
       - id: end-of-file-fixer
       - id: mixed-line-ending
@@ -39,5 +40,5 @@ repos:
     rev: "v2.4.3"
     hooks:
       - id: codespell
-        args: ["--ignore-words-list=hist,ans,nd,ser,heros,celle,gaus"]
+        args: ["--ignore-words-list=hist,ans,nd,ser,heros,celle,gaus,thn"]
         exclude: ^uv\.lock$

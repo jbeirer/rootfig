@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
+from rootfig._storage import add_hists
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
@@ -149,27 +149,18 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     names = list(dict.fromkeys(name for h in histograms for name in h.variations))
     variations: dict[str, tuple[Hist, Hist]] = {}
     for name in names:
-        up = _total([h.variations[name][0] if name in h.variations else h.hist for h in histograms])
-        down = _total(
+        up = add_hists(
+            [h.variations[name][0] if name in h.variations else h.hist for h in histograms]
+        )
+        down = add_hists(
             [h.variations[name][1] if name in h.variations else h.hist for h in histograms]
         )
         variations[name] = (up, down)
     return Histogram(
-        _total([h.hist for h in histograms]),
+        add_hists([h.hist for h in histograms]),
         label=label,
         normalization=first.normalization
         if all(h.normalization == first.normalization for h in histograms)
         else None,
         variations=variations,
     )
-
-
-def _total(hists: Sequence[Hist]) -> Hist:
-    total = hists[0].copy()
-    view: Any = total.view(flow=True)
-    for other in hists[1:]:
-        # Compatible numerical bins can have different axis metadata or types,
-        # which hist's own addition rejects. Keep the first histogram's axes.
-        view.value += other.values(flow=True)
-        view.variance += other.variances(flow=True)
-    return total

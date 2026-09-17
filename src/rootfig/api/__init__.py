@@ -8,7 +8,7 @@ their own.
 
 from rootfig.api.data import histogram, histograms, load
 from rootfig.api.measures import efficiency, profile
-from rootfig.api.plots1d import plot, plot_histograms
+from rootfig.api.plots1d import plot
 from rootfig.api.plots2d import correlation, plot2d
 from rootfig.api.tables import SummaryTable, cutflow, summarize
 
@@ -22,7 +22,6 @@ __all__ = [
     "load",
     "plot",
     "plot2d",
-    "plot_histograms",
     "profile",
     "summarize",
 ]

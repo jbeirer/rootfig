@@ -439,15 +439,16 @@ def object_vs_event(signal: rf.Sample, pt: rf.Variable, style: rf.Style) -> rf.P
 def expressions(signal: rf.Sample, pt: rf.Variable, style: rf.Style) -> rf.Plot:
     """Variables are expressions with NumPy functions and per-event reductions:
     ``first(Muon_pt)`` is the leading muon, ``Muon_pt * cosh(Muon_eta)`` the muon momentum.
-    ``rf.histogram`` returns a plain ``hist.Hist``; ``rf.plot_histograms`` draws any collection
-    of them with the usual options."""
+    ``rf.histogram`` returns a plain ``hist.Hist``; ``rf.plot`` draws any collection of
+    histogram objects with the usual options."""
     all_muons = rf.histogram(signal, pt)
     leading = rf.histogram(signal, pt.replace(expression="first(Muon_pt)"))
     momentum = rf.histogram(signal, pt.replace(expression="Muon_pt * cosh(Muon_eta)"))
-    return rf.plot_histograms(
+    return rf.plot(
         [all_muons, leading, momentum],
-        labels=["All muons", "Leading muon", r"Muon $|\vec{p}|$"],
-        variable=pt.replace(label=r"$p_T^{\mu}$ or $|\vec{p}^{\,\mu}|$"),
+        label=["All muons", "Leading muon", r"Muon $|\vec{p}|$"],
+        xlabel=r"$p_T^{\mu}$ or $|\vec{p}^{\,\mu}|$",
+        unit="GeV",
         logy=True,
         style=style,
     )

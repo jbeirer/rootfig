@@ -9,12 +9,21 @@ import numpy as np
 
 from rootfig._typing import FloatArray
 from rootfig.api._common import normalize_for_plot, single_sample, style_for
+from rootfig.api._hists import (
+    histogram_objects,
+    rebin_ready_made,
+    reject_fill_options,
+    require_dimension,
+    wrap_histograms,
+)
 from rootfig.errors import BinningError, SelectionError
 from rootfig.histograms import (
     NormalizeSpec,
     build_histograms_2d,
     correlation_matrix,
+    describe_axes,
     load_columns,
+    stored_mode,
 )
 from rootfig.model import (
     Bins,
@@ -42,8 +51,8 @@ __all__ = ["correlation", "plot2d"]
 
 def plot2d(
     data: Any,
-    x: str | Variable,
-    y: str | Variable,
+    x: str | Variable | None = None,
+    y: str | Variable | None = None,
     *,
     tree: str | None = None,
     selection: CutLike | None = None,
@@ -63,6 +72,7 @@ def plot2d(
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
     nonfinite: NonFinitePolicy = "drop",
+    assume_poisson: bool = False,
     save: str | None = None,
 ) -> Plot:
     """Draw a two-dimensional histogram of ``y`` versus ``x`` for one sample.
@@ -78,16 +88,85 @@ def plot2d(
     indicator, so give every axis that needs its full extent its own
     ``range="auto"``: ``rf.Variable(x, range="auto")`` leaves the y axis
     inferring robustly.
+
+    Like :func:`plot`, it also draws histograms that already exist: ``x`` alone
+    may name a ``TH2`` stored in the file (its label, unit and ``log`` flag then
+    describe the x axis; the y axis keeps the stored title, and shows its axis
+    name when the file has none), and ``data`` may be a 2D ``hist.Hist`` or
+    :class:`~rootfig.histograms.Histogram`. For such an object ``x`` and ``y``
+    are optional and describe its axes as ``variable`` does in :func:`plot`:
+    label, unit, ``log`` flag, a ``name`` for the axis and ``bins`` to merge to;
+    the object itself is left untouched. For both, ``bins`` merges bins per axis
+    as in :func:`plot`: an integer count, or edges that coincide with the
+    existing ones. ``assume_poisson`` accepts such a histogram without
+    variances, as in :func:`plot`.
     """
-    sample = single_sample(data, tree=tree)
+    objects = histogram_objects(data)
     x_bins, y_bins = _split_bins(bins)
-    var_x = as_variable(x, bins=x_bins)
-    var_y = as_variable(y, bins=y_bins)
-    logx = var_x.log if logx is None else logx
-    logy = var_y.log if logy is None else logy
-    [histogram_] = build_histograms_2d(
-        [sample], var_x, var_y, selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
-    )
+    var_x: Variable | None
+    if objects is not None:
+        reject_fill_options(
+            "histogram objects",
+            tree=tree,
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            nonfinite=nonfinite,
+        )
+        if len(objects) != 1:
+            msg = f"plot2d() draws a single histogram, got {len(objects)}"
+            raise ValueError(msg)
+        # x and y describe the axes of the histogram given; an explicit bins= overrides theirs
+        var_x = None if x is None else as_variable(x, bins=x_bins)
+        var_y = None if y is None else as_variable(y, bins=y_bins)
+        [histogram_] = wrap_histograms(objects, assume_poisson=assume_poisson)
+        require_dimension([histogram_], 2, "plot2d")
+        if var_x is not None or var_y is not None:
+            described = [var_x, var_y]
+            histogram_ = histogram_.map_hists(lambda h: describe_axes(h, described))
+        [histogram_] = rebin_ready_made(
+            [histogram_],
+            [x_bins if var_x is None else var_x.bins, y_bins if var_y is None else var_y.bins],
+            [None if var_x is None else var_x.range, None if var_y is None else var_y.range],
+        )
+        is_data = histogram_.is_data
+        logx = (var_x is not None and var_x.log) if logx is None else logx
+        logy = (var_y is not None and var_y.log) if logy is None else logy
+    else:
+        if x is None:
+            msg = "plot2d() needs the x and y variables, or the name of a stored 2D histogram"
+            raise TypeError(msg)
+        sample = single_sample(data, tree=tree)
+        var_x = as_variable(x, bins=x_bins)
+        if y is not None:
+            var_y = as_variable(y, bins=y_bins)
+        else:
+            # the y axis of a stored 2D histogram: the same name (so the axes are told apart by
+            # a suffix), its own bin count, and none of x's label, unit or log flag, which
+            # describe the x axis only
+            var_y = Variable(var_x.expression, bins=y_bins, name=var_x.name)
+            if not stored_mode([sample], [var_x, var_y]):
+                msg = (
+                    "plot2d() needs the x and y variables, or the name of a 2D histogram "
+                    f"stored in the file; {var_x.expression!r} is neither"
+                )
+                raise TypeError(msg)
+        logx = var_x.log if logx is None else logx
+        logy = var_y.log if logy is None else logy
+        [histogram_] = build_histograms_2d(
+            [sample],
+            var_x,
+            var_y,
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            nonfinite=nonfinite,
+            assume_poisson=assume_poisson,
+        )
+        is_data = sample.is_data
+    if histogram_.ndim != 2:
+        msg = f"plot2d() draws two-dimensional histograms, got {histogram_.ndim}D; use plot()"
+        raise ValueError(msg)
     if normalize is not None and normalize is not False:
         histogram_ = normalize_for_plot(histogram_, normalize)
     resolved_style = style_for(style, text, lumi)
@@ -111,7 +190,7 @@ def plot2d(
         if title:
             main_ax.set_title(title)
         # the bins fill the frame: an experiment label goes above it
-        add_experiment_label(main_ax, st, has_data=sample.is_data, above=True)
+        add_experiment_label(main_ax, st, has_data=is_data, above=True)
         finalize_figure(fig)  # last: fonts
     # outside the style context, against the layout the figure is drawn with
     align_experiment_label(main_ax)

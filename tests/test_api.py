@@ -543,14 +543,12 @@ class TestRatioReference:
             return rf.Histogram(h, label=label, is_data=is_data)
 
         data = make(20.0, "Data", is_data=True)
-        p = rf.plot_histograms([data, make(10.0, "A"), make(30.0, "B")], ratio=True)
+        p = rf.plot([data, make(10.0, "A"), make(30.0, "B")], ratio=True)
         assert len(p.ratios) == 1  # only the data appears in the panel
         np.testing.assert_allclose(p.ratios[0].values, [2.0, 2.0])  # data / A, not data / total
         assert p.ratio_ax is not None
         assert ratio_ylabel(p) == "Data / A"
-        stacked = rf.plot_histograms(
-            [data, make(10.0, "A"), make(30.0, "B")], ratio=True, stack=True
-        )
+        stacked = rf.plot([data, make(10.0, "A"), make(30.0, "B")], ratio=True, stack=True)
         np.testing.assert_allclose(stacked.ratios[0].values, [0.5, 0.5])  # data / total
 
 
@@ -625,21 +623,21 @@ class TestPlotHistograms:
     def test_lost_variances_need_assume_poisson(self) -> None:
         weighted = hist.Hist(hist.axis.Regular(2, 0, 2)).fill([0.5, 1.5], weight=[2.0, -1.0])
         with pytest.raises(ValueError, match="assume_poisson=True"):
-            rf.plot_histograms([weighted])
+            rf.plot([weighted])
         with pytest.warns(RootfigWarning, match="Poisson guess"):
-            p = rf.plot_histograms([weighted], assume_poisson=True)
+            p = rf.plot([weighted], assume_poisson=True)
         np.testing.assert_allclose(p.histograms[0].variances(), [2.0, 1.0])
 
     def test_skipped_normalisation_keeps_events_label(self) -> None:
         empty = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
         with pytest.warns(RootfigWarning, match="no entries"):
-            p = rf.plot_histograms([empty], normalize=True)
+            p = rf.plot([empty], normalize=True)
         assert p.ax.get_ylabel() == "Events"  # the label does not claim a normalisation
         assert p.histograms[0].normalization is None
         cancelling = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
         cancelling.fill([0.5, 1.5], weight=[2.0, -2.0])
         with pytest.warns(RootfigWarning, match="sum to zero"):
-            p = rf.plot_histograms([cancelling], normalize="density")
+            p = rf.plot([cancelling], normalize="density")
         assert p.ax.get_ylabel() == "Events"
         np.testing.assert_allclose(p.histograms[0].values(), [2.0, -2.0])
 
@@ -649,13 +647,13 @@ class TestPlotHistograms:
         )
         h1.fill([0.5, 1.5, 2.5])
         h2 = h1 * 2
-        p = rf.plot_histograms([h1, h2], labels=["one", "two"], ratio=True, normalize=True)
+        p = rf.plot([h1, h2], label=["one", "two"], ratio=True, normalize=True)
         assert [h.label for h in p.histograms] == ["one", "two"]
         assert p.ax.get_xlabel() == ""
         assert p.ratio_ax is not None
         assert p.ratio_ax.get_xlabel() == "x"
         assert p.ratios[0].values[:3].tolist() == pytest.approx([1.0, 1.0, 1.0])
-        p = rf.plot_histograms([h1], xlabel="custom")
+        p = rf.plot([h1], xlabel="custom")
         assert p.ax.get_xlabel() == "custom"
         assert p.histograms[0].label == "x"
 
@@ -667,17 +665,17 @@ class TestPlotHistograms:
         )
         h.hist.fill([0.5])
         with pytest.warns(RootfigWarning, match="already normalised"):
-            rf.plot_histograms([h], normalize=True)
+            rf.plot([h], normalize=True)
 
     def test_errors(self) -> None:
         h1 = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
         with pytest.raises(ValueError, match="no histograms"):
-            rf.plot_histograms([])
+            rf.plot([])
         with pytest.raises(ValueError, match="labels"):
-            rf.plot_histograms([h1], labels=["a", "b"])
+            rf.plot([h1], label=["a", "b"])
         h2 = hist.Hist(hist.axis.Regular(2, 0, 2), hist.axis.Regular(2, 0, 2))
         with pytest.raises(ValueError, match="one-dimensional"):
-            rf.plot_histograms([h2])
+            rf.plot([h2])
 
 
 class TestPlot2D:
@@ -1446,12 +1444,12 @@ class TestReviewRegressions:
     def test_flow_sum_is_consistent_everywhere(self) -> None:
         ref = self._hist([0.5, 1.5])
         num = self._hist([0.5, 1.5] + [3.0] * 20)
-        p = rf.plot_histograms([ref, num], labels=["ref", "num"], flow="sum", ratio=True)
+        p = rf.plot([ref, num], label=["ref", "num"], flow="sum", ratio=True)
         np.testing.assert_allclose(p.ratios[0].values, [1.0, 21.0])
         assert p.ax.get_ylim()[1] > 21
         np.testing.assert_allclose(p.histograms[1].values(), [1.0, 21.0])
-        stacked = rf.plot_histograms(
-            [ref, num], labels=["ref", "num"], flow="sum", stack=True, ratio="s/sqrt(b)"
+        stacked = rf.plot(
+            [ref, num], label=["ref", "num"], flow="sum", stack=True, ratio="s/sqrt(b)"
         )
         np.testing.assert_allclose(stacked.ratios[0].values, [1.0, 21.0])
 
@@ -1481,9 +1479,9 @@ class TestReviewRegressions:
 
     def test_plain_hist_storage_and_overlay_binning(self) -> None:
         plain = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0, 3.0])
-        p = rf.plot_histograms([plain], normalize="width")
+        p = rf.plot([plain], normalize="width")
         np.testing.assert_allclose(p.hists[0].values(), [0.5, 0.5])
-        overlay = rf.plot_histograms(
+        overlay = rf.plot(
             [
                 self._hist([0.5]),
                 hist.Hist(
@@ -1494,14 +1492,14 @@ class TestReviewRegressions:
         assert len(overlay.hists) == 2
         assert overlay.ax.get_ylim()[1] > 1.0
         with pytest.raises(BinningError, match="identical"):
-            rf.plot_histograms(overlay.hists, ratio=True)
+            rf.plot(overlay.hists, ratio=True)
 
     def test_ratio_colors_follow_the_main_panel(self) -> None:
         from matplotlib.colors import to_rgba
         from matplotlib.container import ErrorbarContainer
 
         hists = [self._hist([0.5]), self._hist([0.5] * 2), self._hist([0.5] * 3)]
-        p = rf.plot_histograms(hists, labels=["A", "B", "C"], ratio=True)
+        p = rf.plot(hists, label=["A", "B", "C"], ratio=True)
         assert p.ratio_ax is not None
         ratio_colors = [
             to_rgba(c.lines[0].get_color())
@@ -1510,7 +1508,7 @@ class TestReviewRegressions:
         ]
         main_colors = [to_rgba(c) for c in rf.plotting.color_cycle(3, rf.Style())[1:]]
         assert ratio_colors == main_colors
-        named = rf.plot_histograms(hists, labels=["A", "B", "C"], ratio="C")
+        named = rf.plot(hists, label=["A", "B", "C"], ratio="C")
         assert named.ratio_ax is not None
         named_colors = [
             to_rgba(c.lines[0].get_color())
@@ -1524,12 +1522,10 @@ class TestReviewRegressions:
             hist.axis.Regular(2, 0, 4, underflow=False, overflow=False),
             storage=hist.storage.Weight(),
         ).fill([1.0, 3.0])
-        np.testing.assert_allclose(
-            rf.plot_histograms([no_flow], flow="show").hists[0].values(), [1.0, 1.0]
-        )
+        np.testing.assert_allclose(rf.plot([no_flow], flow="show").hists[0].values(), [1.0, 1.0])
         negative = self._hist([0.5, 3.0], [1.0, -2.0])
         np.testing.assert_allclose(
-            rf.plot_histograms([negative], flow="show").hists[0].values(), [1.0, 0.0, -2.0]
+            rf.plot([negative], flow="show").hists[0].values(), [1.0, 0.0, -2.0]
         )
 
     def test_linear_2d_keeps_negative_bins(self) -> None:
@@ -1704,11 +1700,11 @@ class TestSystematics:
         nominal = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
         nominal.fill([0.5, 1.5, 1.5, 2.5])
         h = rf.Histogram(nominal, label="MC", variations={"s": (nominal * 1.1, nominal * 0.8)})
-        p = rf.plot_histograms([h], ratio=False)
+        p = rf.plot([h], ratio=False)
         np.testing.assert_allclose(p.uncertainty().syst_down, 0.2 * nominal.values())
         data = rf.Histogram(nominal, label="Data", is_data=True)
         with pytest.raises(ValueError, match="no non-data histograms"):
-            rf.plot_histograms([data]).uncertainty()
+            rf.plot([data]).uncertainty()
 
     def test_named_reference_chooses_uncertainty_per_numerator(self) -> None:
         rng = np.random.default_rng(3)
@@ -1779,7 +1775,7 @@ class TestSystematics:
     def test_uncertainty_of_an_overlay_with_different_binnings_needs_a_label(self) -> None:
         a = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
         b = hist.Hist(hist.axis.Regular(3, 0, 2), storage=hist.storage.Weight())
-        p = rf.plot_histograms([rf.Histogram(a, "a"), rf.Histogram(b, "b")])
+        p = rf.plot([rf.Histogram(a, "a"), rf.Histogram(b, "b")])
         with pytest.raises(BinningError, match=r"pass the label of one, e.g. uncertainty\('a'\)"):
             p.uncertainty()
         assert p.uncertainty("b").nominal.size == 3
@@ -1832,3 +1828,305 @@ def test_varied_files_inherit_auto_detected_tree_and_range(tmp_path: Path) -> No
     np.testing.assert_allclose(h.variations["inherit"][0].values(), [1, 1, 0, 0])
     np.testing.assert_allclose(h.variations["explicit"][0].values(), [0, 0, 1, 1])
     np.testing.assert_allclose(h.variations["arrays"][0].values(), [1, 1, 0, 0])
+
+
+class TestStoredHistogramPlots:
+    """`plot`, `histogram(s)` and `plot2d` on histograms stored in files or given as objects."""
+
+    def test_plot_from_files(self, stored_dir: Path) -> None:
+        samples = {
+            "ZH": rf.Sample(stored_dir / "ZH_sel0_histo.root", color="C3", scale=2.0),
+            "VV": [stored_dir / "WW_sel0_histo.root", stored_dir / "ZZ_sel0_histo.root"],
+        }
+        p = rf.plot(samples, "mz", bins=50, stack=True, logy=True)
+        assert [h.label for h in p.histograms] == ["ZH", "VV"]
+        assert p.histograms[0].axis.size == 50
+        assert p.histograms[1].sum_weights == pytest.approx(0.5 * 3000)
+        assert p.ax.get_xlabel() == "m_{Z} [GeV]"  # the stored title
+        assert p.ax.get_ylabel() == "Events / 5 GeV"  # its unit feeds the bin-width label
+        assert p.ax.get_yscale() == "log"
+        p = rf.plot(samples, "mz", xlabel="$m_{Z}$", unit="GeV")
+        assert p.ax.get_xlabel() == "$m_{Z}$ [GeV]"
+
+    def test_histogram_functions(self, stored_dir: Path) -> None:
+        vv = rf.Sample([stored_dir / "WW_sel0_histo.root", stored_dir / "ZZ_sel0_histo.root"])
+        h = rf.histogram(vv, "mz")
+        assert isinstance(h, hist.Hist)
+        assert h.values(flow=True).sum() == pytest.approx(0.5 * 3000)
+        (only,) = rf.histograms(stored_dir / "ZH_sel0_histo.root", "mz", label="ZH", normalize=True)
+        assert only.label == "ZH"
+        assert only.integral == pytest.approx(1.0)
+        # the Variable the histogram was filled with describes it, also once normalised
+        mz = rf.Variable("mz", bins=only.edges)
+        assert rf.plot(only, mz).histograms[0] is only
+        assert rf.plot(only, rf.Variable("mz", bins=only.axis.size)).histograms[0] is only
+        with pytest.raises(rf.BinningError, match="rebin before normalising"):
+            rf.plot(only, rf.Variable("mz", bins=only.axis.size // 2))
+
+    def test_plot2d_stored_and_object(self, stored_dir: Path) -> None:
+        p = rf.plot2d(stored_dir / "ZH_sel0_histo.root", "mz_recoil_2D", bins=(5, 6), logz=True)
+        # plot2d ignores systematics, for a stored histogram as for a tree
+        varied = rf.Sample(stored_dir / "ZH_sel0_histo.root", systematics={"w": ("w_up", "w_dn")})
+        assert rf.plot2d(varied, "mz_recoil_2D").histograms[0].variations == {}
+        assert [a.size for a in p.histograms[0].hist.axes] == [5, 6]
+        assert p.ax.get_xlabel() == "m_{Z} [GeV]"
+        assert p.ax.get_ylabel() == "recoil [GeV]"
+        again = rf.plot2d(p.histograms[0], cmap="magma", title="again")
+        assert again.histograms[0] is p.histograms[0]
+        assert again.ax.get_title() == "again"
+        merged = rf.plot2d(p.histograms[0], bins=(1, 2))
+        assert [a.size for a in merged.histograms[0].hist.axes] == [1, 2]
+        # a single Variable describes the stored histogram and its x axis only
+        described = rf.plot2d(
+            stored_dir / "ZH_sel0_histo.root",
+            rf.Variable("mz_recoil_2D", label="Mass", unit="GeV", log=True),
+        )
+        assert described.ax.get_xlabel() == "Mass [GeV]"
+        assert described.ax.get_ylabel() == "recoil [GeV]"
+        assert described.ax.get_xscale() == "log"
+        assert described.ax.get_yscale() == "linear"
+        # a stored TH2 without axis titles: the y axis does not take the object name
+        untitled = rf.plot2d(stored_dir / "untitled_2D.root", "mz_recoil_2D")
+        assert untitled.ax.get_xlabel() == "mz_recoil_2D"
+        assert untitled.ax.get_ylabel() == "mz_recoil_2D_y"
+        titled = rf.plot2d(
+            stored_dir / "untitled_2D.root",
+            "mz_recoil_2D",
+            rf.Variable("mz_recoil_2D", label="Recoil", unit="GeV"),
+        )
+        assert titled.ax.get_ylabel() == "Recoil [GeV]"
+        # an explicit name on x names the y axis too, as build_histograms_2d does
+        named = rf.plot2d(
+            stored_dir / "untitled_2D.root",
+            rf.Variable("mz_recoil_2D", name="mass", label="Mass", unit="GeV"),
+        )
+        assert [a.name for a in named.histograms[0].hist.axes] == ["mass", "mass_y"]
+        assert named.ax.get_xlabel() == "Mass [GeV]"
+        assert named.ax.get_ylabel() == "mass_y"
+        from rootfig.histograms import build_histograms_2d
+
+        (low_level,) = build_histograms_2d(
+            [rf.Sample(stored_dir / "untitled_2D.root")], rf.Variable("mz_recoil_2D", name="mass")
+        )
+        assert [a.name for a in low_level.hist.axes] == ["mass", "mass_y"]
+        # an object rootfig cannot plot is reported as such through the public functions
+        with pytest.raises(rf.SourceError, match=r"'prof' .* is a TProfile, which rootfig cannot"):
+            rf.plot(stored_dir / "unsupported.root", "prof")
+        with pytest.raises(rf.SourceError, match=r"'h3' .* is a TH3D"):
+            rf.plot2d(stored_dir / "unsupported_with_tree.root", "h3")
+
+        with pytest.raises(TypeError, match="needs the x and y variables"):
+            rf.plot2d(stored_dir / "ZH_sel0_histo.root")
+        with pytest.raises(ValueError, match="two-dimensional histograms"):
+            rf.plot2d(p.histograms[0].hist[:, :: hist.sum])
+        # the dimensionality is checked before any rebinning
+        with pytest.raises(ValueError, match="two-dimensional histograms, got 1D"):
+            rf.plot2d(p.histograms[0].hist[:, :: hist.sum], bins=2)
+        with pytest.raises(ValueError, match=r"one-dimensional histograms, got 2D.*use plot2d"):
+            rf.plot(p.histograms[0], bins=5)
+        # neither function draws a 3D histogram, so none is suggested
+        cube = hist.Hist(*[hist.axis.Regular(2, 0, 1, name=n) for n in "abc"])
+        with pytest.raises(ValueError, match=r"got 3D \(.*\)$"):
+            rf.plot2d(cube)
+        with pytest.raises(ValueError, match=r"got 3D \(.*\)$"):
+            rf.plot(cube)
+        with pytest.raises(ValueError, match="selection, weight apply when filling"):
+            rf.plot2d(p.histograms[0], selection="x > 1", weight="w")
+
+    def test_plot2d_object_described_by_variables(self) -> None:
+        h2 = hist.Hist(
+            hist.axis.Regular(10, 0.0, 100.0, name="x", label="X"),
+            hist.axis.Regular(6, 0.0, 3.0, name="y"),
+            storage=hist.storage.Weight(),
+        )
+        h2.fill([5.0, 15.0, 95.0], [0.5, 1.5, 2.5], weight=[1.0, 2.0, 3.0])
+        before = h2.copy()
+        plain = rf.plot2d(h2)
+        assert (plain.ax.get_xlabel(), plain.ax.get_ylabel()) == ("X", "y")
+        described = rf.plot2d(
+            h2,
+            rf.Variable("mass", label="Mass", unit="GeV", log=True),
+            rf.Variable("recoil", label="Recoil", bins=3),
+        )
+        assert described.ax.get_xlabel() == "Mass [GeV]"
+        assert described.ax.get_ylabel() == "Recoil"
+        assert (described.ax.get_xscale(), described.ax.get_yscale()) == ("log", "linear")
+        assert [a.name for a in described.histograms[0].hist.axes] == ["mass", "recoil"]
+        assert [a.size for a in described.histograms[0].hist.axes] == [10, 3]
+        assert described.variable is not None
+        assert described.variable.expression == "mass"
+        np.testing.assert_allclose(described.histograms[0].values().sum(), 6.0)
+        # a unit alone is appended to the existing title; x alone leaves y as it is
+        unit_only = rf.plot2d(h2, rf.Variable("mass", unit="GeV"))
+        assert (unit_only.ax.get_xlabel(), unit_only.ax.get_ylabel()) == ("X [GeV]", "y")
+        # explicit arguments override the variables, as in plot()
+        overridden = rf.plot2d(
+            h2,
+            rf.Variable("mass", bins=2, log=True),
+            rf.Variable("recoil", bins=3),
+            bins=(5, 6),
+            logx=False,
+        )
+        assert [a.size for a in overridden.histograms[0].hist.axes] == [5, 6]
+        assert overridden.ax.get_xscale() == "linear"
+        # only merges of the existing bins are possible
+        with pytest.raises(rf.BinningError, match="can be merged into"):
+            rf.plot2d(h2, rf.Variable("mass", bins=7))
+        with pytest.raises(rf.BinningError, match="range of a histogram that already exists"):
+            rf.plot2d(h2, rf.Variable("mass", bins=(5, 0.0, 50.0)))
+        with pytest.raises(rf.BinningError, match="cannot be applied to a histogram"):
+            rf.plot2d(h2, rf.Variable("mass", range=(0.0, 50.0)))
+        with pytest.raises(ValueError, match="tree applies when filling"):
+            rf.plot2d(h2, rf.Variable("mass"), tree="events")
+        # the histogram given is untouched by all of this
+        assert [(a.name, a.label) for a in h2.axes] == [("x", "X"), ("y", "y")]
+        np.testing.assert_array_equal(h2.values(), before.values())
+        np.testing.assert_array_equal(h2.variances(), before.variances())
+
+    def test_explicit_intent_wins(self, stored_dir: Path) -> None:
+        # tree= means a branch even when a histogram of that name exists
+        with pytest.raises(MissingBranchError, match="unknown name 'mz'"):
+            rf.plot(stored_dir / "tree_without_branch.root", "mz", tree="events")
+        with pytest.raises(SourceError, match="no TTree or RNTuple"):
+            rf.plot(rf.Sample(stored_dir / "ZH_sel0_histo.root", entry_stop=5), "mz")
+        # a branch of the same name is filled, not read
+        p = rf.plot(stored_dir / "branch_and_histogram.root", "mz", bins=(10, 0, 250))
+        assert p.histograms[0].stats is not None
+        assert p.histograms[0].stats.entries == 300
+        # a file with several trees and the histogram is ambiguous
+        with pytest.raises(SourceError, match="several trees"):
+            rf.plot(stored_dir / "two_trees.root", "mz")
+        # a stored histogram next to a tree lacking the branch is read
+        p = rf.plot(stored_dir / "tree_without_branch.root", "mz")
+        assert p.histograms[0].stats is None
+        assert p.histograms[0].sum_weights == 500
+
+    def test_category_axes_need_the_same_categories(self) -> None:
+        def cutflow(categories: list[str]) -> hist.Hist:
+            h = hist.Hist(
+                hist.axis.StrCategory(categories, name="cut"), storage=hist.storage.Weight()
+            )
+            h.fill(categories)
+            return h
+
+        a, b = (
+            cutflow(["all", "preselection", "final"]),
+            cutflow(["all", "preselection", "control"]),
+        )
+        p = rf.plot([a, cutflow(["all", "preselection", "final"])], label=["A", "B"], stack=True)
+        assert [t.get_text() for t in p.ax.get_xticklabels()][:3] == [
+            "all",
+            "preselection",
+            "final",
+        ]
+        with pytest.raises(BinningError, match="a stack"):
+            rf.plot([a, b], label=["A", "B"], stack=True)
+        with pytest.raises(BinningError):
+            rf.plot([a, b], label=["A", "B"], ratio=True)
+
+    def test_significance_sums_backgrounds_whatever_their_axis_labels(
+        self, stored_dir: Path
+    ) -> None:
+        # the stored titles differ between files (a placeholder title gives way to the name)
+        samples = {
+            "ZH": stored_dir / "ZH_sel0_histo.root",
+            "M": stored_dir / "mixed_storage.root",
+            "S": stored_dir / "WW_sel0_histo.root",
+        }
+        p = rf.plot(samples, "mz", stack=True, ratio="s/sqrt(b)")
+        assert p.ratio_ax is not None
+        assert np.nansum(p.ratios[0].values) > 0
+        axis = hist.axis.Regular(4, 0, 4, name="x", label="A")
+        other = hist.axis.Regular(4, 0, 4, name="y", label="B")
+        a = hist.Hist(axis, storage=hist.storage.Weight()).fill([0.5, 1.5])
+        b = hist.Hist(other, storage=hist.storage.Weight()).fill([1.5, 2.5])
+        s = hist.Hist(axis, storage=hist.storage.Weight()).fill([2.5, 3.5])
+        p = rf.plot([a, b, s], label=["A", "B", "S"], ratio=("s/sqrt(b)", "S"))
+        np.testing.assert_allclose(p.ratios[0].values, [0.0, 0.0, 1.0, np.nan])
+
+    def test_category_axes_and_flow(self) -> None:
+        axis = hist.axis.StrCategory(["all", "sel0"], name="cut")
+        listed = hist.Hist(axis, storage=hist.storage.Weight()).fill(["all", "all", "sel0"])
+        unlisted = hist.Hist(axis, storage=hist.storage.Weight()).fill(["all", "other"])
+        assert unlisted.values(flow=True)[-1] == 1.0
+        # no entries outside the categories: nothing to show or fold
+        for flow in ("hint", "show", "sum", "none"):
+            assert rf.plot(listed, flow=flow).histograms[0].axis.size == 2  # type: ignore[arg-type]
+        rf.plot(unlisted, flow="hint")  # the arrow marks the unlisted entries
+        for flow in ("show", "sum"):
+            with pytest.raises(BinningError, match="categories it does not list"):
+                rf.plot(unlisted, flow=flow)  # type: ignore[arg-type]
+
+    def test_luminosity_needs_ngen_without_a_tree(self, stored_dir: Path) -> None:
+        with pytest.raises(rf.LuminosityError, match="ngen=<number>"):
+            rf.plot(rf.Sample(stored_dir / "ZH_sel0_histo.root", xsec=1.2), "mz", lumi=10)
+        (h,) = rf.histograms(
+            rf.Sample(stored_dir / "ZH_sel0_histo.root", xsec=1.2, ngen=4000), "mz", lumi=10
+        )
+        assert h.sum_weights == pytest.approx(0.5 * 4000 * 1.2 * 1e4 / 4000)
+
+    def test_stats_needs_filled_statistics(self, stored_dir: Path) -> None:
+        with pytest.raises(ValueError, match="stats= needs the unbinned statistics"):
+            rf.plot(stored_dir / "ZH_sel0_histo.root", "mz", stats=True)
+        h = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight()).fill([0.5])
+        with pytest.raises(ValueError, match="stats= needs the unbinned statistics"):
+            rf.plot(h, stats=True)
+
+    def test_histogram_objects(self) -> None:
+        axis = hist.axis.Regular(4, 0, 4, name="x", label="$x$ [cm]")
+        mc = hist.Hist(axis, storage=hist.storage.Weight()).fill([0.5, 1.5, 2.5], weight=2.0)
+        data = hist.Hist(axis, storage=hist.storage.Weight()).fill([0.5, 1.5, 1.5, 3.5])
+        p = rf.plot(mc, label="MC", observed=data, ratio=True)
+        assert [h.label for h in p.histograms] == ["MC", "x"]
+        assert p.histograms[1].is_data
+        assert p.ax.get_ylabel() == "Events / 1 cm"
+        assert p.ratio_ax is not None
+        p = rf.plot([mc], rf.Variable("x", label="$x$", unit="cm", log=True))
+        assert p.ax.get_xscale() == "log"
+        assert p.ratio_ax is None
+        assert p.ax.get_xlabel() == "$x$ [cm]"
+        with pytest.raises(ValueError, match="selection applies when filling"):
+            rf.plot([mc], selection="x > 1")
+        # bins= merges bins, as for stored histograms: a count, or edges coinciding with its own
+        assert rf.plot(mc, bins=2).histograms[0].axis.size == 2
+        assert rf.plot(mc, rf.Variable("x", bins=2)).histograms[0].axis.size == 2
+        assert rf.plot(mc, bins=(2, 0, 4)).histograms[0].axis.size == 2
+        assert rf.plot(mc, bins=[0, 1, 4]).histograms[0].edges.tolist() == [0.0, 1.0, 4.0]
+        # the Variable a histogram was filled with can be passed along with it
+        described = rf.Variable("x", bins=(4, 0, 4), label="$x$", unit="cm")
+        filled = rf.Histogram(mc, label="MC")
+        p = rf.plot(filled, described)
+        assert p.histograms[0] is filled
+        assert p.ax.get_xlabel() == "$x$ [cm]"
+        with pytest.raises(BinningError, match=r"has 4 bins.*not 3"):
+            rf.plot(mc, bins=3)
+        with pytest.raises(BinningError, match=r"no bin edge at 1\.333"):
+            rf.plot(mc, bins=(3, 0, 4))
+        with pytest.raises(BinningError, match="range of a histogram that already exists is fixed"):
+            rf.plot(mc, rf.Variable("x", bins=2, range=(0, 100)))
+        with pytest.raises(BinningError, match="axis range is fixed"):
+            rf.plot(mc, range=(0, 2))
+        # a unit given for histogram objects reaches both axes, once
+        p = rf.plot(mc, unit="cm")
+        assert p.ax.get_xlabel() == "$x$ [cm]"
+        assert p.ax.get_ylabel() == "Events / 1 cm"
+        bare = hist.Hist(
+            hist.axis.Regular(4, 0, 4, name="p", label="$p$"), storage=hist.storage.Weight()
+        )
+        p = rf.plot(bare, unit="GeV")
+        assert p.ax.get_xlabel() == "$p$ [GeV]"
+        assert p.ax.get_ylabel() == "Events / 1 GeV"
+        p = rf.plot(bare, rf.Variable("momentum", unit="GeV"))
+        assert p.ax.get_xlabel() == "$p$ [GeV]"
+        assert p.ax.get_ylabel() == "Events / 1 GeV"
+        p = rf.plot(bare, xlabel="$|p|$ [MeV]")
+        assert p.ax.get_xlabel() == "$|p|$ [MeV]"
+        assert p.ax.get_ylabel() == "Events / 1 MeV"
+        with pytest.raises(TypeError, match="observed= must be histogram objects"):
+            rf.plot([mc], observed="data.root")
+        with pytest.raises(TypeError, match="plot\\(\\) needs a variable"):
+            rf.plot("data.root")
+
+    def test_public_surface_has_no_separate_histogram_plotter(self) -> None:
+        assert "plot_histograms" not in rf.__all__
+        assert not hasattr(rf, "plot_histograms")

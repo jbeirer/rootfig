@@ -9,10 +9,11 @@ keep working.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
 
 class RootfigError(Exception):
@@ -75,3 +76,17 @@ class SystematicError(RootfigError, ValueError):
 
 class RootfigWarning(UserWarning):
     """Base class for warnings emitted by rootfig (dropped values, empty selections, ...)."""
+
+
+@contextmanager
+def annotate(note: str) -> Iterator[None]:
+    """Attach ``note`` to any :class:`RootfigError` raised inside the block.
+
+    The note is shown below the message (PEP 678). rootfig uses it to name the
+    systematic variation an error was raised for.
+    """
+    try:
+        yield
+    except RootfigError as exc:
+        exc.add_note(note)
+        raise

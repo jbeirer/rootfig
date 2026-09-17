@@ -16,7 +16,7 @@ from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties, findfont
 from matplotlib.text import Text
 
-from rootfig.errors import RootfigWarning
+from rootfig.errors import BinningError, RootfigWarning
 from rootfig.histograms import Histogram, fill, summarize
 from rootfig.model import Style
 from rootfig.model.style import EXPERIMENT_STYLES
@@ -140,11 +140,12 @@ class TestStyle:
     def test_context_skips_activation_once_backend_is_resolved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        plt.draw_if_interactive()  # resolve the backend, as any earlier drawing would have
         calls = []
         monkeypatch.setattr(plt, "draw_if_interactive", lambda: calls.append(1))
         with style_context():
             pass
-        assert calls == []  # conftest already resolved the backend
+        assert calls == []
 
     @pytest.mark.parametrize("experiment", [None, "ATLAS", "CMS", "LHCb", "ALICE"])
     def test_pin_fonts_pins_only_installed_families(self, experiment: str | None) -> None:
@@ -868,6 +869,19 @@ class TestFlowBins:
         assert flags == (True, True)
         assert len(both[0].edges) == 7
         np.testing.assert_allclose(both[0].values(), [1, 0, 0, 0, 0, 1])
+
+    def test_category_axis_with_unlisted_entries_is_refused(self) -> None:
+        axis = hist.axis.StrCategory(["a", "b"], name="cut")
+        listed = Histogram(hist.Hist(axis, storage=hist.storage.Weight()).fill(["a"]), label="L")
+        unlisted = Histogram(
+            hist.Hist(axis, storage=hist.storage.Weight()).fill(["a", "zzz"]), label="U"
+        )
+        assert show_flow_bins([listed])[0] == [listed]
+        assert fold_flow_bins([listed]) == [listed]
+        with pytest.raises(BinningError, match=r"flow='show' needs numeric bins.*'U'"):
+            show_flow_bins([unlisted])
+        with pytest.raises(BinningError, match="flow='sum' needs numeric bins"):
+            fold_flow_bins([unlisted])
 
     def test_label_flow_bins(self) -> None:
         fig, ax = plt.subplots()

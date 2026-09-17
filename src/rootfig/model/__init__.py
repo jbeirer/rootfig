@@ -1,12 +1,15 @@
 """Declarative descriptions of what to plot: samples, variables, cuts, binning, style."""
 
 from rootfig.model.binning import (
+    DEFAULT_BINS,
     DEFAULT_RANGE,
     Axis,
     Bins,
+    MergeTarget,
     RangeSpec,
     auto_range,
     log_bins,
+    merge_target,
     resolve_axis,
 )
 from rootfig.model.cuts import Cut, CutLike, as_cut
@@ -21,11 +24,13 @@ from rootfig.model.systematics import (
 from rootfig.model.variables import Variable, as_variable
 
 __all__ = [
+    "DEFAULT_BINS",
     "DEFAULT_RANGE",
     "Axis",
     "Bins",
     "Cut",
     "CutLike",
+    "MergeTarget",
     "RangeSpec",
     "Sample",
     "Style",
@@ -41,5 +46,6 @@ __all__ = [
     "as_variable",
     "auto_range",
     "log_bins",
+    "merge_target",
     "resolve_axis",
 ]

@@ -164,8 +164,9 @@ stack, building on familiar libraries:
 | Histograms | [hist](https://github.com/scikit-hep/hist) / boost-histogram | shared binning, robust automatic ranges, normalisation, ratios |
 | Drawing | [mplhep](https://github.com/scikit-hep/mplhep) + matplotlib | overlays, stacks, ratio panels, labels and legends with good defaults |
 
-If you already have `hist.Hist` objects, `rf.plot_histograms` draws them with
-the same options. If you want the arrays, `rf.load` returns them. See
+If your histograms already exist, `rf.plot` draws them too: name a `TH1`
+stored in the file instead of a branch (`rf.plot("zh_histo.root", "m_recoil")`),
+or pass `hist.Hist` objects directly. If you want the arrays, `rf.load` returns them. See
 [the ecosystem guide](https://jbeirer.github.io/rootfig/ecosystem/) for details.
 
 ## Development

@@ -1,8 +1,8 @@
 # Plotting options
 
-All options below are keyword arguments of [`rf.plot`][rootfig.plot] (and of
-[`rf.plot_histograms`][rootfig.plot_histograms], which draws existing
-`hist.Hist` objects with the same options).
+All options below are keyword arguments of [`rf.plot`][rootfig.plot], whether
+it fills from a tree, reads a histogram stored in the file or draws histogram
+objects you already have (see [the end of this page](#histograms-that-already-exist)).
 
 ## Overlays, stacks and data
 
@@ -109,7 +109,7 @@ p.ratios[0].syst_band  # relative (down, up) band of the reference
 
 Pre-filled histograms take variations directly and are drawn the same way:
 `rf.Histogram(h, label="MC", variations={"jes": (h_up, h_down)})` passed to
-`plot_histograms`; [`uncertainty`][rootfig.histograms.uncertainty] and
+`plot`; [`uncertainty`][rootfig.histograms.uncertainty] and
 [`sum_histograms`][rootfig.histograms.sum_histograms] work on them too.
 
 Use `(h_up, None)` for a mirrored variation. `Sample.systematics` and
@@ -143,7 +143,7 @@ dataset scaled to the full one, for instance).
 Variances are scaled consistently. Flow bins scale with the same factor; for
 `"width"` and `"density"` they are divided by the width of the neighbouring
 visible bin. Plain `hist.Hist` objects with a count storage passed to
-`plot_histograms` are converted to `Weight` storage first. If such a histogram
+`plot` are converted to `Weight` storage first. If such a histogram
 was filled with weights (or rescaled) its sum of squared weights is lost, and
 rootfig refuses it with a `ValueError` rather than invent uncertainties; pass
 `assume_poisson=True` to use the absolute bin contents as variances (with a
@@ -451,3 +451,117 @@ table = rf.summarize([sig, bkg], ["MET", "Muon_pt"], selection="nMuon > 0", weig
 print(table)  # aligned text table
 table.get("MET", "Signal").mean  # a Summary: entries, mean, std, sem, skewness, min, max
 ```
+
+## Histograms that already exist
+
+`rf.plot`, `rf.histogram(s)` and `rf.plot2d` read histograms stored in ROOT
+files; `rf.plot` and `rf.plot2d` also draw histogram objects you already have.
+Each keeps its usual drawing options where they apply: the 1D options above
+for `rf.plot` (stacks, ratios, `flow`, ...), those of the
+[2D section](#2d-histograms-and-correlations) for `rf.plot2d`. Options that
+need information a ready-made histogram no longer has (a selection, a weight,
+`stats` on one without statistics) are refused.
+
+### Histograms already in ROOT files
+
+Analysis frameworks often write their selections out as `TH1`/`TH2` objects,
+one file per process (FCCAnalyses' `<process>_<selection>_histo.root`, for
+instance). Name the histogram where a branch would go:
+
+```python
+samples = {
+    "ZH": rf.Sample("final/p8_ee_ZH_ecm240_sel1_histo.root", color="C3", scale=10),
+    "VV": ["final/p8_ee_WW_ecm240_sel1_histo.root", "final/p8_ee_ZZ_ecm240_sel1_histo.root"],
+}
+rf.plot(
+    samples,
+    "leptonic_recoil_m",
+    bins=50,
+    stack=True,
+    logy=True,
+    xlabel="Z leptonic recoil",
+    unit="GeV",
+    style=rf.Style(com=240, com_unit="GeV", lumi=5, lumi_unit="ab^{-1}"),
+)
+h = rf.histogram("final/p8_ee_ZH_ecm240_sel0_histo.root", "mz")  # a hist.Hist
+rf.plot2d("final/p8_ee_ZH_ecm240_sel0_histo.root", "mz_recoil_2D")  # a stored TH2
+```
+
+The decision is made per call and is deterministic. A variable that is a bare
+name is read as a stored histogram when every sample reads files without an
+explicit `tree=` or entry range, the first file of each sample holds a `TH1` or
+`TH2` of that name, and the file has no tree or its only tree has no branch of
+that name. Anything else fills from the tree as usual: an explicit
+`tree=` always means a branch, a branch of the same name wins over a histogram,
+a file with several trees next to the histogram raises (pass `tree=` for a
+branch, or read the histogram with `FileSource.read_histogram`), and samples
+that disagree raise with the reason per sample. A histogram inside a directory
+is named by its path in backticks, like a branch with odd characters:
+`` rf.plot("histo.root", "`selection/mz`") ``.
+
+What a stored histogram supports:
+
+- The files of one `Sample` are summed (they must agree on the binning);
+  `scale`, `color`, `is_data`, `histtype` and the luminosity scaling
+  (`Sample(xsec=..., ngen=...)` with `lumi=`, `ngen` may name a `TParameter`
+  or a sum-of-weights histogram in the same file) apply as for trees. A file
+  without a tree has no entries to count, so it needs `ngen`.
+- The stored axis title is the x label unless `xlabel=`/a `Variable` label is
+  given; a `unit=` is appended to it and, as for trees, feeds the bin-width y
+  label (`Events / 5 GeV`). A title that ends in `[unit]` already supplies it.
+  A placeholder title (none, ROOT's `xaxis`, uproot's `Axis 0`) gives way to the
+  variable's name. The y axis of a `TH2` named by a single variable gets no
+  label from that name, which describes the histogram rather than the axis; as
+  for any unlabelled axis, hist shows the axis name (`mz_recoil_2D_y`) instead.
+  To label it, pass a `Variable` for `y` that names the same histogram, since
+  both axes must resolve to one stored object:
+  `` rf.plot2d(f, "my_hist", rf.Variable("my_hist", name="recoil", label="Recoil")) ``.
+  A `Variable` with another expression asks for a branch instead.
+- `bins=` merges the stored bins: an integer count (it must divide the stored
+  count), or edges that coincide with the stored ones (`(n, low, high)`, a
+  sequence of edges, or an `int` with `range=(low, high)`) and merge the bins
+  between them. The `Variable` written for the tree therefore also describes
+  the histogram filled from it, as its own edges or a coarser aligned set. With
+  `bins=None` the stored binning is kept. Other edges cannot be made, and an
+  explicit `(low, high)` range without a bin count cannot be applied: use
+  `xlim=` to zoom. `range="auto"` and `"robust"` have no effect on a histogram
+  that is already filled.
+- Normalisation, stacks, ratios, `flow` and the other drawing options work
+  unchanged. Systematics of the normalisation kind (`{"lumi": 0.02}`) and
+  `Systematic.samples(other_files)` (the same histogram read from other files)
+  are supported by `plot` and `histograms`; `plot2d` ignores systematics, for
+  stored histograms as for trees.
+- `selection=`, `weight=` (on the call or the `Sample`), `nonfinite="error"`,
+  an explicit `(low, high)` range without a bin count, weight and
+  branch-replacement systematics and `stats=` need event data and raise with a
+  message that says so.
+- A `TH1` written with `Sumw2` keeps its uncertainties; one without it arrives
+  with its bin contents as variances (uproot cannot know the weights). Negative
+  contents without `Sumw2` leave no usable variances: rootfig refuses them unless
+  `assume_poisson=True` takes the absolute contents, as for histogram objects.
+  The files of one sample may mix both kinds and may differ in their axis
+  titles; the sum has `Weight` storage and the first file's titles.
+
+### Histogram objects
+
+`hist.Hist` or [`Histogram`][rootfig.Histogram] objects, one or a list, are
+drawn as they are: `rf.plot([h_sig, h_bkg], label=["Signal", "Background"],
+ratio=True)`. `label=` names plain `hist.Hist` objects (otherwise their first
+axis name is used), `observed=` takes histogram objects for the data,
+`variable=` optionally supplies the axis label, unit and `log` flag, and
+`rf.plot2d(h2)` draws a 2D one, with `x` and `y` `Variable`s optionally
+describing its axes the same way (`rf.plot2d(h2, rf.Variable("mass",
+label="Mass", unit="GeV"), rf.Variable("recoil", bins=6))`; a `name=` renames
+the axis, the histogram you passed is left untouched). As for stored histograms, `bins=` (given
+directly or on the `Variable`) merges bins: an integer count, or edges that
+coincide with the existing ones, so the `Variable` a histogram was filled with
+can be passed along with it (`rf.plot(rf.histogram(sample, pt), pt)`), also
+after normalising it, as long as it asks for the bins the histogram has. An
+explicit `(low, high)` range without a bin count and the options that fill
+from event data (`tree`, `selection`, `weight`, `lumi`, `systematics`) raise;
+`range="auto"`/`"robust"` are no-ops. `Histogram.variations` carries
+systematics instead. Stacks, sums and ratios of histograms with category axes
+(ROOT bin labels) require the same categories in the same order; the flow bins
+of such an axis hold entries of categories it does not list, which
+`flow="hint"` marks with an arrow and `flow="show"`/`flow="sum"` refuse, since
+they have no bin beyond the last category.

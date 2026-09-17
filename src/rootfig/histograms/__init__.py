@@ -1,6 +1,6 @@
 """Histogram construction, normalisation, ratios and statistics."""
 
-from rootfig.histograms.build import Histogram, as_weight_storage, fill
+from rootfig.histograms.build import Histogram, as_weight_storage, fill, from_sample
 from rootfig.histograms.cutflow import Cutflow, CutflowStep, CutflowTable, cutflow
 from rootfig.histograms.efficiency import Efficiency, Profile, ProfileStatistic, efficiency, profile
 from rootfig.histograms.normalize import (
@@ -29,6 +29,7 @@ from rootfig.histograms.ratio import (
     significance,
 )
 from rootfig.histograms.stats import Summary, correlation_matrix, describe_table, summarize
+from rootfig.histograms.stored import describe_axes, read_stored, stored_mode
 from rootfig.histograms.systematics import Uncertainty, sum_histograms, uncertainty
 
 __all__ = [
@@ -54,9 +55,11 @@ __all__ = [
     "compatible_binning",
     "correlation_matrix",
     "cutflow",
+    "describe_axes",
     "describe_table",
     "efficiency",
     "fill",
+    "from_sample",
     "load_columns",
     "load_columns_each",
     "normalization_label",
@@ -65,8 +68,10 @@ __all__ = [
     "profile",
     "ratio",
     "read_arrays",
+    "read_stored",
     "significance",
     "source_length",
+    "stored_mode",
     "sum_histograms",
     "summarize",
     "uncertainty",

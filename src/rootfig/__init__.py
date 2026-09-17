@@ -22,7 +22,6 @@ from rootfig.api import (
     load,
     plot,
     plot2d,
-    plot_histograms,
     profile,
     summarize,
 )
@@ -94,7 +93,6 @@ __all__ = [
     "log_bins",
     "plot",
     "plot2d",
-    "plot_histograms",
     "profile",
     "ratio",
     "significance",

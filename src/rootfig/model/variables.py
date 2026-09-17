@@ -27,8 +27,15 @@ class Variable:
         A rootfig expression (a branch name or a formula, see
         :mod:`rootfig.expressions`).
     bins
-        Binning specification, see :data:`Bins`. Default 50 bins over a range
-        inferred from the data.
+        Binning specification, see :data:`Bins`. ``None`` (the default) means no
+        preference: :data:`DEFAULT_BINS` bins over a range inferred from the
+        data when filling from a tree, and the stored binning when the variable
+        names a histogram stored in a file. An integer asks for that many bins;
+        a stored histogram is then merged down to that count. Explicit edges
+        (also ``(n, low, high)`` or an integer with a ``(low, high)`` range)
+        must coincide with a stored histogram's edges and merge the bins
+        between them (:func:`~rootfig.model.binning.merge_target`), so one
+        variable describes the tree and the histograms filled from it alike.
     range
         Range used when ``bins`` is an integer, see :data:`RangeSpec`. Defaults
         to :data:`DEFAULT_RANGE` (``"robust"``), which ignores far outliers such
@@ -50,7 +57,7 @@ class Variable:
     """
 
     expression: str
-    bins: Bins = 50
+    bins: Bins | None = None
     range: RangeSpec = DEFAULT_RANGE
     label: str | None = None
     unit: str | None = None

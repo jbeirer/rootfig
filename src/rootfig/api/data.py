@@ -116,6 +116,7 @@ def histograms(
     normalize: NormalizeSpec = None,
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
+    assume_poisson: bool = False,
 ) -> list[Histogram]:
     """Fill one :class:`~rootfig.histograms.Histogram` per sample with shared binning.
 
@@ -123,7 +124,9 @@ def histograms(
     before drawing. An integer ``bins`` without a ``range`` infers one robustly
     (``range="auto"`` for the full finite minimum and maximum). Systematic
     variations are in :attr:`~rootfig.histograms.Histogram.variations` and
-    summarised by :func:`~rootfig.histograms.uncertainty`.
+    summarised by :func:`~rootfig.histograms.uncertainty`. A ``variable`` naming
+    a histogram stored in the files is read instead of filled, as in
+    :func:`plot`.
     """
     samples = as_samples(data, tree=tree, labels=label)
     var = as_variable(variable, bins=bins, range=range)
@@ -135,6 +138,7 @@ def histograms(
         lumi=lumi,
         nonfinite=nonfinite,
         systematics=systematics,
+        assume_poisson=assume_poisson,
     )
     if normalize is None or normalize is False:
         return hists
@@ -153,12 +157,14 @@ def histogram(
     range: RangeSpec = None,
     normalize: NormalizeSpec = None,
     nonfinite: NonFinitePolicy = "drop",
+    assume_poisson: bool = False,
 ) -> Hist:
     """Fill a single histogram and return it as a plain ``hist.Hist``.
 
     See :func:`plot` for the arguments. An integer ``bins`` without a ``range``
     infers one robustly (``range="auto"`` for the full finite minimum and
-    maximum).
+    maximum). A ``variable`` naming a histogram stored in the file returns
+    that histogram (summed over the files, in ``Weight`` storage).
 
     Examples
     --------
@@ -179,6 +185,7 @@ def histogram(
         range=range,
         normalize=normalize,
         nonfinite=nonfinite,
+        assume_poisson=assume_poisson,
     )
     if len(results) != 1:
         msg = f"histogram() takes a single sample, got {len(results)}; use histograms() instead"

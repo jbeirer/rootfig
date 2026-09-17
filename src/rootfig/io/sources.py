@@ -4,7 +4,8 @@ Two implementations of the :class:`Source` protocol are provided:
 
 * :class:`FileSource` reads ROOT files with uproot. It accepts single paths,
   glob patterns, lists of either, remote URLs, and ``"file.root:tree"``
-  shorthand, and works with both ``TTree`` and ``RNTuple`` objects.
+  shorthand, and works with both ``TTree`` and ``RNTuple`` objects. It also
+  reads histograms stored in the files (:meth:`FileSource.read_histogram`).
 * :class:`ArraySource` wraps data that is already in memory (a mapping of
   arrays, an Awkward record array, or a NumPy structured array).
 
@@ -26,7 +27,9 @@ import awkward as ak
 import numpy as np
 import uproot
 
+from rootfig._typing import Hist
 from rootfig.errors import SourceError
+from rootfig.io import objects
 
 __all__ = ["ArraySource", "FileSource", "FilesLike", "Source", "as_source", "resolve_files"]
 
@@ -34,8 +37,6 @@ FilesLike = str | PathLike[str] | Sequence[str | PathLike[str]]
 """A path, glob pattern, URL, ``"path:tree"`` string, or a sequence of those."""
 
 _REMOTE_PREFIXES = ("root://", "http://", "https://", "s3://", "gs://", "xrootd://")
-_TREE_CLASSNAMES = ("TTree", "TNtuple", "TNtupleD", "TChain")
-_RNTUPLE_MARKER = "RNTuple"
 
 
 @runtime_checkable
@@ -143,10 +144,6 @@ def resolve_files(files: FilesLike) -> tuple[tuple[str, ...], str | None]:
     return tuple(paths), (trees.pop() if trees else None)
 
 
-def _strip_cycle(key: str) -> str:
-    return key.rsplit(";", 1)[0]
-
-
 def _leaf_names(keys: Sequence[str]) -> list[str]:
     """Branch names as users write them: sub-branches by their own (dotted) name, no parents.
 
@@ -174,19 +171,17 @@ def _extract_nested(data: Mapping[str, Any], name: str) -> ak.Array | None:
     return ak.Array(array)
 
 
-def _is_tree_class(classname: str) -> bool:
-    return classname.startswith(_TREE_CLASSNAMES) or _RNTUPLE_MARKER in classname
+def _tree_names(classnames: Mapping[str, str]) -> list[str]:
+    return sorted(k for k, cls in classnames.items() if objects.is_tree_class(cls))
 
 
-def _detect_tree(path: str) -> str:
-    """Return the name of the only tree-like object in ``path`` or raise."""
-    with uproot.open(path) as file:
-        classnames: dict[str, str] = file.classnames(recursive=True)
-    trees = sorted({_strip_cycle(k) for k, cls in classnames.items() if _is_tree_class(cls)})
+def _detect_tree(path: str, classnames: Mapping[str, str]) -> str:
+    """Return the only tree-like object among ``classnames`` (the objects of ``path``) or raise."""
+    trees = _tree_names(classnames)
     if len(trees) == 1:
         return trees[0]
     if not trees:
-        found = sorted({f"{_strip_cycle(k)} ({cls})" for k, cls in classnames.items()})
+        found = sorted({f"{k} ({cls})" for k, cls in classnames.items()})
         msg = f"no TTree or RNTuple found in {path!r}; objects present: {found}"
         raise SourceError(msg)
     msg = f"several trees found in {path!r}: {trees}. Pass tree=... to choose one"
@@ -241,7 +236,8 @@ class FileSource:
         if self.tree is not None:
             return self.tree
         if "tree" not in self._cache:
-            self._cache["tree"] = _detect_tree(self.files[0])
+            # the object map is read once and shared with the stored-histogram lookup
+            self._cache["tree"] = _detect_tree(self.files[0], self.objects())
         return str(self._cache["tree"])
 
     def branches(self) -> list[str]:
@@ -256,7 +252,7 @@ class FileSource:
             with uproot.open(self.files[0]) as file:
                 obj = file[tree]
                 keys = list(obj.keys())
-                self._cache["rntuple"] = _RNTUPLE_MARKER in type(obj).__name__
+                self._cache["rntuple"] = objects.RNTUPLE_MARKER in type(obj).__name__
         except uproot.KeyInFileError as exc:
             msg = f"tree {tree!r} not found in {self.files[0]!r}"
             raise SourceError(msg) from exc
@@ -305,6 +301,35 @@ class FileSource:
                     msg = f"object {key!r} in {path!r} ({type(obj).__name__}) holds no number"
                     raise SourceError(msg)
         return total
+
+    # -- stored histograms ------------------------------------------------------------
+
+    def objects(self) -> dict[str, str]:
+        """Return ``{name: class}`` for every object in the first file (cycle numbers stripped).
+
+        Objects inside directories are listed as ``"dir/name"``. The result is
+        cached on the instance.
+        """
+        if "objects" not in self._cache:
+            self._cache["objects"] = objects.object_classes(self.files[0])
+        return dict(self._cache["objects"])
+
+    def trees(self) -> list[str]:
+        """Return the names of the ``TTree``/``RNTuple`` objects in the first file."""
+        return _tree_names(self.objects())
+
+    def histograms(self) -> list[str]:
+        """Return the names of the 1D and 2D histograms (``TH1*``, ``TH2*``) in the first file."""
+        return sorted(k for k, cls in self.objects().items() if objects.is_histogram_class(cls))
+
+    def read_histogram(self, name: str, *, assume_poisson: bool = False) -> Hist:
+        """Read the histogram stored as ``name`` in every file and return their sum.
+
+        The result has ``Weight`` storage; see :func:`rootfig.io.objects.read_histogram`
+        for how uncertainties are treated and what ``assume_poisson`` accepts.
+        ``name`` may address an object inside a directory (``"dir/name"``).
+        """
+        return objects.read_histogram(self.files, name, assume_poisson=assume_poisson)
 
     def arrays(self, branches: Sequence[str]) -> dict[str, ak.Array]:
         """Read ``branches`` from all files and concatenate them."""
