@@ -53,7 +53,7 @@ from rootfig.histograms import (
 from rootfig.model import Cut, Sample, Style, Systematic, Variable, log_bins
 from rootfig.plotting import Plot, dark_theme, use_style
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "BinningError",
