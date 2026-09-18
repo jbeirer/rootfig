@@ -1410,7 +1410,7 @@ class TestReviewRegressions:
 
         path = tmp_path / "fixed.root"
         with uproot.recreate(path) as file:
-            tree = file.mktree("events", {"x": ("float64", (3,)), "w": "float64"})
+            tree = file.mktree("events", {"x": np.dtype(("float64", (3,))), "w": "float64"})
             tree.extend({"x": np.arange(6.0).reshape(2, 3), "w": np.array([1.0, 2.0])})
         h = rf.histogram(path, "x", tree="events", weight="w", bins=(6, 0, 6))
         np.testing.assert_allclose(h.values(), [1, 1, 1, 2, 2, 2])

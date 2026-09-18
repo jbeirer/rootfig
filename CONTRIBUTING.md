@@ -32,6 +32,14 @@ that use ROOT's tutorial files run only when `root-config` is available
 locally and are skipped otherwise; do not add
 tests that require ROOT or network access.
 
+`key4hep.yml` runs the tests on the Key4hep nightlies (LCG `devkey-head`) and the
+latest Key4hep release, weekly as well, since the stacks change without a commit
+here. `.github/scripts/key4hep-test.sh` installs rootfig into a
+[cvmfs-venv](https://github.com/jbeirer/cvmfs-venv) with `--no-index`, so every
+runtime dependency must come from the stack: the floors in `pyproject.toml` stay
+at or below what the nightlies ship. Locally: `.github/scripts/key4hep-test.sh
+/cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh`.
+
 ## Layout
 
 ```

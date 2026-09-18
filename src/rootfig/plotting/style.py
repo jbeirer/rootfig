@@ -322,6 +322,10 @@ def add_experiment_label(
                 kwargs["rlabel"] = _lumi_line(lumi, com, atlas_style=loc == 4)
         if label_loc is not None:
             kwargs["loc"] = label_loc
+        if style.experiment.upper() == "LHCB" and (font := _style_font()) is not None:
+            # mplhep's LHCb helper names its font instead of taking the style's, and
+            # mplhep < 1.3 names Times New Roman, which is rarely installed
+            kwargs["fontname"] = font
         if text_lines and loc != 0:
             # below the label, inside the frame
             kwargs["supp"] = "\n".join(text_lines)
@@ -423,6 +427,16 @@ def _font_is_available(name: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _style_font() -> str | None:
+    """Return the first installed font of the current rcParams' family list, if any."""
+    resolved = _generic_font_lists()
+    for family in mpl.rcParams["font.family"]:
+        for name in resolved.get(family, [family]):
+            if _font_is_available(name):
+                return str(name)
+    return None
 
 
 def pin_fonts(fig: Figure) -> None:

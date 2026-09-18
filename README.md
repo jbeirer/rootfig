@@ -20,6 +20,7 @@
   <a href="https://jbeirer.github.io/rootfig/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Documentation"></a>
   <a href="https://doi.org/10.5281/zenodo.22726311"><img src="https://zenodo.org/badge/1366702602.svg" alt="DOI"></a>
   <a href="https://github.com/jbeirer/rootfig/actions/workflows/ci.yml"><img src="https://github.com/jbeirer/rootfig/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/jbeirer/rootfig/actions/workflows/key4hep.yml"><img src="https://github.com/jbeirer/rootfig/actions/workflows/key4hep.yml/badge.svg" alt="Key4hep"></a>
   <a href="https://codecov.io/gh/jbeirer/rootfig"><img src="https://codecov.io/gh/jbeirer/rootfig/branch/main/graph/badge.svg" alt="codecov"></a>
   <a href="https://pypi.org/project/rootfig/"><img src="https://img.shields.io/pypi/v/rootfig.svg" alt="PyPI"></a>
   <a href="https://pypi.org/project/rootfig/"><img src="https://img.shields.io/pypi/pyversions/rootfig.svg" alt="Python"></a>
