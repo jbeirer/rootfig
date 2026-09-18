@@ -1,0 +1,46 @@
+name: Key4hep
+
+# rootfig must run on the Key4hep stack with every runtime dependency taken from the stack.
+# The stacks change without a commit here, hence the weekly schedule.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (Key4hep ${{ matrix.stack }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - stack: nightly
+            setup: /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh
+          - stack: release
+            setup: /cvmfs/sw.hsf.org/key4hep/setup.sh
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cvmfs-contrib/github-action-cvmfs@v5
+
+      - name: Install rootfig on the stack and run the tests
+        run: |
+          docker run --rm \
+            --volume /cvmfs:/cvmfs:shared \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            ghcr.io/key4hep/key4hep-images/alma9 \
+            .github/scripts/key4hep-test.sh ${{ matrix.setup }}
