@@ -8,9 +8,10 @@ from typing import Any
 import awkward as ak
 import numpy as np
 import pytest
+import uproot
 
 from rootfig.errors import BinningError, RootfigWarning, SourceError
-from rootfig.io import ArraySource, FileSource, Source, as_source, resolve_files
+from rootfig.io import ArraySource, FileSource, ReadCache, Source, as_source, resolve_files
 
 
 class TestResolveFiles:
@@ -444,3 +445,124 @@ class TestStoredHistograms:
         assert not is_histogram_class("TProfile")
         assert not is_histogram_class("TTree")
         assert is_tree_class("ROOT::RNTuple")
+
+
+def _opens(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the file name of every ``uproot.open`` call."""
+    calls: list[str] = []
+    original = uproot.open
+
+    def counting(path: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(Path(path).name)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(uproot, "open", counting)
+    return calls
+
+
+class TestBatchReads:
+    """Several stored histograms per file open, and the ReadCache in front of the reads."""
+
+    def test_read_histograms_opens_each_file_once(
+        self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from rootfig.io import objects
+
+        opens = _opens(monkeypatch)
+        files = [str(stored_dir / "WW_sel0_histo.root"), str(stored_dir / "ZZ_sel0_histo.root")]
+        names = ["mz", "mz_raw", "cutflow"]
+        read = objects.read_histograms(files, names)
+        assert opens == ["WW_sel0_histo.root", "ZZ_sel0_histo.root"]
+        assert list(read) == names
+        assert read["mz"].values(flow=True).sum() == pytest.approx(0.5 * 3000)
+        for name in names:
+            single = objects.read_histogram(files, name)
+            np.testing.assert_array_equal(read[name].values(flow=True), single.values(flow=True))
+            np.testing.assert_array_equal(
+                read[name].variances(flow=True), single.variances(flow=True)
+            )
+        assert FileSource(files).read_histograms(["mz"])["mz"] == read["mz"]
+
+    def test_read_histograms_errors_match_the_single_read(self, stored_dir: Path) -> None:
+        from rootfig.io import objects
+
+        files = [str(stored_dir / "WW_sel0_histo.root"), str(stored_dir / "other_binning.root")]
+        with pytest.raises(BinningError) as single:
+            objects.read_histogram(files, "mz")
+        with pytest.raises(BinningError) as many:
+            objects.read_histograms(files, ["mz"])
+        assert str(many.value) == str(single.value)
+        files = [
+            str(stored_dir / "WW_sel0_histo.root"),
+            str(stored_dir / "tree_without_branch.root"),
+        ]
+        missing = r"'mz_raw' not found in .*tree_without_branch"
+        with pytest.raises(SourceError, match=missing) as one:
+            objects.read_histogram(files, "mz_raw")
+        with pytest.raises(SourceError) as several:
+            objects.read_histograms(files, ["mz", "mz_raw"])
+        assert str(several.value) == str(one.value)
+        with pytest.raises(SourceError, match="no files"):
+            objects.read_histograms([], ["mz"])
+
+    def test_read_cache_reads_missing_branches_only(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[list[str]] = []
+        original = FileSource.arrays
+
+        def counting(self: FileSource, branches: Any) -> Any:
+            calls.append(list(branches))
+            return original(self, branches)
+
+        monkeypatch.setattr(FileSource, "arrays", counting)
+        source = FileSource(signal_file, tree="events")
+        cache = ReadCache()
+        first = cache.arrays(source, ["MET"])
+        assert calls == [["MET"]]
+        assert list(first) == ["MET"]
+        second = cache.arrays(source, ["nMuon", "MET"])
+        assert calls == [["MET"], ["nMuon"]]
+        assert list(second) == ["nMuon", "MET"]  # a fresh mapping, in the requested order
+        assert second["MET"] is first["MET"]
+        assert cache.arrays(source, ["nMuon", "MET"]) is not second
+        # keyed by value: another source over the same file and tree shares the arrays
+        assert cache.arrays(FileSource(signal_file, tree="events"), ["MET"])["MET"] is first["MET"]
+        assert cache.arrays(source, []) == {}
+        assert len(calls) == 2
+        np.testing.assert_array_equal(
+            ak.to_numpy(first["MET"]), ak.to_numpy(source.arrays(["MET"])["MET"])
+        )
+
+    def test_read_cache_histograms(self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rootfig.io import objects
+
+        calls: list[list[str]] = []
+        original = objects.read_histograms
+
+        def counting(files: Any, names: Any, **kwargs: Any) -> Any:
+            calls.append(list(names))
+            return original(files, names, **kwargs)
+
+        monkeypatch.setattr(objects, "read_histograms", counting)
+        source = FileSource(stored_dir / "WW_sel0_histo.root")
+        cache = ReadCache()
+        cache.histograms(source, ["mz", "mz_raw"])
+        assert calls == [["mz", "mz_raw"]]
+        h = cache.histogram(source, "mz")
+        assert h is cache.histogram(source, "mz")
+        assert len(calls) == 1
+        cache.histograms(source, ["mz", "cutflow"])
+        assert calls[-1] == ["cutflow"]
+        cache.histograms(source, ["mz", "cutflow"])  # everything held: nothing is read
+        assert len(calls) == 2
+        cache.histogram(source, "mz", assume_poisson=True)  # another key
+        assert len(calls) == 3
+        assert h.values(flow=True).sum() == pytest.approx(0.5 * 2000)
+
+    def test_read_scalar_is_cached(self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        opens = _opens(monkeypatch)
+        source = FileSource(stored_dir / "WW_sel0_histo.root")
+        assert source.read_scalar("eventsProcessed") == 2000.0
+        assert source.read_scalar("eventsProcessed") == 2000.0
+        assert opens == ["WW_sel0_histo.root"]

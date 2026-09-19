@@ -5,7 +5,7 @@ Two implementations of the :class:`Source` protocol are provided:
 * :class:`FileSource` reads ROOT files with uproot. It accepts single paths,
   glob patterns, lists of either, remote URLs, and ``"file.root:tree"``
   shorthand, and works with both ``TTree`` and ``RNTuple`` objects. It also
-  reads histograms stored in the files (:meth:`FileSource.read_histogram`).
+  reads histograms stored in the files (:meth:`FileSource.read_histograms`).
 * :class:`ArraySource` wraps data that is already in memory (a mapping of
   arrays, an Awkward record array, or a NumPy structured array).
 
@@ -283,8 +283,13 @@ class FileSource:
 
         Accepts histograms (their total content including flow bins, e.g. a
         sum-of-weights histogram) and ``TParameter`` objects (their value).
-        Typical use: the number of generated events written by a framework.
+        Typical use: the number of generated events written by a framework. The
+        result is cached on the instance, like :meth:`branches`, so scaling many
+        histograms to a luminosity opens the files once.
         """
+        scalars: dict[str, float] = self._cache.setdefault("scalars", {})
+        if key in scalars:
+            return scalars[key]
         total = 0.0
         for path in self.files:
             with uproot.open(path) as file:
@@ -300,6 +305,7 @@ class FileSource:
                 else:
                     msg = f"object {key!r} in {path!r} ({type(obj).__name__}) holds no number"
                     raise SourceError(msg)
+        scalars[key] = total
         return total
 
     # -- stored histograms ------------------------------------------------------------
@@ -325,11 +331,20 @@ class FileSource:
     def read_histogram(self, name: str, *, assume_poisson: bool = False) -> Hist:
         """Read the histogram stored as ``name`` in every file and return their sum.
 
-        The result has ``Weight`` storage; see :func:`rootfig.io.objects.read_histogram`
+        The result has ``Weight`` storage; see :func:`rootfig.io.objects.read_histograms`
         for how uncertainties are treated and what ``assume_poisson`` accepts.
         ``name`` may address an object inside a directory (``"dir/name"``).
         """
-        return objects.read_histogram(self.files, name, assume_poisson=assume_poisson)
+        return self.read_histograms([name], assume_poisson=assume_poisson)[name]
+
+    def read_histograms(
+        self, names: Sequence[str], *, assume_poisson: bool = False
+    ) -> dict[str, Hist]:
+        """Read the histograms stored as ``names`` in every file and return their sums, by name.
+
+        Each file is opened once for all of them; otherwise as :meth:`read_histogram`.
+        """
+        return objects.read_histograms(self.files, names, assume_poisson=assume_poisson)
 
     def arrays(self, branches: Sequence[str]) -> dict[str, ak.Array]:
         """Read ``branches`` from all files and concatenate them."""

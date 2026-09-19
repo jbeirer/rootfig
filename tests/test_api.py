@@ -2290,3 +2290,43 @@ class TestGroups:
 
         parts = rf.histograms(group.samples, "pt", bins=(4, 0, 4))
         assert rf.plot(sum_histograms(parts), "pt").ax.get_ylabel() == "Entries"
+
+
+class TestPreparedPlot:
+    """plot() is prepare_plot() followed by draw_plot(); one preparation draws several ways."""
+
+    def test_plot_is_prepare_then_draw(self, signal_file: Path) -> None:
+        from rootfig.api.plots1d import PreparedPlot, draw_plot, prepare_plot
+
+        prepared = prepare_plot(signal_file, "MET", tree="events", bins=(10, 0, 100), unit="GeV")
+        assert isinstance(prepared, PreparedPlot)
+        assert prepared.variable == rf.Variable("MET", bins=(10, 0, 100), unit="GeV")
+        assert (prepared.xlabel, prepared.unit, prepared.lumi) == (None, "GeV", None)
+        p = draw_plot(prepared, logy=True)
+        assert p.histograms[0] is prepared.histograms[0]
+        direct = rf.plot(
+            signal_file, "MET", tree="events", bins=(10, 0, 100), unit="GeV", logy=True
+        )
+        np.testing.assert_array_equal(
+            p.histograms[0].values(flow=True), direct.histograms[0].values(flow=True)
+        )
+        assert p.ax.get_xlabel() == direct.ax.get_xlabel() == "MET [GeV]"
+        assert p.ax.get_ylabel() == direct.ax.get_ylabel()
+        assert p.ax.get_yscale() == "log"
+        # drawing again from the same preparation leaves it untouched
+        again = draw_plot(prepared, normalize=True)
+        assert again.histograms[0].normalization == "Normalised to unity"
+        assert prepared.histograms[0].normalization is None
+        assert prepared.histograms[0].integral == direct.histograms[0].integral
+
+    def test_histogram_objects_and_missing_variable(self) -> None:
+        from rootfig.api.plots1d import draw_plot, prepare_plot
+
+        h = hist.Hist(hist.axis.Regular(4, 0, 1, name="x"), storage=hist.storage.Weight())
+        h.fill([0.1, 0.5, 0.6])
+        prepared = prepare_plot(h, label="Ready", xlabel="x [cm]")
+        assert prepared.variable is None
+        assert [item.label for item in prepared.histograms] == ["Ready"]
+        assert draw_plot(prepared).ax.get_xlabel() == "x [cm]"
+        with pytest.raises(TypeError, match="needs a variable"):
+            prepare_plot({"x": [1.0, 2.0]})

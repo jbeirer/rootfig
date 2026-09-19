@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import itertools
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -12,10 +14,12 @@ import hist
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+import uproot
 
 import rootfig as rf
 from rootfig._mapping import FrozenMapping
 from rootfig.api import batch
+from rootfig.io import FileSource, ReadCache
 
 X = rf.Variable("x", bins=(5, 0, 1))
 Y = rf.Variable("y", bins=(4, 0, 4))
@@ -314,6 +318,9 @@ class FakePlot:
         self.closed = True
 
 
+FAKE_PREPARED = batch.PreparedPlot([], None)
+
+
 class TestPlots:
     def test_tasks_are_created_one_at_a_time(
         self, samples: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
@@ -327,7 +334,8 @@ class TestPlots:
             return result
 
         monkeypatch.setattr(batch, "PlotTask", task)
-        monkeypatch.setattr(batch, "plot", lambda *a, **k: FakePlot())
+        monkeypatch.setattr(batch, "prepare_plot", lambda *a, **k: FAKE_PREPARED)
+        monkeypatch.setattr(batch, "draw_plot", lambda *a, **k: FakePlot())
         iterator = book.plots()
         assert created == []
         next(iterator)
@@ -338,43 +346,68 @@ class TestPlots:
     def test_lazy_one_task_per_step(
         self, samples: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        calls: list[tuple[Any, ...]] = []
+        prepared: list[tuple[Any, ...]] = []
+        drawn: list[tuple[Any, ...]] = []
 
-        def fake(*args: Any, **kwargs: Any) -> FakePlot:
-            calls.append((args, kwargs))
+        def fake_prepare(*args: Any, **kwargs: Any) -> batch.PreparedPlot:
+            prepared.append((args, kwargs))
+            return FAKE_PREPARED
+
+        def fake_draw(*args: Any, **kwargs: Any) -> FakePlot:
+            drawn.append((args, kwargs))
             return FakePlot()
 
-        monkeypatch.setattr(batch, "plot", fake)
+        monkeypatch.setattr(batch, "prepare_plot", fake_prepare)
+        monkeypatch.setattr(batch, "draw_plot", fake_draw)
         book = rf.PlotBook(samples, [X, Y], variants={"lin": {}, "log": {"logy": True}})
         iterator = book.plots()
-        assert calls == []
+        assert (prepared, drawn) == ([], [])
         task, result = next(iterator)
-        assert len(calls) == 1
+        assert (len(prepared), len(drawn)) == (1, 1)
         assert isinstance(result, FakePlot)
         assert task == book.tasks()[0]
-        next(iterator)
-        assert len(calls) == 2
+        next(iterator)  # the log variant draws from the same preparation
+        assert (len(prepared), len(drawn)) == (1, 2)
         assert len(list(iterator)) == 2
-        assert len(calls) == 4
+        assert (len(prepared), len(drawn)) == (2, 4)
 
     def test_delegates_data_variable_selection_and_kwargs(
         self, samples: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        calls: list[tuple[Any, ...]] = []
-        monkeypatch.setattr(batch, "plot", lambda *a, **k: calls.append((a, k)) or FakePlot())
+        prepared: list[tuple[Any, ...]] = []
+        drawn: list[tuple[Any, ...]] = []
+
+        def fake_prepare(*args: Any, **kwargs: Any) -> batch.PreparedPlot:
+            prepared.append((args, kwargs))
+            return FAKE_PREPARED
+
+        def fake_draw(*args: Any, **kwargs: Any) -> FakePlot:
+            drawn.append((args, kwargs))
+            return FakePlot()
+
+        monkeypatch.setattr(batch, "prepare_plot", fake_prepare)
+        monkeypatch.setattr(batch, "draw_plot", fake_draw)
         cut = rf.Cut("y > 1")
         book = rf.PlotBook(
             samples,
             [X],
             selections={"sr": cut},
             variants={"log": {"logy": True}},
-            plot_kwargs={"stack": True, "logy": False},
+            plot_kwargs={"stack": True, "logy": False, "weight": "y", "lumi": 2.0},
         )
         list(book.plots())
-        ((args, kwargs),) = calls
+        ((args, kwargs),) = prepared
         assert args[0] is samples
         assert args[1] is X
-        assert kwargs == {"selection": cut, "stack": True, "logy": True}
+        assert kwargs["selection"] is cut
+        assert isinstance(kwargs["cache"], ReadCache)
+        assert {k: v for k, v in kwargs.items() if k not in ("selection", "cache")} == {
+            "weight": "y",
+            "lumi": 2.0,
+        }
+        ((args, kwargs),) = drawn
+        assert args == (FAKE_PREPARED,)
+        assert kwargs == {"stack": True, "logy": True}
 
     def test_results_reflect_the_task(self, samples: list[rf.Sample]) -> None:
         book = rf.PlotBook(
@@ -408,7 +441,7 @@ class TestPlots:
             msg = "boom"
             raise RuntimeError(msg)
 
-        monkeypatch.setattr(batch, "plot", failing)
+        monkeypatch.setattr(batch, "draw_plot", failing)
         with pytest.raises(RuntimeError, match="boom") as info:
             next(rf.PlotBook(samples, [X]).plots())
         assert info.value.__notes__ == [
@@ -436,7 +469,7 @@ class TestPlots:
             plt.figure()
             raise KeyboardInterrupt
 
-        monkeypatch.setattr(batch, "plot", interrupted)
+        monkeypatch.setattr(batch, "draw_plot", interrupted)
         with pytest.raises(KeyboardInterrupt):
             next(rf.PlotBook(samples, X).plots())
         assert plt.get_fignums() == [existing.number]
@@ -698,3 +731,431 @@ class TestSelect:
             ValueError, match=re.escape("unknown variant 'log'; available: ['default']")
         ):
             book.select(variants=["log"])
+
+
+def _reads(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Record the branches of every ``FileSource.arrays`` call."""
+    calls: list[list[str]] = []
+    original = FileSource.arrays
+
+    def counting(self: FileSource, branches: Any) -> Any:
+        calls.append(list(branches))
+        return original(self, branches)
+
+    monkeypatch.setattr(FileSource, "arrays", counting)
+    return calls
+
+
+def _opens(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the file name of every ``uproot.open`` call made with a path."""
+    calls: list[str] = []
+    original = uproot.open
+
+    def counting(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(path, str | os.PathLike):
+            calls.append(Path(path).name)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(uproot, "open", counting)
+    return calls
+
+
+def _spy(monkeypatch: pytest.MonkeyPatch, name: str) -> list[tuple[Any, ...]]:
+    """Record the calls of ``batch.<name>`` while forwarding them."""
+    calls: list[tuple[Any, ...]] = []
+    original = getattr(batch, name)
+
+    def forwarding(*args: Any, **kwargs: Any) -> Any:
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(batch, name, forwarding)
+    return calls
+
+
+def assert_same_plot(result: rf.Plot, direct: rf.Plot) -> None:
+    """Assert that two plots hold the same histograms, ratios and axes, bit for bit."""
+    assert [h.label for h in result.histograms] == [h.label for h in direct.histograms]
+    for got, want in zip(result.histograms, direct.histograms, strict=True):
+        np.testing.assert_array_equal(got.values(flow=True), want.values(flow=True))
+        np.testing.assert_array_equal(got.variances(flow=True), want.variances(flow=True))
+        np.testing.assert_array_equal(got.edges, want.edges)
+        assert got.axis.label == want.axis.label
+        assert (got.is_data, got.normalization, got.per_object, got.color) == (
+            want.is_data,
+            want.normalization,
+            want.per_object,
+            want.color,
+        )
+        assert got.stats == want.stats
+        assert sorted(got.variations) == sorted(want.variations)
+        for name, (up, down) in got.variations.items():
+            want_up, want_down = want.variations[name]
+            np.testing.assert_array_equal(up.values(flow=True), want_up.values(flow=True))
+            np.testing.assert_array_equal(up.variances(flow=True), want_up.variances(flow=True))
+            np.testing.assert_array_equal(down.values(flow=True), want_down.values(flow=True))
+    assert len(result.ratios) == len(direct.ratios)
+    for got_ratio, want_ratio in zip(result.ratios, direct.ratios, strict=True):
+        np.testing.assert_array_equal(got_ratio.values, want_ratio.values)
+    assert (result.ratio_ax is None) == (direct.ratio_ax is None)
+    assert result.ax.get_yscale() == direct.ax.get_yscale()
+    assert result.ax.get_xlabel() == direct.ax.get_xlabel()
+    assert result.ax.get_ylabel() == direct.ax.get_ylabel()
+    assert result.variable == direct.variable
+
+
+class TestBatching:
+    """Reads are shared across a batch's variables, selections and variants; plots equal plot()."""
+
+    @pytest.fixture
+    def files(self, signal_file: Path, background_file: Path) -> list[rf.Sample]:
+        return [
+            rf.Sample(signal_file, tree="events", label="Signal", weight="weight"),
+            rf.Sample(background_file, tree="events", label="Background", weight="weight"),
+        ]
+
+    def test_keyword_sets_cover_plot(self) -> None:
+        every = set(inspect.signature(rf.plot).parameters) - {"data", "variable"}
+        assert every == batch._PREPARE_KEYWORDS | batch._DRAW_KEYWORDS
+        assert batch._PREPARE_KEYWORDS.isdisjoint(batch._DRAW_KEYWORDS)
+        prepare = {"selection", "tree", "bins", "range", "weight", "lumi", "observed"}
+        prepare |= {"systematics", "assume_poisson", "nonfinite", "label", "xlabel", "unit"}
+        assert prepare <= batch._PREPARE_KEYWORDS
+        draw = {"logy", "logx", "normalize", "ratio", "stack", "style", "text", "stats"}
+        assert draw | {"save", "ax"} <= batch._DRAW_KEYWORDS
+
+    def test_variables_of_a_batch_share_one_read_per_sample(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads = _reads(monkeypatch)
+        variables = ["MET", "Muon_pt", "nMuon"]
+        results = list(rf.PlotBook(files, variables).plots())
+        assert len(reads) == 2
+        assert all(set(call) == {"MET", "Muon_pt", "nMuon", "weight"} for call in reads)
+        for (_, result), variable in zip(results, variables, strict=True):
+            assert_same_plot(result, rf.plot(files, variable))
+
+    def test_batch_size_bounds_the_reads(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(batch, "_VARIABLE_BATCH_SIZE", 1)
+        reads = _reads(monkeypatch)
+        list(rf.PlotBook(files, ["MET", "Muon_pt", "nMuon"]).plots())
+        assert len(reads) == 6
+        assert [set(call) for call in reads[:2]] == [{"MET", "weight"}] * 2
+
+    def test_drawing_only_variants_reuse_the_preparation(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads = _reads(monkeypatch)
+        prepared = _spy(monkeypatch, "prepare_plot")
+        book = rf.PlotBook(
+            files,
+            ["MET", "Muon_pt"],
+            variants={"lin": {}, "log": {"logy": True}},
+            plot_kwargs={"stack": True},
+        )
+        results = {task.stem: result for task, result in book.plots()}
+        assert len(reads) == 2
+        assert len(prepared) == 2
+        for variable in ("MET", "Muon_pt"):
+            lin, log = results[f"{variable}__lin"], results[f"{variable}__log"]
+            assert (lin.ax.get_yscale(), log.ax.get_yscale()) == ("linear", "log")
+            for a, b in zip(lin.histograms, log.histograms, strict=True):
+                np.testing.assert_array_equal(a.values(flow=True), b.values(flow=True))
+                assert a.hist is not b.hist  # each figure holds its own copy
+            assert_same_plot(log, rf.plot(files, variable, stack=True, logy=True))
+
+    def test_variants_changing_the_preparation_are_prepared_apart(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads = _reads(monkeypatch)
+        prepared = _spy(monkeypatch, "prepare_plot")
+        book = rf.PlotBook(
+            files, ["MET", "Muon_pt"], variants={"fine": {"bins": 20}, "coarse": {"bins": 10}}
+        )
+        results = {task.stem: result for task, result in book.plots()}
+        assert len(reads) == 2  # the cache serves both preparations
+        assert len(prepared) == 4
+        assert results["MET__fine"].histograms[0].axis.size == 20
+        assert results["MET__coarse"].histograms[0].axis.size == 10
+        assert_same_plot(results["Muon_pt__coarse"], rf.plot(files, "Muon_pt", bins=10))
+        assert_same_plot(results["MET__fine"], rf.plot(files, "MET", bins=20))
+
+    def test_normalisation_is_a_drawing_variant(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads = _reads(monkeypatch)
+        book = rf.PlotBook(files, ["MET"], variants={"raw": {}, "norm": {"normalize": True}})
+        (_, raw), (_, norm) = list(book.plots())
+        assert len(reads) == 2
+        assert [h.normalization for h in raw.histograms] == [None, None]
+        assert [h.normalization for h in norm.histograms] == ["Normalised to unity"] * 2
+        assert norm.histograms[0].integral == pytest.approx(1.0)
+        assert_same_plot(raw, rf.plot(files, "MET"))
+        assert_same_plot(norm, rf.plot(files, "MET", normalize=True))
+
+    def test_figures_of_variants_do_not_share_histograms(self, files: list[rf.Sample]) -> None:
+        book = rf.PlotBook(files, ["MET"], variants={"lin": {}, "log": {"logy": True}})
+        plots = book.plots()
+        _, lin = next(plots)
+        lin.hists[0].view(flow=True).value[:] = 0.0  # a user editing one figure's histogram
+        _, log = next(plots)
+        assert_same_plot(log, rf.plot(files, "MET", logy=True))
+
+    def test_selections_share_the_read(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads = _reads(monkeypatch)
+        book = rf.PlotBook(files, ["MET", "Muon_pt"], selections={"all": None, "hi": "nMuon > 1"})
+        results = list(book.plots())
+        assert len(reads) == 2
+        assert all(set(call) == {"MET", "Muon_pt", "nMuon", "weight"} for call in reads)
+        for task, result in results:
+            assert_same_plot(result, rf.plot(files, task.variable, selection=task.selection))
+
+    def test_groups_read_their_leaves_once(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads = _reads(monkeypatch)
+        group = rf.Group(files, label="All")
+        book = rf.PlotBook(group, ["MET", "Muon_pt"], variants={"lin": {}, "log": {"logy": True}})
+        results = list(book.plots())
+        assert len(reads) == 2
+        assert all([h.label for h in result.histograms] == ["All"] for _, result in results)
+        for task, result in results:
+            assert_same_plot(result, rf.plot(group, task.variable, **task.kwargs))
+
+    def test_observed_data_joins_the_batch(
+        self, signal_file: Path, background_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads = _reads(monkeypatch)
+        mc = rf.Sample(signal_file, tree="events", label="MC", weight="weight")
+        data = rf.Sample(background_file, tree="events", label="Data", is_data=True)
+        kwargs: dict[str, Any] = {"observed": data, "stack": True, "ratio": True}
+        results = list(rf.PlotBook(mc, ["MET", "Muon_pt"], plot_kwargs=kwargs).plots())
+        assert len(reads) == 2
+        for task, result in results:
+            assert result.histograms[-1].is_data
+            assert result.ratio_ax is not None
+            assert_same_plot(result, rf.plot(mc, task.variable, **kwargs))
+
+    def test_stored_histograms_open_each_file_once_per_batch(
+        self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opens = _opens(monkeypatch)
+        samples = [
+            rf.Sample(stored_dir / "WW_sel0_histo.root", label="WW"),
+            rf.Sample(stored_dir / "ZZ_sel0_histo.root", label="ZZ"),
+        ]
+        book = rf.PlotBook(
+            samples, ["mz", "mz_raw", "cutflow"], variants={"lin": {}, "log": {"logy": True}}
+        )
+        results = list(book.plots())
+        # one open lists the objects of each file, one reads all three histograms from it
+        assert (opens.count("WW_sel0_histo.root"), opens.count("ZZ_sel0_histo.root")) == (2, 2)
+        for task, result in results:
+            assert_same_plot(result, rf.plot(samples, task.variable, **task.kwargs))
+
+    def test_stored_histograms_of_several_files_are_summed(
+        self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opens = _opens(monkeypatch)
+        vv = rf.Sample(
+            [stored_dir / "WW_sel0_histo.root", stored_dir / "ZZ_sel0_histo.root"], label="VV"
+        )
+        results = list(rf.PlotBook(vv, ["mz", "mz_raw"]).plots())
+        # the first file is also opened to list its objects; the second only to read both names
+        assert (opens.count("WW_sel0_histo.root"), opens.count("ZZ_sel0_histo.root")) == (2, 1)
+        assert results[0][1].histograms[0].sum_weights == pytest.approx(0.5 * 3000)
+        for task, result in results:
+            assert_same_plot(result, rf.plot(vv, task.variable))
+
+    def test_assume_poisson_warns_once_per_batch(self, stored_dir: Path) -> None:
+        sample = rf.Sample(stored_dir / "negative.root", label="N")
+        book = rf.PlotBook(
+            sample,
+            ["mz"],
+            variants={"plain": {}, "titled": {"title": "signed"}},
+            plot_kwargs={"assume_poisson": True},
+        )
+        with pytest.warns(rf.RootfigWarning, match="Poisson guess"):
+            results = list(book.plots())
+        for task, result in results:
+            with pytest.warns(rf.RootfigWarning, match="Poisson guess"):
+                direct = rf.plot(sample, "mz", **task.kwargs)
+            assert_same_plot(result, direct)
+
+    def test_batches_are_read_lazily_in_task_order(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(batch, "_VARIABLE_BATCH_SIZE", 2)
+        reads = _reads(monkeypatch)
+        variables = ["MET", "Muon_pt", "nMuon", "Muon_eta", "Muon_phi"]
+        book = rf.PlotBook(files, variables, variants={"lin": {}, "log": {"logy": True}})
+        tasks = book.tasks()
+        plots = book.plots()
+        assert reads == []  # neither the book nor its tasks read anything
+        stems = [next(plots)[0].stem]
+        assert len(reads) == 2
+        assert all(set(call) == {"MET", "Muon_pt", "weight"} for call in reads)
+        stems.extend(next(plots)[0].stem for _ in range(3))
+        assert len(reads) == 2  # the rest of the first batch is served from the cache
+        stems.append(next(plots)[0].stem)  # the first task of the second batch
+        assert len(reads) == 4
+        assert set(reads[2]) == {"nMuon", "Muon_eta", "weight"}
+        stems.extend(task.stem for task, _ in plots)
+        assert len(reads) == 6
+        assert stems == [task.stem for task in tasks]
+
+    def test_a_bad_variable_fails_at_its_own_task(self, files: list[rf.Sample]) -> None:
+        existing = plt.figure()
+        book = rf.PlotBook(files, ["MET", "nosuch", "Muon_pt"], selections={"sr": "nMuon > 0"})
+        plots = book.plots()
+        _, first = next(plots)
+        with pytest.raises(rf.MissingBranchError, match="'nosuch'") as info:
+            next(plots)
+        assert info.value.__notes__ == [
+            "while running PlotBook task variable='nosuch', selection='sr', variant='default'"
+        ]
+        assert plt.get_fignums() == [existing.number, first.fig.number]
+
+    def test_a_typo_deep_in_a_batch_fails_there(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(batch, "_VARIABLE_BATCH_SIZE", 8)
+        variables = [f"MET + {i}" for i in range(5)] + ["nosuch", "MET + 7"]
+        book = rf.PlotBook(files, variables)
+        plots = book.plots()
+        yielded = [next(plots)[0].stem for _ in range(5)]
+        assert yielded == [task.stem for task in book.tasks()[:5]]
+        with pytest.raises(rf.MissingBranchError, match="'nosuch'") as info:
+            next(plots)
+        assert info.value.__notes__ == [
+            "while running PlotBook task variable='nosuch', selection='all', variant='default'"
+        ]
+
+    def test_replace_systematic_missing_branch_fails_only_where_used(
+        self, signal_file: Path
+    ) -> None:
+        sample = rf.Sample(
+            signal_file,
+            tree="events",
+            label="S",
+            systematics={"scale": {"Muon_pt": ("Muon_pt_up", "Muon_pt_dn")}},
+        )
+        plots = rf.PlotBook(sample, ["MET", "Muon_pt"]).plots()
+        _, met = next(plots)  # does not use Muon_pt, so the replacement is not looked up
+        assert_same_plot(met, rf.plot(sample, "MET"))
+        with pytest.raises(rf.MissingBranchError, match="'Muon_pt_up'") as info:
+            next(plots)
+        assert info.value.__notes__ == [
+            "while running PlotBook task variable='Muon_pt', selection='all', variant='default'"
+        ]
+
+    def test_failing_batch_read_is_left_to_the_tasks(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        original = FileSource.arrays
+        failed: list[list[str]] = []
+
+        def flaky(self: FileSource, branches: Any) -> Any:
+            if not failed:
+                failed.append(list(branches))
+                msg = "transient"
+                raise OSError(msg)
+            return original(self, branches)
+
+        monkeypatch.setattr(FileSource, "arrays", flaky)
+        results = list(rf.PlotBook(files, ["MET", "Muon_pt"]).plots())
+        assert [set(call) for call in failed] == [{"MET", "Muon_pt", "weight"}]
+        for task, result in results:
+            assert_same_plot(result, rf.plot(files, task.variable))
+
+    def test_prefetch_only_saves_reads(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        book = rf.PlotBook(files, ["MET", "nosuch"], variants={"lin": {}, "log": {"logy": True}})
+
+        def run() -> tuple[rf.Plot, rf.Plot, str, list[str]]:
+            plots = book.plots()
+            (_, lin), (_, log) = next(plots), next(plots)
+            with pytest.raises(rf.MissingBranchError) as info:
+                next(plots)
+            return lin, log, str(info.value), list(info.value.__notes__)
+
+        lin, log, message, notes = run()
+        monkeypatch.setattr(batch, "prefetch_plots", lambda *args, **kwargs: None)
+        lin_again, log_again, message_again, notes_again = run()
+        assert_same_plot(lin_again, lin)
+        assert_same_plot(log_again, log)
+        assert (message_again, notes_again) == (message, notes)
+
+    @pytest.mark.parametrize(
+        "case", ["systematics", "lumi", "group_observed_ratio", "stored", "rntuple", "binning"]
+    )
+    def test_every_plot_equals_plot(self, case: str, data_dir: Path, stored_dir: Path) -> None:
+        book = _books(data_dir, stored_dir)[case]
+        for task, result in book.plots():
+            direct = rf.plot(book.data, task.variable, selection=task.selection, **task.kwargs)
+            assert_same_plot(result, direct)
+
+
+def _books(data_dir: Path, stored_dir: Path) -> dict[str, rf.PlotBook]:
+    """Books covering the inputs and options whose results must equal plot()'s, task by task."""
+    signal = rf.Sample(data_dir / "signal.root", tree="events", label="Signal", weight="weight")
+    background = rf.Sample(
+        data_dir / "background.root", tree="events", label="Background", weight="weight"
+    )
+    varied = signal.replace(
+        systematics={
+            "w": ("weight * 1.1", "weight * 0.9"),
+            "norm": 0.05,
+            "alt": rf.Systematic.samples(data_dir / "background.root"),
+        }
+    )
+    data = rf.Sample(data_dir / "background.root", tree="events", label="Data", is_data=True)
+    return {
+        "systematics": rf.PlotBook(
+            [varied, background],
+            ["MET", "Muon_pt"],
+            selections={"all": None, "hi": "nMuon > 1"},
+            plot_kwargs={"stack": True},
+        ),
+        "lumi": rf.PlotBook(
+            [
+                signal.replace(xsec=1.5, ngen=1000),
+                background.replace(xsec="2 pb", ngen=2000),
+            ],
+            ["MET", rf.Variable("nMuon", bins=(6, 0, 6))],
+            plot_kwargs={"lumi": 10.0, "stack": True},
+        ),
+        "group_observed_ratio": rf.PlotBook(
+            rf.Group([signal, background], label="MC"),
+            ["MET", "Muon_pt"],
+            variants={"lin": {}, "norm": {"normalize": True}},
+            plot_kwargs={"observed": data, "stack": True, "ratio": True},
+        ),
+        "stored": rf.PlotBook(
+            [
+                rf.Sample(stored_dir / "WW_sel0_histo.root", label="WW", scale=2.0),
+                rf.Sample(stored_dir / "ZZ_sel0_histo.root", label="ZZ"),
+            ],
+            ["mz", "mz_raw", rf.Variable("mz", bins=50, name="mz50")],
+            variants={"lin": {}, "log": {"logy": True}},
+            plot_kwargs={"stack": True},
+        ),
+        "rntuple": rf.PlotBook(
+            rf.Sample(data_dir / "signal_rntuple.root", tree="events", weight="weight"),
+            ["MET", "Muon_pt"],
+        ),
+        "binning": rf.PlotBook(
+            [signal, background],
+            [
+                rf.Variable("MET", bins=(20, 0, 100), unit="GeV"),
+                rf.Variable("Muon_pt", bins=15, range="auto"),
+                "Muon_eta",
+            ],
+            plot_kwargs={"flow": "show"},
+        ),
+    }

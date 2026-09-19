@@ -147,8 +147,8 @@ however large the book is.
 
 ## Running plots yourself
 
-`book.plots()` is a lazy iterator of `(task, plot)` pairs: one `rf.plot` call
-per step, nothing drawn ahead of time. The plots are ordinary
+`book.plots()` is a lazy iterator of `(task, plot)` pairs: one figure per
+step, nothing drawn ahead of time. The plots are ordinary
 [`Plot`][rootfig.Plot] objects, so this is the place to adjust a figure
 or keep it open:
 
@@ -164,11 +164,25 @@ A `PlotTask` carries the `variable`, the `selection` (`Cut` or `None`), the
 `selection_name` and `variant_name` (`None` for an axis the book was built
 without), the merged `kwargs` and the file `stem`. Tasks compare and hash by
 their `stem`, so they work as set members and dictionary keys whatever the
-keyword values hold. Each task is exactly
+keyword values hold. Each plot is what
 
 ```python
 rf.plot(book.data, task.variable, selection=task.selection, **task.kwargs)
 ```
+
+returns: the same histograms, binning, systematics, labels and errors.
+
+The book only reads less often than that call would. It runs the tasks in
+batches of a few dozen variables: the branches those variables and every
+selection need are read once per sample for the batch, and variants that only
+change the drawing (`logy`, `normalize`, `ratio`, `style`, ...) are drawn from
+one set of prepared histograms, each figure from its own copy. A variant that
+changes how the histograms are prepared (`bins`, `weight`, `observed`,
+`systematics`, ...) is prepared on its own, still from the batch's read.
+Variables that name histograms stored in the files are read with one pass over
+each file per batch. Nothing is read when the book is built or when `tasks()`
+is called; the first batch is read when the first plot is requested and the
+next one when the iteration reaches it.
 
 Errors stop the book at the failing task. They keep their type and gain a note
 naming the task, so a traceback for a typo in one expression reads
@@ -204,7 +218,8 @@ or `"default"` (variants); selecting it is a no-op and the axis stays implicit.
 
 ## What a book does not do
 
-A book runs its tasks one after another in the calling process and reads the
-files again for every task. It has no filename template, pattern matching,
-parallel execution or report generation, and it drives the 1D `rf.plot` only:
-for `plot2d`, `efficiency` and `profile` you write the loop yourself.
+A book runs its tasks one after another in the calling process and keeps the
+arrays of one batch of variables at a time. It has no filename template,
+pattern matching, parallel execution or report generation, and it drives the
+1D `rf.plot` only: for `plot2d`, `efficiency` and `profile` you write the loop
+yourself.
