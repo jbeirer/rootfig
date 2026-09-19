@@ -118,7 +118,8 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     Variations are matched by name and added linearly (fully correlated); a
     histogram without a source contributes its nominal contents to it. The sum
     keeps the inputs' ``normalization`` when they all share it and has none
-    otherwise, so it never claims a scaling one of its parts lacks.
+    otherwise, so it never claims a scaling one of its parts lacks; it counts
+    objects (``per_object``) if any input does.
 
     Raises
     ------
@@ -163,4 +164,5 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
         if all(h.normalization == first.normalization for h in histograms)
         else None,
         variations=variations,
+        per_object=any(h.per_object for h in histograms),
     )

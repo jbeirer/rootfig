@@ -2212,6 +2212,39 @@ class TestGroups:
         p = rf.plot(rf.Group([a, b], label="AB"), "x", bins=(2, 0, 1), normalize=True)
         np.testing.assert_allclose(p.histograms[0].values(), [0.75, 0.25])
 
+    @pytest.mark.parametrize("grouped", [False, True])
+    def test_observed_conversion_clears_simulation_systematics(self, grouped: bool) -> None:
+        sample = rf.Sample(
+            {"x": [0.25, 0.75], "w": [2.0, 3.0]},
+            label="A",
+            selection="x > 0.5",
+            weight="w",
+            scale=2.0,
+            systematics={"shape": "missing_weight", "lumi": 0.1},
+        )
+        observed = (
+            rf.Group([rf.Group([sample], label="inner"), sample.replace(label="B")], label="Obs")
+            if grouped
+            else sample
+        )
+        p = rf.plot({"x": [0.5]}, "x", bins=(2, 0, 1), observed=observed)
+        result = p.histograms[1]
+        assert result.is_data
+        assert not result.variations
+        np.testing.assert_allclose(result.values(), [0.0, 12.0 if grouped else 6.0])
+        assert not sample.is_data
+        assert set(sample.systematics) == {"shape", "lumi"}
+
+    def test_observed_conversion_preserves_data_samples(self) -> None:
+        from rootfig.api._common import as_observed
+
+        data = rf.Sample({"x": [0.5]}, label="Data", is_data=True)
+        assert as_observed(data) is data
+        group = rf.Group([rf.Group([data], label="inner")], label="outer")
+        converted = as_observed(group)
+        assert isinstance(converted, rf.Group)
+        assert converted.samples[0] is data
+
     def test_stats_box_and_functions_that_take_samples_only(self) -> None:
         a = self._sample(0.0, 50, 1, label="A")
         group = rf.Group([a, self._sample(1.0, 50, 2, label="B")], label="AB")
@@ -2240,10 +2273,9 @@ class TestGroups:
             with pytest.raises(TypeError, match=refused):
                 function([group], *args, **kwargs)
         for function, args in one:
-            with pytest.raises(TypeError, match=single):
-                function(group, *args)
-            with pytest.raises(TypeError, match=refused):
-                function([group], *args)
+            for data in (group, [group], {"AB": group}):
+                with pytest.raises(TypeError, match=single):
+                    function(data, *args)
 
     def test_per_object_label_survives_grouping(self) -> None:
         jagged = rf.Sample({"pt": ak.Array([[1.0, 2.0], [3.0], []])}, label="A")
@@ -2253,3 +2285,8 @@ class TestGroups:
         assert alone.ax.get_ylabel() == grouped.ax.get_ylabel() == "Entries"
         assert grouped.histograms[0].per_object
         assert not rf.plot(rf.Sample({"x": [1.0]}), "x", bins=(1, 0, 2)).histograms[0].per_object
+        # a sum made by hand keeps the flag too
+        from rootfig.histograms import sum_histograms
+
+        parts = rf.histograms(group.samples, "pt", bins=(4, 0, 4))
+        assert rf.plot(sum_histograms(parts), "pt").ax.get_ylabel() == "Entries"

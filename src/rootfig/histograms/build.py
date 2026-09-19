@@ -103,7 +103,8 @@ class Histogram:
         carry variations, as for :class:`~rootfig.model.Sample`.
     per_object
         Whether an entry is an object rather than an event (a per-object
-        variable), which words the ``Entries``/``Events`` y label.
+        variable), which words the ``Entries``/``Events`` y label. Follows
+        ``stats`` unless given.
     """
 
     hist: Hist
@@ -128,8 +129,10 @@ class Histogram:
         histtype: HistType | None = None,
         normalization: str | None = None,
         variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
-        per_object: bool = False,
+        per_object: bool | None = None,
     ) -> None:
+        if per_object is None:  # not given: follow the statistics
+            per_object = stats is not None and stats.per_object
         object.__setattr__(self, "hist", hist)
         object.__setattr__(self, "label", label)
         object.__setattr__(self, "sample", sample)
@@ -530,7 +533,7 @@ def from_sample(
     *,
     stats: Summary | None = None,
     variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
-    per_object: bool = False,
+    per_object: bool | None = None,
 ) -> Histogram:
     """Wrap ``hist_`` as the :class:`Histogram` of ``sample`` (label, data flag, drawing hints)."""
     return Histogram(

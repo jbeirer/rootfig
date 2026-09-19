@@ -243,16 +243,20 @@ def build_histograms(
         weights=[item.nominal.weights for item in loaded],
     )
     # unbinned statistics feed the stats box and Histogram.entries, which a group's histogram
-    # does not carry, so the samples inside groups skip the passes summarize() makes
-    with_stats = {id(item) for item in items if isinstance(item, Sample)}
+    # does not carry, so only the leaves that are top-level samples are summarised
+    with_stats = [
+        not isinstance(item, Group)
+        for item in items
+        for _ in (item.samples if isinstance(item, Group) else (item,))
+    ]
     histograms = []
-    for sample, item in zip(samples, loaded, strict=True):
+    for sample, item, keep in zip(samples, loaded, with_stats, strict=True):
         nominal = fill([axis], item.nominal)
         histograms.append(
             from_sample(
                 sample,
                 nominal,
-                stats=summarize(item.nominal) if id(sample) in with_stats else None,
+                stats=summarize(item.nominal) if keep else None,
                 per_object=item.nominal.per_object,
                 variations={
                     name: _fill_variation(axis, nominal, up, down)
@@ -512,8 +516,6 @@ def build_histograms_2d(
     name_y = var_y.safe_name if var_y.safe_name != var_x.safe_name else f"{var_y.safe_name}_y"
     axis_y = resolve_axis(var_y, [c.arrays[1] for c in columns], name=name_y, weights=weights)
     return [
-        from_sample(
-            sample, fill([axis_x, axis_y], cols), stats=summarize(cols), per_object=cols.per_object
-        )
+        from_sample(sample, fill([axis_x, axis_y], cols), stats=summarize(cols))
         for sample, cols in zip(samples, columns, strict=True)
     ]

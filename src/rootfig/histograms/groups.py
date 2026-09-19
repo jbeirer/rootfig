@@ -19,14 +19,13 @@ def group_histogram(group: Group, components: Sequence[Histogram]) -> Histogram:
     Same-named systematic variations add linearly (:func:`sum_histograms`). The
     result has no ``sample`` and no unbinned ``stats``: it was not filled from one.
     """
+    expected = len(group.samples)
+    if len(components) != expected:
+        msg = f"group {group.label!r}: got {len(components)} histograms for {expected} samples"
+        raise ValueError(msg)
     with annotate(f"while summing the components of group {group.label!r}"):
         total = sum_histograms(components, label=group.label)
-    return total.replace(
-        is_data=group.is_data,
-        color=group.color,
-        histtype=group.histtype,
-        per_object=any(component.per_object for component in components),
-    )
+    return total.replace(is_data=group.is_data, color=group.color, histtype=group.histtype)
 
 
 def regroup_histograms(

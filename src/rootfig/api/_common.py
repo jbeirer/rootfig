@@ -14,7 +14,7 @@ from rootfig.model import (
     PlotItem,
     Sample,
     StyleLike,
-    as_samples,
+    as_plot_items,
     as_style,
     map_samples,
 )
@@ -29,22 +29,23 @@ def single_sample(
     entry_stop: int | None = None,
 ) -> Sample:
     """Return the one sample ``data`` describes for ``function``, which takes no more."""
-    if isinstance(data, Group):
+    items = as_plot_items(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
+    if len(items) != 1:
+        msg = f"{function} takes a single sample, got {len(items)}"
+        raise SourceError(msg)
+    (item,) = items
+    if isinstance(item, Group):
         msg = (
-            f"{function} takes one sample and {data.label!r} is a group of {len(data.samples)}; "
+            f"{function} takes one sample and {item.label!r} is a group of {len(item.samples)}; "
             f"pass one of group.samples, or call {function} once per component"
         )
         raise TypeError(msg)
-    samples = as_samples(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
-    if len(samples) != 1:
-        msg = f"{function} takes a single sample, got {len(samples)}"
-        raise SourceError(msg)
-    return samples[0]
+    return item
 
 
 def as_observed(item: PlotItem) -> PlotItem:
     """Mark a sample, or every sample of a group, as observed data."""
-    return map_samples(item, lambda s: s if s.is_data else s.replace(is_data=True))
+    return map_samples(item, lambda s: s if s.is_data else s.replace(is_data=True, systematics={}))
 
 
 def style_for(

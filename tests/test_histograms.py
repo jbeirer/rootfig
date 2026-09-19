@@ -34,6 +34,7 @@ from rootfig.histograms import (
     correlation_matrix,
     describe_table,
     fill,
+    from_sample,
     group_histogram,
     load_columns,
     normalization_label,
@@ -2163,15 +2164,51 @@ class TestGroupedHistograms:
         with pytest.raises(ValueError, match="got 2 histograms for 3 samples"):
             regroup_histograms([group, sample], [a, b])
 
-    def test_per_object_flag_and_leaf_statistics(self) -> None:
+    @pytest.mark.parametrize("count", [0, 1, 3])
+    def test_group_histogram_requires_one_histogram_per_leaf(self, count: int) -> None:
+        sample = Sample({"x": [0.5]}, label="A")
+        inner = Group([sample, sample.replace(label="B")], label="AB")
+        group = Group([inner], label="outer")
+        h = Histogram(contents([1.0, 2.0]), label="A")
+        with pytest.raises(ValueError, match=f"got {count} histograms for 2 samples"):
+            group_histogram(group, [h] * count)
+        np.testing.assert_allclose(group_histogram(group, [h, h]).values(), [2.0, 4.0])
+
+    def test_only_top_level_samples_are_summarised(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rootfig.histograms import pipeline
+
+        summarised: list[str] = []
+
+        def counting(columns: Columns) -> Summary:
+            summarised.append(str(columns.n_entries))
+            return summarize(columns)
+
+        monkeypatch.setattr(pipeline, "summarize", counting)
         jagged = Sample({"pt": ak.Array([[1.0, 2.0], [3.0], []])}, label="A")
         flat = Sample({"pt": [1.0, 2.0]}, label="F")
+        var = Variable("pt", bins=(4, 0, 4))
         grouped, single = build_histograms(
-            [Group([jagged, jagged.replace(label="B")], label="AB"), flat],
-            Variable("pt", bins=(4, 0, 4)),
+            [Group([jagged, jagged.replace(label="B")], label="AB"), flat], var
         )
+        assert summarised == ["2"]  # the flat sample only
         assert grouped.per_object
         assert not single.per_object
-        assert grouped.stats is None  # the samples inside a group are not summarised
-        assert single.stats is not None
+        assert grouped.stats is None
         assert single.entries == 2
+        # the same sample inside a group and on its own: summarised once, for the latter
+        summarised.clear()
+        grouped, alone = build_histograms([Group([jagged, flat], label="G"), jagged], var)
+        assert summarised == ["3"]
+        assert grouped.stats is None
+        assert alone.entries == 3
+
+    def test_per_object_follows_statistics_and_sums(self) -> None:
+        stats = summarize(prepare({"pt": ak.Array([[1.0, 2.0], [3.0]])}, ["pt"]))
+        assert stats.per_object
+        h = Histogram(contents([1.0, 2.0]), "A", stats=stats)
+        assert h.per_object
+        assert not Histogram(contents([1.0, 2.0]), "B", stats=stats, per_object=False).per_object
+        assert not Histogram(contents([1.0, 2.0]), "C").per_object
+        assert from_sample(Sample({"pt": [1.0]}), contents([1.0, 2.0]), stats=stats).per_object
+        assert sum_histograms([h, Histogram(contents([1.0, 2.0]), "D")]).per_object
+        assert not sum_histograms([Histogram(contents([1.0, 2.0]), "D")]).per_object
