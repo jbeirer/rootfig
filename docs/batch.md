@@ -49,8 +49,9 @@ them without reading or drawing anything.
 
 **Variables** are names, expressions or [`Variable`](composable.md#variable)
 objects; one may be given bare (`rf.PlotBook(data, "mass")`).
-`Variable.safe_name` (the `name=`, else the expression with anything but
-letters, digits and `_` replaced) identifies a variable and names its files, so
+`Variable.safe_name` (the `name=`, else
+[`safe_file_stem`][rootfig.model.safe_file_stem] of the expression) identifies a
+variable and names its files, so
 two variables of one book must not share it: `Variable("Muon_pt", name="pt")`
 next to `Variable("Electron_pt", name="pt")` is rejected.
 

@@ -33,6 +33,7 @@
 ::: rootfig.PlotBook
 ::: rootfig.PlotTask
 ::: rootfig.model.check_file_stem
+::: rootfig.model.safe_file_stem
 
 ## Results
 

@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 from typing import Any
 
 from rootfig.expressions import Expression, parse
 from rootfig.model.binning import DEFAULT_RANGE, Bins, RangeSpec, validate_bins
-from rootfig.model.filenames import check_file_stem
+from rootfig.model.filenames import check_file_stem, safe_file_stem
 
 __all__ = ["Variable", "as_variable"]
 
 # --------------------------------------------------------------------------------------
-
-_SAFE_NAME_RE = re.compile(r"[^0-9A-Za-z_]+")
 
 
 @dataclass(frozen=True)
@@ -51,8 +48,9 @@ class Variable:
         Draw the x axis with a logarithmic scale.
     name
         Short identifier used for file names (:meth:`Plot.save` with a
-        directory, :class:`~rootfig.PlotBook`). Defaults to a sanitised version
-        of the expression. An explicit name must be a file name component on
+        directory, :class:`~rootfig.PlotBook`). Defaults to
+        :func:`~rootfig.model.safe_file_stem` of the expression. An explicit
+        name must be a file name component on
         every platform (:func:`~rootfig.model.check_file_stem`): no slash,
         control character or ``<>:"|?*``, no trailing dot or space, and not a
         Windows device name such as ``CON``.
@@ -81,10 +79,12 @@ class Variable:
 
     @property
     def safe_name(self) -> str:
-        """A file-system friendly identifier for this variable."""
-        if self.name:
-            return self.name
-        return _SAFE_NAME_RE.sub("_", self.expression).strip("_") or "variable"
+        """The file name component of this variable: ``name``, else one made from the expression.
+
+        Both pass :func:`~rootfig.model.check_file_stem`, so :meth:`Plot.save` with a
+        directory and :class:`~rootfig.PlotBook` use it as it is.
+        """
+        return self.name or safe_file_stem(self.expression) or "variable"
 
     @property
     def axis_label(self) -> str:

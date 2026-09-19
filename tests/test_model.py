@@ -42,6 +42,7 @@ from rootfig.model import (
     log_bins,
     map_samples,
     resolve_axis,
+    safe_file_stem,
 )
 from rootfig.model.binning import ROBUST_COVERAGE_BUDGET
 
@@ -133,6 +134,19 @@ class TestVariable:
         assert Variable("Muon_pt / 1000").safe_name == "Muon_pt_1000"
         assert Variable("x", name="console").safe_name == "console"  # not a device name
 
+    @pytest.mark.parametrize(
+        ("expression", "stem"),
+        [
+            ("CON", "CON_"),
+            ("nul", "nul_"),
+            ("COM1 * 2", "COM1_2"),
+        ],
+    )
+    def test_generated_name_is_always_a_file_stem(self, expression: str, stem: str) -> None:
+        # Plot.save(directory) and PlotBook use safe_name without checking it again.
+        assert Variable(expression).safe_name == stem
+        check_file_stem(Variable(expression).safe_name, what="name")
+
     def test_as_variable(self) -> None:
         var = as_variable("x", bins=10, label=None)
         assert var == Variable("x", bins=10)
@@ -158,6 +172,12 @@ class TestFileStem:
             ("com1", "'com1' is a reserved device name on Windows", "; 'com1_' would work"),
             ("Nul.mass", "'Nul' is a reserved device name on Windows", "; 'Nul_mass' would work"),
             ("CONOUT$", "'CONOUT$' is a reserved device name", "; 'CONOUT' would work"),
+            ("COM¹", "'COM¹' is a reserved device name", "; 'COM' would work"),
+            ("lpt³.x", "'lpt³' is a reserved device name", "; 'lpt_x' would work"),
+            # The suggestion is itself checked: stripping the bad part must not leave a device.
+            ("CON.", "end with a dot or a space", "; 'CON_' would work"),
+            ("COM1:", "it holds ':'", "; 'COM1_' would work"),
+            ("NUL ", "end with a dot or a space", "; 'NUL_' would work"),
         ],
     )
     def test_rejects_with_reason_and_suggestion(self, value: str, reason: str, hint: str) -> None:
@@ -165,10 +185,40 @@ class TestFileStem:
             check_file_stem(value, what="selection name")
 
     @pytest.mark.parametrize(
-        "value", ["mass", "pt-lead.window", "lin.2", "µ pt", "CONSOLE", "com", "lpt10", ".hidden"]
+        "value",
+        [
+            "mass",
+            "pt-lead.window",
+            "lin.2",
+            "µ pt",
+            "CONSOLE",
+            "com",
+            "lpt10",
+            ".hidden",
+            "COM0",
+            "LPT0",
+        ],
     )
     def test_accepts_portable_stems(self, value: str) -> None:
+        # COM0 and LPT0 are not ports Windows reserves (ntpath.isreserved agrees).
         assert check_file_stem(value, what="name") is value
+
+    @pytest.mark.parametrize(
+        ("text", "stem"),
+        [
+            ("Muon_pt / 1000", "Muon_pt_1000"),
+            ("CON.", "CON_"),
+            ("COM1:", "COM1_"),
+            ("com¹", "com"),
+            ("Nul.mass", "Nul_mass"),
+            ("?", ""),
+            ("", ""),
+        ],
+    )
+    def test_safe_file_stem(self, text: str, stem: str) -> None:
+        assert safe_file_stem(text) == stem
+        if stem:
+            assert check_file_stem(stem, what="name") is stem
 
 
 class TestBinning:

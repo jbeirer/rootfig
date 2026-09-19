@@ -105,10 +105,11 @@ class TestConstruction:
         with pytest.raises(ValueError, match="share the identifier 'x_1'"):
             rf.PlotBook(samples, ["x+1", "x-1"])
 
-    def test_variable_identifier_must_be_a_file_component(self) -> None:
-        # An explicit name= is checked by Variable itself; a sanitised expression only here.
-        with pytest.raises(ValueError, match="variable name 'nul' cannot be a file name component"):
-            rf.PlotBook(None, "nul")
+    def test_variable_names_are_file_safe_without_a_check_here(self) -> None:
+        # Variable validates an explicit name= and generates a safe one otherwise.
+        with pytest.raises(ValueError, match="Variable name"):
+            rf.PlotBook(None, rf.Variable("x", name="CON"))
+        assert [t.stem for t in rf.PlotBook(None, ["x", "nul"]).tasks()] == ["x", "nul_"]
 
     def test_stem_collision_rejected(self, samples: list[rf.Sample]) -> None:
         # variable a__b with selection c and variable a with selection b__c both spell a__b__c

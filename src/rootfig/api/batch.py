@@ -153,7 +153,7 @@ def _variables(values: str | Variable | Sequence[str | Variable]) -> tuple[Varia
     variables = tuple(as_variable(item) for item in items)
     seen: dict[str, Variable] = {}
     for variable in variables:
-        key = _identifier(variable.safe_name, what="variable")
+        key = variable.safe_name  # always a valid file name component, see Variable
         if key in seen:
             msg = (
                 f"variables {seen[key].expression!r} and {variable.expression!r} share the "
