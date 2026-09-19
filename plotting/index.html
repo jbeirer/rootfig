@@ -1,0 +1,2754 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Publication-quality figures straight from ROOT trees, without ROOT.">
+      
+      
+      
+        <link rel="canonical" href="https://jbeirer.github.io/rootfig/plotting/">
+      
+      
+        <link rel="prev" href="../batch/">
+      
+      
+        <link rel="next" href="../ecosystem/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Plotting options - rootfig</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/gallery.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#plotting-options" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="rootfig" class="md-header__button md-logo" aria-label="rootfig" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            rootfig
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Plotting options
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jbeirer/rootfig" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jbeirer/rootfig
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="rootfig" class="md-nav__button md-logo" aria-label="rootfig" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    rootfig
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jbeirer/rootfig" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jbeirer/rootfig
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gallery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gallery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Gallery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/quick/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The one-liner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/overlay_ratio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Several samples, normalised, with a ratio panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    In-memory arrays instead of files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/many_plots/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Many plots in a loop, saved by variable name
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Simulation and data
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Simulation and data
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/stack_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stacked simulation with data and a ratio panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/systematics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Systematic uncertainties in a stack and its ratio panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/ratio_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ratio to a chosen sample, per-sample drawing styles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/xbreak_ratio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A broken x axis: peak and far tail without the empty middle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/luminosity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross sections and a luminosity instead of hand-made scale factors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Binning and ranges
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Binning and ranges
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/variable_bins/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variable bin widths, per-width normalisation and overflow bins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/log_axes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logarithmic axes with log-spaced bins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/robust_range/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automatic ranges: robust by default, or the full extent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/density_flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Density normalisation and summed overflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selections and expressions
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Selections and expressions
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/object_vs_event/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-object versus per-event selections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/expressions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Expressions and pre-filled histograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beyond one dimension
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Beyond one dimension
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/hist2d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A two-dimensional histogram
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/correlation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A correlation matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/efficiency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Efficiency versus a variable with binomial intervals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/profile/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Profiles: a statistic of one variable in bins of another
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Appearance
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Appearance
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/fill_stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Filled histograms, a statistics box and free text
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/style_colors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A custom style: colours, legend position, figure size, rcParams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../expressions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Expressions and selections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../composable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Samples, variables, cuts and styles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../batch/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Batch plotting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plotting options
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plotting options
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overlays-stacks-and-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overlays, stacks and data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#systematic-uncertainties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Systematic uncertainties
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#luminosity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Luminosity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#normalisation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalisation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ratio-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ratio panel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#binning-and-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binning and range
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#axes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Axes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legend-labels-text-and-statistics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legend, labels, text and statistics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#figure-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Figure handling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2d-histograms-and-correlations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2D histograms and correlations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#efficiencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Efficiencies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#profiles-and-resolutions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Profiles and resolutions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cut-flows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cut flows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#statistics-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Statistics tables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#histograms-that-already-exist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Histograms that already exist
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Histograms that already exist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#histograms-already-in-root-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Histograms already in ROOT files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#histogram-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Histogram objects
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overlays-stacks-and-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overlays, stacks and data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#systematic-uncertainties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Systematic uncertainties
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#luminosity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Luminosity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#normalisation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalisation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ratio-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ratio panel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#binning-and-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binning and range
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#axes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Axes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legend-labels-text-and-statistics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legend, labels, text and statistics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#figure-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Figure handling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2d-histograms-and-correlations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2D histograms and correlations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#efficiencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Efficiencies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#profiles-and-resolutions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Profiles and resolutions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cut-flows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cut flows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#statistics-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Statistics tables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#histograms-that-already-exist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Histograms that already exist
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Histograms that already exist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#histograms-already-in-root-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Histograms already in ROOT files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#histogram-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Histogram objects
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="plotting-options">Plotting options<a class="headerlink" href="#plotting-options" title="Permanent link">&para;</a></h1>
+<p>All options below are keyword arguments of <a class="autorefs autorefs-internal" title="rootfig.plot" href="../api/#rootfig.plot"><code>rf.plot</code></a>, whether
+it fills from a tree, reads a histogram stored in the file or draws histogram
+objects you already have (see <a href="#histograms-that-already-exist">the end of this page</a>).</p>
+<h2 id="overlays-stacks-and-data">Overlays, stacks and data<a class="headerlink" href="#overlays-stacks-and-data" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Overlay</strong> (default): every sample is drawn as an outline (<code>histtype="step"</code>).
+  Use <code>histtype="fill"</code> for translucent filled areas, <code>"errorbar"</code> for points,
+  <code>"band"</code> for uncertainty bands; a <code>Sample(histtype=...)</code> overrides per sample.</li>
+<li><strong>Stack</strong>: <code>stack=True</code> stacks all non-data samples as filled histograms in
+  the given order (first sample at the bottom) and draws a hatched band for
+  the statistical uncertainty of the total.</li>
+<li><strong>Data</strong>: samples with <code>is_data=True</code> (or passed as <code>observed=...</code>) are
+  points with error bars, drawn on top and never stacked, in the style's text
+  colour (black by default) unless the sample sets <code>color</code>.</li>
+<li><strong>Groups</strong>: a <a class="autorefs autorefs-internal" title="rootfig.Group
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Group"><code>Group</code></a> of samples is one histogram of the
+  overlay or stack, the sum of its components filled apart; see
+  <a href="../composable/#group">Group</a>.</li>
+<li><code>errorbars=True</code> adds statistical error bars to non-data histograms.</li>
+</ul>
+<h2 id="systematic-uncertainties">Systematic uncertainties<a class="headerlink" href="#systematic-uncertainties" title="Permanent link">&para;</a></h2>
+<p>Samples carry their sources of systematic uncertainty, <code>{name: variation}</code>;
+<code>systematics=</code> on <code>plot()</code> and <code>histograms()</code> adds sources to every simulated
+sample (a sample's own source of the same name wins):</p>
+<div class="highlight"><pre><span></span><code><span class="n">bkg</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span>
+    <span class="s2">"mc.root"</span><span class="p">,</span>
+    <span class="n">tree</span><span class="o">=</span><span class="s2">"events"</span><span class="p">,</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">"Background"</span><span class="p">,</span>
+    <span class="n">weight</span><span class="o">=</span><span class="s2">"weight"</span><span class="p">,</span>
+    <span class="n">systematics</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"pileup"</span><span class="p">:</span> <span class="p">(</span><span class="s2">"weight_pu_up"</span><span class="p">,</span> <span class="s2">"weight_pu_down"</span><span class="p">),</span>  <span class="c1"># weights replacing Sample.weight</span>
+        <span class="s2">"trigger"</span><span class="p">:</span> <span class="s2">"weight_trig_up"</span><span class="p">,</span>  <span class="c1"># one-sided: down mirrors up</span>
+        <span class="s2">"xsec"</span><span class="p">:</span> <span class="mf">0.05</span><span class="p">,</span>  <span class="c1"># ±5 % normalisation</span>
+        <span class="s2">"shower"</span><span class="p">:</span> <span class="p">(</span><span class="mf">1.10</span><span class="p">,</span> <span class="mf">0.97</span><span class="p">),</span>  <span class="c1"># (up, down) normalisation factors</span>
+        <span class="s2">"jes"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"Jet_pt"</span><span class="p">:</span> <span class="p">(</span><span class="s2">"Jet_pt_jesUp"</span><span class="p">,</span> <span class="s2">"Jet_pt_jesDown"</span><span class="p">)},</span>  <span class="c1"># branches</span>
+        <span class="s2">"generator"</span><span class="p">:</span> <span class="n">rf</span><span class="o">.</span><span class="n">Systematic</span><span class="o">.</span><span class="n">samples</span><span class="p">(</span><span class="s2">"mc_herwig.root"</span><span class="p">),</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">bkg</span><span class="p">,</span> <span class="n">sig</span><span class="p">],</span> <span class="s2">"Jet_pt"</span><span class="p">,</span> <span class="n">observed</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">stack</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">ratio</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">systematics</span><span class="o">=</span><span class="p">{</span><span class="s2">"lumi"</span><span class="p">:</span> <span class="mf">0.017</span><span class="p">}</span>
+<span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Form</th>
+<th>Variation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"w_up"</code>, <code>("w_up", "w_down")</code></td>
+<td>weight expression(s) replacing <code>Sample.weight</code>; the plot <code>weight=</code>, <code>scale</code> and luminosity scaling still multiply</td>
+</tr>
+<tr>
+<td><code>0.05</code>, <code>(1.10, 0.97)</code></td>
+<td>the nominal histogram scaled by <code>1 ± 0.05</code> (a magnitude, at least 0 and below 1), or by the two positive factors, which may point either way</td>
+</tr>
+<tr>
+<td><code>{"Jet_pt": ("Jet_pt_up", "Jet_pt_down")}</code></td>
+<td>branch names replaced by other branches in the variable, the selection and the weight, so a cut on <code>Jet_pt</code> moves with it; replacements are branch names, not expressions</td>
+</tr>
+<tr>
+<td><code>Systematic.samples(up, down)</code></td>
+<td>other files or arrays with the sample's selection, weight, cross section, tree name and entry range; files look up a string <code>ngen</code> themselves, arrays take the nominal sample's; a <code>Sample</code> is used as given</td>
+</tr>
+</tbody>
+</table>
+<p>Rules:</p>
+<ul>
+<li>Every tuple is <code>(up, down)</code>. Without a down variation, the up shift is
+  mirrored: <code>down = 2 × nominal − up</code>.</li>
+<li>The binning comes from the nominal values; variations fill the same axis.
+  Weight and branch variations are evaluated on the branches read once for the
+  nominal histogram.</li>
+<li>Per bin, each source shifts the contents by <code>up − nominal</code> and
+  <code>down − nominal</code>. The larger positive shift enters the upper uncertainty,
+  the larger negative one the lower (so two variations moving the same way
+  widen one side only). Different sources are independent and added in
+  quadrature; the total is statistical ⊕ systematic, per side.</li>
+<li>Sources with the same name are fully correlated across samples: the stack
+  total adds their variations linearly (a sample without the source
+  contributes its nominal contents), and a ratio varies numerator and
+  denominator together, so a shared luminosity uncertainty cancels in an
+  MC/MC ratio.</li>
+<li>A <a class="autorefs autorefs-internal" title="rootfig.Group
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Group"><code>Group</code></a> sums its components' variations by the same rule
+  before it is drawn or normalised.</li>
+<li><code>normalize=True</code>, <code>"unity"</code>, <code>"density"</code> or a numeric target normalises every
+  variation by its own total, so the plot shows shape uncertainties; a pure
+  normalisation uncertainty drops out. <code>normalize="width"</code> only divides by
+  bin width and retains normalisation uncertainties. If the nominal cannot be
+  normalised, its variations also stay raw. If only a variation has a zero or
+  non-finite total, normalization raises <code>SystematicError</code>.
+  <code>flow="sum"</code>/<code>"show"</code> treat variations like the nominal histogram.</li>
+<li>Non-finite values are reported for each affected variation, with the source
+  name and direction in the warning. <code>nonfinite="error"</code> rejects them.</li>
+<li>Data samples cannot carry systematics (<a class="autorefs autorefs-internal" title="SystematicError" href="../api/#rootfig.errors.SystematicError"><code>SystematicError</code></a>),
+  and neither can pre-filled <code>Histogram(is_data=True)</code>; plot-level sources skip them.</li>
+<li><code>plot2d</code>, <code>correlation</code>, <code>summarize</code>, <code>cutflow</code>, <code>efficiency</code>, <code>profile</code> and
+  <code>histogram()</code> (a plain <code>hist.Hist</code>) ignore systematics.
+  Significance panels also use only statistical uncertainties.</li>
+</ul>
+<p>Drawing follows mplhep's conventions: a stack's hatched band shows the
+statistical and systematic uncertainty of the total (legend <code>Stat. + syst.
+unc.</code>), overlaid samples with variations get a light band in their own colour,
+and the ratio panel includes the systematics in its band around one
+(<code>split_ratio</code>, data/MC) or in the error bars of the points (<code>propagate</code>:
+statistical uncertainties uncorrelated, systematic ones propagated source by
+source through the varied ratio; a variation that empties a denominator bin
+leaves that bin's systematic uncertainty undefined, with a warning). The
+automatic ratio range covers the bulk of the band and of the systematic error
+bars (robust percentiles, like the points, so a single bin with a huge
+uncertainty runs off the panel instead of squashing it; pass <code>ratio_ylim</code> to
+show it in full). It stays at or above zero unless a central ratio is negative
+(signed weights).</p>
+<p>The numbers are part of the result:</p>
+<div class="highlight"><pre><span></span><code><span class="n">u</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">uncertainty</span><span class="p">()</span>  <span class="c1"># all simulated histograms summed (the stack total); or one by label</span>
+<span class="n">u</span><span class="o">.</span><span class="n">stat</span><span class="p">,</span> <span class="n">u</span><span class="o">.</span><span class="n">syst_down</span><span class="p">,</span> <span class="n">u</span><span class="o">.</span><span class="n">syst_up</span>  <span class="c1"># per bin, visible bins</span>
+<span class="n">u</span><span class="o">.</span><span class="n">total_down</span><span class="p">,</span> <span class="n">u</span><span class="o">.</span><span class="n">total_up</span>  <span class="c1"># statistical ⊕ systematic</span>
+<span class="n">u</span><span class="o">.</span><span class="n">components</span><span class="p">[</span><span class="s2">"jes"</span><span class="p">]</span>  <span class="c1"># signed (up − nominal, down − nominal) shifts</span>
+<span class="n">p</span><span class="o">.</span><span class="n">histograms</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">variations</span>  <span class="c1"># {"jes": (hist_up, hist_down), ...}</span>
+<span class="n">p</span><span class="o">.</span><span class="n">ratios</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">syst_band</span>  <span class="c1"># relative (down, up) band of the reference</span>
+</code></pre></div>
+<p>Pre-filled histograms take variations directly and are drawn the same way:
+<code>rf.Histogram(h, label="MC", variations={"jes": (h_up, h_down)})</code> passed to
+<code>plot</code>; <a class="autorefs autorefs-internal" title="uncertainty" href="../api/#rootfig.histograms.uncertainty"><code>uncertainty</code></a> and
+<a class="autorefs autorefs-internal" title="sum_histograms" href="../api/#rootfig.histograms.sum_histograms"><code>sum_histograms</code></a> work on them too.</p>
+<p>Use <code>(h_up, None)</code> for a mirrored variation. <code>Sample.systematics</code> and
+<code>Histogram.variations</code> are read-only; <code>sample.replace(systematics=...)</code> and
+<code>histogram.replace(variations=...)</code> return copies with other ones.</p>
+<h2 id="luminosity">Luminosity<a class="headerlink" href="#luminosity" title="Permanent link">&para;</a></h2>
+<p><code>lumi=</code> scales simulated samples that carry a cross section
+(<code>Sample(xsec=..., ngen=...)</code>) to expected yields, <code>xsec × lumi / ngen</code>, and
+writes the luminosity into the label. Numbers are in fb⁻¹; strings carry a
+unit: <code>lumi="10.8 ab^-1"</code>. Data samples and samples without a cross section
+are left alone. The same keyword exists on <code>histogram(s)</code>, <code>plot2d</code>,
+<code>summarize</code>, <code>correlation</code>, <code>cutflow</code>, <code>efficiency</code> and <code>profile</code>. A
+luminosity already set on the <code>Style</code> wins in the label: <code>Style(lumi=...)</code>
+describes the figure, <code>lumi=</code> the scaling, and they need not agree (a partial
+dataset scaled to the full one, for instance).</p>
+<h2 id="normalisation">Normalisation<a class="headerlink" href="#normalisation" title="Permanent link">&para;</a></h2>
+<p><code>normalize=</code></p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Meaning</th>
+<th>y label</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>False</code>/<code>None</code></td>
+<td>raw sums of weights</td>
+<td><code>Events</code> or <code>Entries / 5 GeV</code></td>
+</tr>
+<tr>
+<td><code>True</code>, <code>"unity"</code></td>
+<td>visible bins sum to one</td>
+<td><code>Normalised to unity</code></td>
+</tr>
+<tr>
+<td><code>"density"</code></td>
+<td>integral over the visible range is one</td>
+<td><code>Density</code></td>
+</tr>
+<tr>
+<td><code>"width"</code></td>
+<td>divide by bin width, no rescaling</td>
+<td><code>Entries / GeV</code></td>
+</tr>
+<tr>
+<td>a number</td>
+<td>visible bins sum to that number</td>
+<td><code>Normalised to 100</code></td>
+</tr>
+</tbody>
+</table>
+<p>A <a class="autorefs autorefs-internal" title="rootfig.Group
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Group"><code>Group</code></a> is summed first and normalised as one histogram.
+Variances are scaled consistently. Flow bins scale with the same factor; for
+<code>"width"</code> and <code>"density"</code> they are divided by the width of the neighbouring
+visible bin. Plain <code>hist.Hist</code> objects with a count storage passed to
+<code>plot</code> are converted to <code>Weight</code> storage first. If such a histogram
+was filled with weights (or rescaled) its sum of squared weights is lost, and
+rootfig refuses it with a <code>ValueError</code> rather than invent uncertainties; pass
+<code>assume_poisson=True</code> to use the absolute bin contents as variances (with a
+warning), or fill with <code>hist.storage.Weight()</code> in the first place.</p>
+<p>The rescaling modes divide by the signed sum of the visible bins: a histogram
+dominated by negative weights still sums to the target, its shape flips sign,
+and a warning says so. An empty histogram, or one whose positive and negative
+weights cancel exactly, is left unchanged with a warning and keeps the plain
+<code>Events</code> label (<code>Histogram.normalization</code> stays <code>None</code>).</p>
+<h2 id="ratio-panel">Ratio panel<a class="headerlink" href="#ratio-panel" title="Permanent link">&para;</a></h2>
+<p><code>ratio=True</code> adds a lower panel sharing the x axis:</p>
+<ul>
+<li>with a stack: data / total MC, error bars from the data, grey band for the
+  MC statistical uncertainty (<code>ratio_uncertainty="numerator"</code>); a stacked
+  ratio needs an <code>observed=</code> sample;</li>
+<li>with data and overlaid samples: data / the first non-data sample (only the
+  data appears in the panel);</li>
+<li>otherwise: every further sample / the first sample, uncertainties of both
+  propagated in quadrature (<code>ratio_uncertainty="propagate"</code>).</li>
+</ul>
+<p><code>ratio="Background"</code> picks the reference by label (a group's label counts);
+all other histograms, data included, are divided by it. The uncertainty treatment is chosen per histogram:
+data over simulation keeps the reference uncertainty as a band, simulation over
+simulation propagates both sides, so systematic sources they share cancel.
+<code>ratio_uncertainty=</code> applies one treatment to all.</p>
+<p><code>ratio="significance"</code> (or <code>"s/sqrt(b)"</code>, <code>"s/sqrt(s+b)"</code>) draws a
+<strong>significance panel</strong> instead: per bin, the signal over the square root of
+the background (or of signal plus background), with propagated
+uncertainties. The signal is the last non-data sample (the top of a stack)
+and the background the sum of the others; <code>ratio=("s/sqrt(b)", "ZH")</code> names
+the signal. The values are returned as a <code>Ratio</code> in <code>Plot.ratios</code>.</p>
+<p><code>ratio_ylim</code> and
+<code>ratio_label</code> override the automatic range (at least 0.5 to 1.5, widened to
+cover the bulk of the points) and label (<code>Ratio to X</code> or <code>Data / MC</code>). A
+rotated y label is bounded by the height of the short ratio panel, so a long
+one is shrunk and, if that is not enough, wrapped onto two lines; pass a
+shorter <code>ratio_label</code> such as <code>"Ratio"</code> to keep it at full size. The
+computed values are returned in <code>Plot.ratios</code> as
+<a class="autorefs autorefs-internal" title="rootfig.Ratio
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Ratio"><code>Ratio</code></a> objects (<code>values</code>, <code>errors</code>, <code>band</code>, <code>edges</code>, and
+<code>syst_errors</code>/<code>syst_band</code> with <a href="#systematic-uncertainties">systematic uncertainties</a>).</p>
+<h2 id="binning-and-range">Binning and range<a class="headerlink" href="#binning-and-range" title="Permanent link">&para;</a></h2>
+<p><code>bins</code> takes an <code>int</code>, a <code>(n, low, high)</code> triple, a sequence of edges or a
+<code>hist</code> axis, and is shared by every sample of one plot (and by the numerator
+and denominator of an <a href="#efficiencies">efficiency</a>).</p>
+<p>With an integer <code>bins</code> the range comes from <code>range</code>:</p>
+<table>
+<thead>
+<tr>
+<th><code>range</code></th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>(low, high)</code></td>
+<td>explicit</td>
+</tr>
+<tr>
+<td><code>"robust"</code></td>
+<td><strong>default</strong>: the min/max of the data, ignoring values far from the bulk</td>
+</tr>
+<tr>
+<td><code>"auto"</code></td>
+<td>the full finite minimum and maximum over all samples</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="n">rf</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="s2">"events.root"</span><span class="p">,</span> <span class="s2">"d0_significance"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>  <span class="c1"># robust</span>
+<span class="n">rf</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="s2">"events.root"</span><span class="p">,</span> <span class="s2">"d0_significance"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">)</span>  <span class="c1"># full extent</span>
+<span class="n">rf</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="s2">"events.root"</span><span class="p">,</span> <span class="s2">"d0_significance"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>  <span class="c1"># explicit</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Rejected values are not discarded</p>
+<p>A value outside the range is <strong>not removed from the data</strong>: it goes to the
+under/overflow, shown by the flow arrows (<code>flow="show"</code> turns them into
+visible bins, <code>flow="sum"</code> folds them into the edge bins). Statistics boxes
+and <code>rf.summarize</code> are computed before binning, so means and entry counts
+cover the full sample whichever range is used.</p>
+</div>
+<p>This happens in two steps. Outliers are rejected by their modified z-score
+(<code>0.6745 * |x - median| / MAD</code>), with a threshold of 30, which removes sentinels
+and anything else far from the bulk. That is done within each sample, and the
+ranges they keep are unioned, so a sample is judged against its own median and
+spread: a signal offset from a background is not an outlier merely because the
+background outnumbers it, and a sample keeps the same values whether it is
+plotted alone or in an overlay. The threshold is then tightened for as
+long as each step costs no more than an <em>additional</em> 1 percent of any one
+sample, by entries and by weight. Additional is meant literally: the budget is
+measured against what the first step already moved out of the view, which may
+be a good deal more than 1 percent. This second step cuts a tail that reaches
+far but thins out smoothly, the kind a distance threshold keeps and that leaves
+the interesting part of the distribution in a corner of the axis.</p>
+<p>The budget is charged per sample rather than over the pooled entries, so a small
+signal sitting far from a large background keeps its own place on the axis
+instead of being cut as a rounding error, and it is charged against the weight a
+cut would remove as well as the entries, so a handful of high-weight entries is
+not treated as negligible. A sample with fewer than 20 distinct values is
+categorical — counts, flags, multiplicities — has no tail to cut and gets no
+budget at all, so the second step takes no value off its axis; this is decided
+per sample too, and holds when it is overlaid with a continuous one. If MAD is zero, the mean absolute deviation from
+the median is used instead. Every candidate is padded by 5 percent and clamped
+to the <code>"auto"</code> range (whose upper edge is nudged above the maximum to include
+it), so the range never reaches past the data. Degenerate ranges are widened
+symmetrically. The threshold cannot distinguish sentinels from valid data.
+Cases where you may want <code>range="auto"</code>:</p>
+<ul>
+<li>a distribution with a long tail (log-normal, Student-t, or an invariant mass
+  with a continuum) has valid tail entries pushed into the flow bins — this is
+  what the second step is for, so <code>"auto"</code> is the way to see the whole tail;</li>
+<li>a sparse discrete distribution can lose rare valid values from the visible
+  range, for example the ones in a binary sample with 999 zeros and one one;</li>
+<li>a lone value far from a bulk of near-identical ones looks exactly like a
+  sentinel and is rejected with them, however real it is;</li>
+<li><code>xbreak=(a, b)</code> is validated against the inferred axis, so a break meant to
+  span a far tail needs <code>range="auto"</code> or an explicit range.</li>
+</ul>
+<p>Inferring a robust range requires additional median and deviation calculations
+over the combined samples, with additional time and memory costs. An explicit
+range avoids range inference.</p>
+<div class="admonition tip">
+<p class="admonition-title">The plot is mostly empty space</p>
+<p>The inferred range cuts a thin tail, but only as far as its coverage
+budget allows. A distribution whose tail carries more than that — a heavy
+Student-t, a steeply falling spectrum over several decades — still spreads
+the axis over bins holding a fraction of a percent of the peak. Three ways
+out, in order of how often they are what you want:</p>
+<ul>
+<li><code>range=(a, b)</code> around the core. Nothing is lost: entries outside go to
+  the flow bins, where <code>flow="hint"</code> (the default) marks them with arrows
+  and <code>flow="sum"</code> folds them into the edge bins.</li>
+<li><code>logy=True</code>, which makes the tail visible instead of hiding it.</li>
+<li><code>xbreak=(a, b)</code> to cut the empty middle out and keep both ends, with
+  <code>range="auto"</code> or an explicit range so the break lies inside the axis.</li>
+</ul>
+</div>
+<h2 id="axes">Axes<a class="headerlink" href="#axes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>logx</code>, <code>logy</code>: logarithmic scales. Log-spaced bins: <code>bins=rf.log_bins(n, low, high)</code>.</li>
+<li><code>xlim</code>, <code>ylim</code>: limits; <code>ylim=(None, 1e4)</code> keeps the automatic lower value.
+  Automatic y limits add a small margin above the tallest bin (a factor 1.2 in
+  linear scale, 12 in log scale) and then raise it further as the drawn
+  legend, label, statistics box and text lines need.</li>
+<li><code>xbreak=(a, b)</code>: cut the range between <code>a</code> and <code>b</code> out of the x axis and
+  draw the two remaining segments side by side with break marks, sharing the
+  y axis (and the ratio panel, if any). Useful for a peak plus a far tail or
+  a sentinel region. The right segment is <code>Plot.ax_right</code>
+  (<code>Plot.ratio_ax_right</code>). Not available together with <code>ax=</code> or <code>flow="show"</code>.</li>
+</ul>
+<p><img alt="Broken x axis with a ratio panel" src="../images/gallery/xbreak_ratio-atlas.png#only-light" width="60%" />
+  <img alt="Broken x axis with a ratio panel" src="../images/gallery/xbreak_ratio-atlas-dark.png#only-dark" width="60%" />
+- <code>flow</code>: how under/overflow is shown (this is where entries outside an
+  inferred <a href="#binning-and-range">range</a> end up), <code>"hint"</code> (small arrows, default),
+  <code>"show"</code> (extra bins labelled <code>&lt;low</code> / <code>&gt;high</code>, added on a side as soon as any
+  sample has content there, identical for all samples and the ratio panel),
+  <code>"sum"</code> (added to the edge bins before anything is computed, so ratios,
+  significances, stack bands and y limits use the folded bins), <code>"none"</code>.
+- <code>logx</code>, <code>logy</code>: logarithmic axes. <code>logx=None</code> (default) follows the
+  <code>Variable</code>'s <code>log</code> flag (<code>plot2d</code>, <code>efficiency</code> and <code>profile</code> do the same for
+  their variables); <code>True</code>/<code>False</code> override it.
+- <code>xlabel</code>, <code>ylabel</code>, <code>unit</code>, <code>title</code>. The title sits above the axes, where
+  the CMS-style label is also drawn; with such a style prefer <code>text=</code>.
+- Automatic y limits leave room for the legend, the experiment label, the
+  statistics box and <code>text</code> lines: a small fixed margin is added above the
+  tallest bin, and the upper limit is then raised until none of them covers a
+  histogram (the legend picks a free upper corner). Room is only made for
+  what is actually drawn, so a plot without annotations keeps the margin.
+  A <code>ylim</code> with an explicit upper value switches this off.</p>
+<h2 id="legend-labels-text-and-statistics">Legend, labels, text and statistics<a class="headerlink" href="#legend-labels-text-and-statistics" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>legend=False</code> or a location string such as <code>"upper left"</code>.</li>
+<li><code>style=</code> an experiment name or a <a class="autorefs autorefs-internal" title="rootfig.Style
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Style"><code>Style</code></a>; see
+  <a href="../composable/">Samples, variables, cuts and styles</a>.</li>
+<li><code>with rf.dark_theme():</code> draws the figures made inside the block for a dark
+  page — light ink on a transparent background, applied on top of any style
+  (including experiment styles that fix a white background). Colours set in
+  <code>Style.rc</code>, background and text included, are applied after it and win for
+  the figures and axes rootfig creates, so such a style is not rendered dark.
+  Data points and outlines follow the style's <code>text.color</code>. Plain matplotlib
+  inside the block matches too: axes made with <code>plt.subplots()</code> for <code>ax=</code>, text
+  added to <code>Plot.ax</code>, and <code>fig.savefig()</code> keeps the transparent background.
+  Axes passed with <code>ax=</code> keep the properties they were created with (their
+  background, frame and ticks), so a <code>Style.rc</code> passed to that plot colours
+  only what rootfig draws into them.</li>
+<li><code>text=</code> extra line(s) drawn inside the frame: in the upper left corner for
+  <code>label_loc=0</code> (the CMS and DUNE default), below the secondary text for the
+  split layout <code>label_loc=3</code>, and below the label for locations 1, 2, and 4.</li>
+<li>A label line above the frame (experiment name, status, luminosity) that does
+  not fit the width of the axes, next to a colour bar or over a broken x axis,
+  is shrunk to fit, down to 60% of its original font size. If that is still too
+  wide, the luminosity gets a separate line above the label. The luminosity of
+  a broken x axis sits above the right end of the right segment. An explicit
+  title is placed above these labels, preserving its font, alignment and padding.</li>
+<li><code>stats=True</code> adds entries, mean and standard deviation per sample below the
+  legend (a location string moves it).</li>
+</ul>
+<h2 id="figure-handling">Figure handling<a class="headerlink" href="#figure-handling" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>figsize=(w, h)</code>; <code>ax=some_axes</code> draws into your own axes (pass a pair
+  <code>(main, ratio)</code> for ratio plots), so several rootfig plots can share a figure.</li>
+<li><code>save="file.pdf"</code> saves immediately; <code>Plot.save(path)</code> accepts a directory
+  (file named after the variable) and <code>formats=["pdf", "png"]</code>.</li>
+<li>Figures use matplotlib's constrained layout, so labels, legends and colour
+  bars fit inside the canvas and a saved file has exactly the <code>figsize</code>
+  dimensions: 1D, 2D and ratio plots of one size share one shape. Figures
+  drawn into your own <code>ax</code> are saved with a tight bounding box instead.</li>
+<li>Fonts are fixed on the figure when it is made, so saving or displaying it
+  later renders exactly the layout that was computed, in the style's fonts.</li>
+<li><code>Plot.fig</code>, <code>Plot.ax</code>, <code>Plot.ratio_ax</code> are plain matplotlib objects;
+  <code>Plot.histograms</code> wrap the <code>hist.Hist</code> objects with labels and statistics.</li>
+<li>In a notebook the figure is displayed automatically — it is a pyplot figure,
+  flushed by the inline backend at the end of the cell, so <code>%matplotlib inline</code>
+  is not needed. End the call with <code>;</code> to hide the <code>Plot</code> repr, and use
+  <code>Plot.close()</code> in loops that make many figures.</li>
+</ul>
+<h2 id="2d-histograms-and-correlations">2D histograms and correlations<a class="headerlink" href="#2d-histograms-and-correlations" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">rf</span><span class="o">.</span><span class="n">plot2d</span><span class="p">(</span><span class="n">sample</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">((</span><span class="mi">40</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">200</span><span class="p">),</span> <span class="p">(</span><span class="mi">30</span><span class="p">,</span> <span class="o">-</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)),</span> <span class="n">logz</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">normalize</span><span class="o">=</span><span class="s2">"density"</span><span class="p">)</span>
+<span class="n">rf</span><span class="o">.</span><span class="n">correlation</span><span class="p">(</span><span class="n">sample</span><span class="p">,</span> <span class="p">[</span><span class="s2">"MET"</span><span class="p">,</span> <span class="s2">"nJet"</span><span class="p">,</span> <span class="s2">"HT"</span><span class="p">],</span> <span class="n">selection</span><span class="o">=</span><span class="s2">"nJet &gt;= 2"</span><span class="p">,</span> <span class="n">percent</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p><code>rf.plot2d</code> options: <code>logz</code>, <code>logx</code>, <code>logy</code>, <code>cmap</code> (any matplotlib colour
+map, default <code>viridis</code>), <code>colorbar=False</code>, <code>zlabel</code> (default <code>Events</code> or the
+normalisation), <code>normalize</code>, <code>title</code>, <code>text</code>, <code>style</code>, <code>figsize</code>, <code>ax</code>, <code>save</code>.
+The figure has the same size as a 1D plot; the colour bar takes its space from
+the axes. For 2D histograms and correlation matrices, <code>label_loc</code> defaults to
+0, with the experiment and secondary text above the frame. Location 3 splits
+them: experiment above, secondary text inside. Only <code>label_loc=1</code>, <code>2</code>, or <code>4</code>
+moves both inside. Luminosity remains above for locations 0–3 and inside for 4.</p>
+<p><code>rf.correlation</code> options: <code>labels</code> (tick labels, default the variable labels),
+<code>percent=True</code> (integer percentages instead of two-decimal coefficients),
+<code>annotate=False</code> (colours only), <code>cmap</code> (default <code>RdBu_r</code>), <code>title</code>, <code>style</code>,
+<code>figsize</code>, <code>ax</code>, <code>save</code>. The matrix is returned as <code>Plot.matrix</code>. Without a
+<code>figsize</code> the figure grows with the number of variables, in proportion to the
+style's figure width, so the larger fonts of experiment styles keep their
+cells readable. It is titled
+<code>"&lt;sample&gt;: correlation"</code>; with an experiment style the experiment label replaces
+that automatic title, using the placement described above. An explicit <code>title</code>
+is shown either way.</p>
+<p>Both variables of a 2D histogram (and all variables of a correlation matrix)
+must share their structure: all per-event, or all per-object from the same
+collection.</p>
+<h2 id="efficiencies">Efficiencies<a class="headerlink" href="#efficiencies" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">rf</span><span class="o">.</span><span class="n">efficiency</span><span class="p">([</span><span class="n">reco</span><span class="p">],</span> <span class="s2">"TrueMuon_pt"</span><span class="p">,</span> <span class="n">passed</span><span class="o">=</span><span class="s2">"TrueMuon_matched"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">100</span><span class="p">),</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">)</span>
+</code></pre></div>
+<p>For every sample the entries satisfying <code>selection</code> form the denominator and
+those also satisfying <code>passed</code> the numerator, with the same binning. The
+efficiency is drawn as points with Wilson score intervals (<code>z=1</code> standard
+deviations by default; weighted samples use effective entries). Options are
+the usual axis, legend, label and style ones (<code>xlabel</code>, <code>ylabel</code>, <code>unit</code>,
+<code>title</code>, <code>logx</code>, <code>xlim</code>, <code>ylim</code>, <code>legend</code>, <code>text</code>, <code>style</code>, <code>figsize</code>, <code>ax</code>,
+<code>save</code>); the <a class="autorefs autorefs-internal" title="rootfig.Efficiency
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Efficiency"><code>Efficiency</code></a> objects (<code>values</code>, <code>lower</code>,
+<code>upper</code>, <code>edges</code>) are in <code>Plot.efficiencies</code>.</p>
+<h2 id="profiles-and-resolutions">Profiles and resolutions<a class="headerlink" href="#profiles-and-resolutions" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">rf</span><span class="o">.</span><span class="n">profile</span><span class="p">(</span><span class="n">sample</span><span class="p">,</span> <span class="s2">"true_E"</span><span class="p">,</span> <span class="s2">"(reco_E - true_E) / true_E"</span><span class="p">,</span> <span class="n">statistic</span><span class="o">=</span><span class="s2">"std"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">100</span><span class="p">))</span>
+</code></pre></div>
+<p><code>statistic="mean"</code> (default) draws the weighted mean of <code>y</code> per bin of <code>x</code>
+with its standard error (ROOT's <code>TProfile</code>); <code>"std"</code> draws the standard
+deviation with its error, the usual resolution-versus-variable plot. <code>x</code> and
+<code>y</code> must have the same structure; <code>xlabel</code> and <code>unit</code> describe the x axis. The
+<a class="autorefs autorefs-internal" title="rootfig.Profile
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Profile"><code>Profile</code></a> objects (<code>values</code>, <code>errors</code>, <code>counts</code>, <code>edges</code>)
+are in <code>Plot.profiles</code>.</p>
+<p>Negative weights (NLO samples) can make a weighted variance negative or an
+efficiency leave <code>[0, 1]</code>. rootfig then reports <code>nan</code> for the standard
+deviation, the profile error or the confidence interval (with a warning for
+efficiencies) rather than a made-up uncertainty; means, yields and histogram
+contents are unaffected. Bins whose total weight is negative keep their mean
+or efficiency (the plain ratio) but get no uncertainty; bins whose weights
+cancel to exactly zero count as empty (<code>nan</code>).</p>
+<h2 id="cut-flows">Cut flows<a class="headerlink" href="#cut-flows" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">table</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">cutflow</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">zh</span><span class="p">,</span> <span class="n">ww</span><span class="p">,</span> <span class="n">zz</span><span class="p">],</span>
+    <span class="p">[</span><span class="s2">"nMuon &gt;= 2"</span><span class="p">,</span> <span class="n">rf</span><span class="o">.</span><span class="n">Cut</span><span class="p">(</span><span class="s2">"abs(m_ll - 91.2) &lt; 10"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"Z window"</span><span class="p">),</span> <span class="s2">"recoil_mass &gt; 120"</span><span class="p">],</span>
+    <span class="n">lumi</span><span class="o">=</span><span class="s2">"10.8 ab^-1"</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">table</span><span class="p">)</span>  <span class="c1"># yields ± error (raw events) and step efficiencies</span>
+<span class="n">table</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"ZH"</span><span class="p">)</span><span class="o">.</span><span class="n">efficiencies</span>  <span class="c1"># relative to the previous step</span>
+<span class="n">table</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"ZH"</span><span class="p">)</span><span class="o">.</span><span class="n">absolute_efficiencies</span>
+</code></pre></div>
+<p>Step efficiencies are plain ratios of weighted yields (<code>nan</code> after a zero
+yield). With signed (NLO) weights a yield can be negative and a ratio can lie
+outside <code>[0, 1]</code>; it is reported as is.</p>
+<p>Cuts apply cumulatively; a sample's own selection is the first row. Per-object
+cuts pass an event when any object passes. <code>weight</code>, <code>lumi</code> and <code>nonfinite</code>
+work as in <code>plot()</code>: events with a missing or non-finite weight are excluded
+from every row (with a warning, or an error for <code>nonfinite="error"</code>).</p>
+<h2 id="statistics-tables">Statistics tables<a class="headerlink" href="#statistics-tables" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">table</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">summarize</span><span class="p">([</span><span class="n">sig</span><span class="p">,</span> <span class="n">bkg</span><span class="p">],</span> <span class="p">[</span><span class="s2">"MET"</span><span class="p">,</span> <span class="s2">"Muon_pt"</span><span class="p">],</span> <span class="n">selection</span><span class="o">=</span><span class="s2">"nMuon &gt; 0"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="s2">"mc_weight"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">table</span><span class="p">)</span>  <span class="c1"># aligned text table</span>
+<span class="n">table</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"MET"</span><span class="p">,</span> <span class="s2">"Signal"</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span>  <span class="c1"># a Summary: entries, mean, std, sem, skewness, min, max</span>
+</code></pre></div>
+<h2 id="histograms-that-already-exist">Histograms that already exist<a class="headerlink" href="#histograms-that-already-exist" title="Permanent link">&para;</a></h2>
+<p><code>rf.plot</code>, <code>rf.histogram(s)</code> and <code>rf.plot2d</code> read histograms stored in ROOT
+files; <code>rf.plot</code> and <code>rf.plot2d</code> also draw histogram objects you already have.
+Each keeps its usual drawing options where they apply: the 1D options above
+for <code>rf.plot</code> (stacks, ratios, <code>flow</code>, ...), those of the
+<a href="#2d-histograms-and-correlations">2D section</a> for <code>rf.plot2d</code>. Options that
+need information a ready-made histogram no longer has (a selection, a weight,
+<code>stats</code> on one without statistics) are refused.</p>
+<h3 id="histograms-already-in-root-files">Histograms already in ROOT files<a class="headerlink" href="#histograms-already-in-root-files" title="Permanent link">&para;</a></h3>
+<p>Analysis frameworks often write their selections out as <code>TH1</code>/<code>TH2</code> objects,
+one file per process (FCCAnalyses' <code>&lt;process&gt;_&lt;selection&gt;_histo.root</code>, for
+instance). Name the histogram where a branch would go:</p>
+<div class="highlight"><pre><span></span><code><span class="n">samples</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"ZH"</span><span class="p">:</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"final/p8_ee_ZH_ecm240_sel1_histo.root"</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">"C3"</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
+    <span class="s2">"VV"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"final/p8_ee_WW_ecm240_sel1_histo.root"</span><span class="p">,</span> <span class="s2">"final/p8_ee_ZZ_ecm240_sel1_histo.root"</span><span class="p">],</span>
+<span class="p">}</span>
+<span class="n">rf</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span>
+    <span class="n">samples</span><span class="p">,</span>
+    <span class="s2">"leptonic_recoil_m"</span><span class="p">,</span>
+    <span class="n">bins</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+    <span class="n">stack</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">logy</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">xlabel</span><span class="o">=</span><span class="s2">"Z leptonic recoil"</span><span class="p">,</span>
+    <span class="n">unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">,</span>
+    <span class="n">style</span><span class="o">=</span><span class="n">rf</span><span class="o">.</span><span class="n">Style</span><span class="p">(</span><span class="n">com</span><span class="o">=</span><span class="mi">240</span><span class="p">,</span> <span class="n">com_unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">,</span> <span class="n">lumi</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">lumi_unit</span><span class="o">=</span><span class="s2">"ab^{-1}"</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">h</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">histogram</span><span class="p">(</span><span class="s2">"final/p8_ee_ZH_ecm240_sel0_histo.root"</span><span class="p">,</span> <span class="s2">"mz"</span><span class="p">)</span>  <span class="c1"># a hist.Hist</span>
+<span class="n">rf</span><span class="o">.</span><span class="n">plot2d</span><span class="p">(</span><span class="s2">"final/p8_ee_ZH_ecm240_sel0_histo.root"</span><span class="p">,</span> <span class="s2">"mz_recoil_2D"</span><span class="p">)</span>  <span class="c1"># a stored TH2</span>
+</code></pre></div>
+<p>A <a class="autorefs autorefs-internal" title="rootfig.Group
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Group"><code>Group</code></a> of such samples sums their stored histograms into
+one, each scaled by its sample's <code>scale</code> and luminosity factor first.</p>
+<p>The decision is made per call and is deterministic. A variable that is a bare
+name is read as a stored histogram when every sample reads files without an
+explicit <code>tree=</code> or entry range, the first file of each sample holds a <code>TH1</code> or
+<code>TH2</code> of that name, and the file has no tree or its only tree has no branch of
+that name. Anything else fills from the tree as usual: an explicit
+<code>tree=</code> always means a branch, a branch of the same name wins over a histogram,
+a file with several trees next to the histogram raises (pass <code>tree=</code> for a
+branch, or read the histogram with <code>FileSource.read_histogram</code>), and samples
+that disagree raise with the reason per sample. A histogram inside a directory
+is named by its path in backticks, like a branch with odd characters:
+<code>rf.plot("histo.root", "`selection/mz`")</code>.</p>
+<p>What a stored histogram supports:</p>
+<ul>
+<li>The files of one <code>Sample</code> are summed (they must agree on the binning);
+  <code>scale</code>, <code>color</code>, <code>is_data</code>, <code>histtype</code> and the luminosity scaling
+  (<code>Sample(xsec=..., ngen=...)</code> with <code>lumi=</code>, <code>ngen</code> may name a <code>TParameter</code>
+  or a sum-of-weights histogram in the same file) apply as for trees. A file
+  without a tree has no entries to count, so it needs <code>ngen</code>.</li>
+<li>The stored axis title is the x label unless <code>xlabel=</code>/a <code>Variable</code> label is
+  given; a <code>unit=</code> is appended to it and, as for trees, feeds the bin-width y
+  label (<code>Events / 5 GeV</code>). A title that ends in <code>[unit]</code> already supplies it.
+  A placeholder title (none, ROOT's <code>xaxis</code>, uproot's <code>Axis 0</code>) gives way to the
+  variable's name. The y axis of a <code>TH2</code> named by a single variable gets no
+  label from that name, which describes the histogram rather than the axis; as
+  for any unlabelled axis, hist shows the axis name (<code>mz_recoil_2D_y</code>) instead.
+  To label it, pass a <code>Variable</code> for <code>y</code> that names the same histogram, since
+  both axes must resolve to one stored object:
+  <code>rf.plot2d(f, "my_hist", rf.Variable("my_hist", name="recoil", label="Recoil"))</code>.
+  A <code>Variable</code> with another expression asks for a branch instead.</li>
+<li><code>bins=</code> merges the stored bins: an integer count (it must divide the stored
+  count), or edges that coincide with the stored ones (<code>(n, low, high)</code>, a
+  sequence of edges, or an <code>int</code> with <code>range=(low, high)</code>) and merge the bins
+  between them. The <code>Variable</code> written for the tree therefore also describes
+  the histogram filled from it, as its own edges or a coarser aligned set. With
+  <code>bins=None</code> the stored binning is kept. Other edges cannot be made, and an
+  explicit <code>(low, high)</code> range without a bin count cannot be applied: use
+  <code>xlim=</code> to zoom. <code>range="auto"</code> and <code>"robust"</code> have no effect on a histogram
+  that is already filled.</li>
+<li>Normalisation, stacks, ratios, <code>flow</code> and the other drawing options work
+  unchanged. Systematics of the normalisation kind (<code>{"lumi": 0.02}</code>) and
+  <code>Systematic.samples(other_files)</code> (the same histogram read from other files)
+  are supported by <code>plot</code> and <code>histograms</code>; <code>plot2d</code> ignores systematics, for
+  stored histograms as for trees.</li>
+<li><code>selection=</code>, <code>weight=</code> (on the call or the <code>Sample</code>), <code>nonfinite="error"</code>,
+  an explicit <code>(low, high)</code> range without a bin count, weight and
+  branch-replacement systematics and <code>stats=</code> need event data and raise with a
+  message that says so.</li>
+<li>A <code>TH1</code> written with <code>Sumw2</code> keeps its uncertainties; one without it arrives
+  with its bin contents as variances (uproot cannot know the weights). Negative
+  contents without <code>Sumw2</code> leave no usable variances: rootfig refuses them unless
+  <code>assume_poisson=True</code> takes the absolute contents, as for histogram objects.
+  The files of one sample may mix both kinds and may differ in their axis
+  titles; the sum has <code>Weight</code> storage and the first file's titles.</li>
+</ul>
+<h3 id="histogram-objects">Histogram objects<a class="headerlink" href="#histogram-objects" title="Permanent link">&para;</a></h3>
+<p><code>hist.Hist</code> or <a class="autorefs autorefs-internal" title="rootfig.Histogram
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Histogram"><code>Histogram</code></a> objects, one or a list, are
+drawn as they are: <code>rf.plot([h_sig, h_bkg], label=["Signal", "Background"],
+ratio=True)</code>. <code>label=</code> names plain <code>hist.Hist</code> objects (otherwise their first
+axis name is used), <code>observed=</code> takes histogram objects for the data,
+<code>variable=</code> optionally supplies the axis label, unit and <code>log</code> flag, and
+<code>rf.plot2d(h2)</code> draws a 2D one, with <code>x</code> and <code>y</code> <code>Variable</code>s optionally
+describing its axes the same way (<code>rf.plot2d(h2, rf.Variable("mass",
+label="Mass", unit="GeV"), rf.Variable("recoil", bins=6))</code>; a <code>name=</code> renames
+the axis, the histogram you passed is left untouched). As for stored histograms, <code>bins=</code> (given
+directly or on the <code>Variable</code>) merges bins: an integer count, or edges that
+coincide with the existing ones, so the <code>Variable</code> a histogram was filled with
+can be passed along with it (<code>rf.plot(rf.histogram(sample, pt), pt)</code>), also
+after normalising it, as long as it asks for the bins the histogram has. An
+explicit <code>(low, high)</code> range without a bin count and the options that fill
+from event data (<code>tree</code>, <code>selection</code>, <code>weight</code>, <code>lumi</code>, <code>systematics</code>) raise;
+<code>range="auto"</code>/<code>"robust"</code> are no-ops. <code>Histogram.variations</code> carries
+systematics instead. Stacks, sums and ratios of histograms with category axes
+(ROOT bin labels) require the same categories in the same order; the flow bins
+of such an axis hold entries of categories it does not list, which
+<code>flow="hint"</code> marks with an arrow and <code>flow="show"</code>/<code>flow="sum"</code> refuse, since
+they have no bin beyond the last category.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../batch/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Batch plotting">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Batch plotting
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../ecosystem/" class="md-footer__link md-footer__link--next" aria-label="Next: Ecosystem">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Ecosystem
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.indexes", "navigation.footer", "navigation.top", "content.code.copy", "content.tabs.link", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
