@@ -50,7 +50,7 @@ from rootfig.histograms import (
     ratio,
     significance,
 )
-from rootfig.model import Cut, Sample, Style, Systematic, Variable, log_bins
+from rootfig.model import Cut, Group, Sample, Style, Systematic, Variable, log_bins
 from rootfig.plotting import Plot, dark_theme, use_style
 
 __version__ = "0.6.0"
@@ -62,6 +62,7 @@ __all__ = [
     "CutflowTable",
     "Efficiency",
     "ExpressionError",
+    "Group",
     "Histogram",
     "IncompatibleWeightError",
     "LuminosityError",

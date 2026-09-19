@@ -136,7 +136,7 @@ def plot2d(
         if x is None:
             msg = "plot2d() needs the x and y variables, or the name of a stored 2D histogram"
             raise TypeError(msg)
-        sample = single_sample(data, tree=tree)
+        sample = single_sample(data, function="plot2d()", tree=tree)
         var_x = as_variable(x, bins=x_bins)
         if y is not None:
             var_y = as_variable(y, bins=y_bins)
@@ -227,7 +227,7 @@ def correlation(
     with an ``experiment`` draws that experiment's label above the matrix
     instead, and an explicit ``title`` is always shown.
     """
-    sample = single_sample(data, tree=tree)
+    sample = single_sample(data, function="correlation()", tree=tree)
     var_list = [as_variable(v) for v in variables]
     if len(var_list) < 2:
         msg = "correlation() needs at least two variables"

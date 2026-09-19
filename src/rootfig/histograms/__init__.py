@@ -3,6 +3,7 @@
 from rootfig.histograms.build import Histogram, as_weight_storage, fill, from_sample
 from rootfig.histograms.cutflow import Cutflow, CutflowStep, CutflowTable, cutflow
 from rootfig.histograms.efficiency import Efficiency, Profile, ProfileStatistic, efficiency, profile
+from rootfig.histograms.groups import group_histogram, regroup_histograms
 from rootfig.histograms.normalize import (
     NormalizeSpec,
     normalization_label,
@@ -60,6 +61,7 @@ __all__ = [
     "efficiency",
     "fill",
     "from_sample",
+    "group_histogram",
     "load_columns",
     "load_columns_each",
     "normalization_label",
@@ -69,6 +71,7 @@ __all__ = [
     "ratio",
     "read_arrays",
     "read_stored",
+    "regroup_histograms",
     "significance",
     "source_length",
     "stored_mode",

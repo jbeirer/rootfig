@@ -25,8 +25,9 @@ from rootfig.model import (
     RangeSpec,
     SystematicLike,
     Variable,
-    as_samples,
+    as_plot_items,
     as_variable,
+    map_samples,
 )
 from rootfig.selection import NonFinitePolicy, boolean_mask, depth_of
 
@@ -69,7 +70,9 @@ def load(
     awkward.Array
         A record array with one field per expression.
     """
-    sample = single_sample(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
+    sample = single_sample(
+        data, function="load()", tree=tree, entry_start=entry_start, entry_stop=entry_stop
+    )
     available = sample.source.branches()
     if expressions is None:
         fields: dict[str, str] = {name: f"`{name}`" for name in available}
@@ -118,7 +121,7 @@ def histograms(
     systematics: Mapping[str, SystematicLike] | None = None,
     assume_poisson: bool = False,
 ) -> list[Histogram]:
-    """Fill one :class:`~rootfig.histograms.Histogram` per sample with shared binning.
+    """Fill one :class:`~rootfig.histograms.Histogram` per sample or group with shared binning.
 
     See :func:`plot` for the meaning of the arguments; this function stops
     before drawing. An integer ``bins`` without a ``range`` infers one robustly
@@ -128,10 +131,10 @@ def histograms(
     a histogram stored in the files is read instead of filled, as in
     :func:`plot`.
     """
-    samples = as_samples(data, tree=tree, labels=label)
+    items = as_plot_items(data, tree=tree, labels=label)
     var = as_variable(variable, bins=bins, range=range)
     hists = build_histograms(
-        samples,
+        items,
         var,
         selection=selection,
         weight=weight,
@@ -161,10 +164,11 @@ def histogram(
 ) -> Hist:
     """Fill a single histogram and return it as a plain ``hist.Hist``.
 
-    See :func:`plot` for the arguments. An integer ``bins`` without a ``range``
-    infers one robustly (``range="auto"`` for the full finite minimum and
-    maximum). A ``variable`` naming a histogram stored in the file returns
-    that histogram (summed over the files, in ``Weight`` storage).
+    See :func:`plot` for the arguments. ``data`` is one sample or one
+    :class:`~rootfig.model.Group`, whose samples are summed. An integer ``bins``
+    without a ``range`` infers one robustly (``range="auto"`` for the full finite
+    minimum and maximum). A ``variable`` naming a histogram stored in the file
+    returns that histogram (summed over the files, in ``Weight`` storage).
 
     Examples
     --------
@@ -173,9 +177,12 @@ def histogram(
     ... )  # doctest: +SKIP
     >>> h.values().sum()  # doctest: +SKIP
     """
-    samples = [sample.replace(systematics={}) for sample in as_samples(data, tree=tree)]
+    items = [
+        map_samples(item, lambda s: s.replace(systematics={}))
+        for item in as_plot_items(data, tree=tree)
+    ]
     results = histograms(
-        samples,
+        items,
         variable,
         tree=tree,
         selection=selection,
@@ -188,6 +195,9 @@ def histogram(
         assume_poisson=assume_poisson,
     )
     if len(results) != 1:
-        msg = f"histogram() takes a single sample, got {len(results)}; use histograms() instead"
+        msg = (
+            f"histogram() takes a single sample or group, got {len(results)}; use "
+            "histograms() instead"
+        )
         raise SourceError(msg)
     return results[0].hist

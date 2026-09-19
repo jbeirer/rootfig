@@ -34,16 +34,19 @@ from rootfig.histograms import (
     correlation_matrix,
     describe_table,
     fill,
+    from_sample,
+    group_histogram,
     load_columns,
     normalization_label,
     normalize,
     normalize_hist,
     ratio,
+    regroup_histograms,
     sum_histograms,
     summarize,
     uncertainty,
 )
-from rootfig.model import Cut, Sample, Systematic, Variable
+from rootfig.model import Cut, Group, Sample, Systematic, Variable
 from rootfig.selection import Columns, prepare
 
 
@@ -2043,3 +2046,169 @@ class TestStoredHistograms:
             Variable("mz_recoil_2D", label="Recoil", unit="GeV"),
         )
         assert [a.label for a in h.hist.axes] == ["Mass", "Recoil [GeV]"]
+
+
+class TestGroupedHistograms:
+    @staticmethod
+    def _sample(values: list[float], label: str, **kwargs: Any) -> Sample:
+        return Sample({"x": values, "w": [2.0] * len(values)}, label=label, **kwargs)
+
+    def test_group_is_the_sum_of_its_samples(self) -> None:
+        a = self._sample([0.2, 0.4], "A", color="C1")
+        b = self._sample([0.6, 0.8], "B")
+        group = Group([a, b], label="AB", color="C0", histtype="fill")
+        (h,) = build_histograms([group], Variable("x", bins=(4, 0, 1)))
+        ha, hb = build_histograms([a, b], Variable("x", bins=(4, 0, 1)))
+        np.testing.assert_allclose(h.values(), ha.values() + hb.values())
+        np.testing.assert_allclose(h.variances(), ha.variances() + hb.variances())
+        assert (h.label, h.color, h.histtype) == ("AB", "C0", "fill")
+        assert (h.sample, h.stats, h.entries, h.per_object) == (None, None, None, False)
+        assert not h.is_data
+
+    def test_top_level_order_is_kept(self) -> None:
+        a, b, s = self._sample([0.1], "A"), self._sample([0.2], "B"), self._sample([0.9], "S")
+        group = Group([a, b], label="AB")
+        var = Variable("x", bins=(2, 0, 1))
+        assert [h.label for h in build_histograms([group, s], var)] == ["AB", "S"]
+        assert [h.label for h in build_histograms([s, group], var)] == ["S", "AB"]
+        (h,) = build_histograms([Group([group, s], label="All")], var)
+        np.testing.assert_allclose(h.values(), [2.0, 1.0])
+
+    def test_binning_is_shared_by_every_leaf(self) -> None:
+        low = self._sample([0.0, 1.0, 2.0], "low")
+        high = self._sample([100.0, 101.0, 102.0], "high")
+        alone = self._sample([50.0], "alone")
+        grouped, single = build_histograms(
+            [Group([low, high], label="G"), alone], Variable("x", bins=10, range="auto")
+        )
+        assert (grouped.edges[0], grouped.edges[-1]) == pytest.approx((0.0, 102.0), abs=0.2)
+        np.testing.assert_allclose(single.edges, grouped.edges)
+        assert grouped.integral == 6.0  # nothing in the flow bins
+
+    def test_each_sample_keeps_its_scaling_selection_and_weight(self) -> None:
+        a = self._sample([0.3, 0.5, 0.5, 0.5], "A", xsec="2 pb", ngen=1000, selection="x > 0.4")
+        b = self._sample([0.5, 0.5], "B", xsec="8 pb", ngen=100, weight="w", scale=3.0)
+        (h,) = build_histograms(
+            [Group([a, b], label="AB")], Variable("x", bins=(1, 0, 1)), lumi=1.0
+        )
+        # per entry: xsec [pb] * 1e3 * lumi [fb^-1] / ngen, times weight and scale
+        assert h.integral == pytest.approx(3 * 2.0 + 2 * 2.0 * 3.0 * 80.0)
+
+    def test_systematics_combine_as_a_sum(self) -> None:
+        a = self._sample([0.5], "A", systematics={"lumi": 0.10, "gen": 0.50})
+        b = self._sample([0.5, 0.5], "B", systematics={"lumi": 0.10})
+        (h,) = build_histograms(
+            [Group([a, b], label="AB")],
+            Variable("x", bins=(1, 0, 1)),
+            systematics={"theory": (1.2, 0.9)},
+        )
+        assert set(h.variations) == {"lumi", "gen", "theory"}
+        np.testing.assert_allclose(h.variations["lumi"][0].values(), [3.3])  # linear: 1.1 + 2.2
+        np.testing.assert_allclose(h.variations["lumi"][1].values(), [2.7])
+        np.testing.assert_allclose(h.variations["gen"][0].values(), [1.5 + 2.0])  # B: its nominal
+        np.testing.assert_allclose(h.variations["gen"][1].values(), [0.5 + 2.0])
+        np.testing.assert_allclose(h.variations["theory"][0].values(), [3.6])
+        np.testing.assert_allclose(uncertainty(h).syst_up, [np.sqrt(0.3**2 + 0.5**2 + 0.6**2)])
+        normalised = normalize(h, True)  # the sum, then each variation by its own total
+        assert normalised.integral == pytest.approx(1.0)
+        np.testing.assert_allclose(normalised.variations["gen"][0].values(), [1.0])
+
+    def test_data_group(self) -> None:
+        d1 = self._sample([0.5], "D1", is_data=True)
+        d2 = self._sample([0.5], "D2", is_data=True)
+        (h,) = build_histograms(
+            [Group([d1, d2], label="Data")],
+            Variable("x", bins=(1, 0, 1)),
+            systematics={"lumi": 0.1},
+        )
+        assert h.is_data
+        assert not h.variations
+        np.testing.assert_allclose(h.values(), [2.0])
+
+    def test_stored_histograms_are_summed(self, stored_dir: Path) -> None:
+        vv = Group(
+            [
+                Sample(stored_dir / "WW_sel0_histo.root", label="WW"),
+                Sample(stored_dir / "ZZ_sel0_histo.root", label="ZZ"),
+            ],
+            label="VV",
+            color="C0",
+        )
+        zh = Sample(stored_dir / "ZH_sel0_histo.root", label="ZH")
+        h_vv, h_zh = build_histograms([vv, zh], Variable("mz", bins=50))
+        assert (h_vv.label, h_vv.color, h_vv.axis.size) == ("VV", "C0", 50)
+        assert h_vv.sum_weights == pytest.approx(0.5 * 3000)
+        assert h_zh.sum_weights == pytest.approx(0.5 * 4000)
+        other = Group(
+            [Sample(stored_dir / "ZH_sel0_histo.root"), Sample(stored_dir / "other_binning.root")],
+            label="G",
+        )
+        with pytest.raises(BinningError, match="different bin edges") as info:
+            build_histograms([other], "mz")
+        assert "group 'G'" in "".join(info.value.__notes__)
+
+    def test_group_histogram_and_regroup(self) -> None:
+        a = Histogram(contents([1.0, 2.0]), label="A", color="C1", per_object=True)
+        b = Histogram(contents([3.0, 4.0]), label="B")
+        group = Group(
+            [Sample({"x": [1.0]}, label="A"), Sample({"x": [1.0]}, label="B")], label="AB"
+        )
+        sample = Sample({"x": [1.0]}, label="S")
+        h = group_histogram(group, [a, b])
+        np.testing.assert_allclose(h.values(), [4.0, 6.0])
+        assert (h.label, h.color, h.histtype, h.sample) == ("AB", None, None, None)
+        assert h.per_object  # any component
+        regrouped = regroup_histograms([group, sample], [a, b, a])
+        assert regrouped[1] is a
+        np.testing.assert_allclose(regrouped[0].values(), [4.0, 6.0])
+        with pytest.raises(ValueError, match="got 2 histograms for 3 samples"):
+            regroup_histograms([group, sample], [a, b])
+
+    @pytest.mark.parametrize("count", [0, 1, 3])
+    def test_group_histogram_requires_one_histogram_per_leaf(self, count: int) -> None:
+        sample = Sample({"x": [0.5]}, label="A")
+        inner = Group([sample, sample.replace(label="B")], label="AB")
+        group = Group([inner], label="outer")
+        h = Histogram(contents([1.0, 2.0]), label="A")
+        with pytest.raises(ValueError, match=f"got {count} histograms for 2 samples"):
+            group_histogram(group, [h] * count)
+        np.testing.assert_allclose(group_histogram(group, [h, h]).values(), [2.0, 4.0])
+
+    def test_only_top_level_samples_are_summarised(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rootfig.histograms import pipeline
+
+        summarised: list[str] = []
+
+        def counting(columns: Columns) -> Summary:
+            summarised.append(str(columns.n_entries))
+            return summarize(columns)
+
+        monkeypatch.setattr(pipeline, "summarize", counting)
+        jagged = Sample({"pt": ak.Array([[1.0, 2.0], [3.0], []])}, label="A")
+        flat = Sample({"pt": [1.0, 2.0]}, label="F")
+        var = Variable("pt", bins=(4, 0, 4))
+        grouped, single = build_histograms(
+            [Group([jagged, jagged.replace(label="B")], label="AB"), flat], var
+        )
+        assert summarised == ["2"]  # the flat sample only
+        assert grouped.per_object
+        assert not single.per_object
+        assert grouped.stats is None
+        assert single.entries == 2
+        # the same sample inside a group and on its own: summarised once, for the latter
+        summarised.clear()
+        grouped, alone = build_histograms([Group([jagged, flat], label="G"), jagged], var)
+        assert summarised == ["3"]
+        assert grouped.stats is None
+        assert alone.entries == 3
+
+    def test_per_object_follows_statistics_and_sums(self) -> None:
+        stats = summarize(prepare({"pt": ak.Array([[1.0, 2.0], [3.0]])}, ["pt"]))
+        assert stats.per_object
+        h = Histogram(contents([1.0, 2.0]), "A", stats=stats)
+        assert h.per_object
+        assert not Histogram(contents([1.0, 2.0]), "B", stats=stats, per_object=False).per_object
+        assert not Histogram(contents([1.0, 2.0]), "C").per_object
+        assert from_sample(Sample({"pt": [1.0]}), contents([1.0, 2.0]), stats=stats).per_object
+        assert sum_histograms([h, Histogram(contents([1.0, 2.0]), "D")]).per_object
+        assert not sum_histograms([Histogram(contents([1.0, 2.0]), "D")]).per_object
