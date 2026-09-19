@@ -20,13 +20,27 @@ class ReadCache:
     builds over them, share one read. :meth:`arrays` reads only the names it
     does not hold yet and keeps them, so the cache can be warmed with the union
     of what a batch will need (:func:`rootfig.histograms.prefetch`) or simply
-    fill as histograms are built. In-memory and third-party sources are not
-    cached; callers read those directly. Drop the cache to release what it holds.
+    fill as histograms are built. :meth:`source` hands out one instance per
+    value, so what a source learns about its files is learnt once too.
+    In-memory and third-party sources are not cached; callers read those
+    directly. Drop the cache to release what it holds.
     """
 
     def __init__(self) -> None:
+        self._sources: dict[FileSource, FileSource] = {}
         self._arrays: dict[FileSource, dict[str, ak.Array]] = {}
         self._histograms: dict[tuple[FileSource, str, bool], Hist] = {}
+
+    def source(self, source: FileSource) -> FileSource:
+        """Return the instance held for ``source``'s value, adopting ``source`` if it is the first.
+
+        A :class:`FileSource` keeps what it learns about its files (branches,
+        objects, tree, entry count, scalars) on the instance. Sources rebuilt
+        from the same paths for every histogram, such as raw paths given as
+        ``data`` or the files of a ``Systematic.samples`` variation, read through
+        the first instance and so learn it once.
+        """
+        return self._sources.setdefault(source, source)
 
     def arrays(self, source: FileSource, branches: Sequence[str]) -> dict[str, ak.Array]:
         """Return ``branches`` of ``source``, reading the ones not held yet.

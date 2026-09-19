@@ -9,6 +9,7 @@ the branches of several variables together.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,7 +22,6 @@ from rootfig.api._hists import (
     unit_of,
     wrap_histograms,
 )
-from rootfig.errors import RootfigError
 from rootfig.histograms import (
     SIGNIFICANCE_KINDS,
     Histogram,
@@ -443,14 +443,17 @@ def prefetch_plots(
 
     ``options`` are the keywords of :func:`prepare_plot`; those deciding what
     is read (``tree``, ``label``, ``observed``, ``weight``, ``systematics``,
-    ``assume_poisson``) are used, the others are accepted and ignored. Best
-    effort, like :func:`~rootfig.histograms.prefetch`: nothing is read for
-    histogram objects or for ``data`` :func:`prepare_plot` will refuse, which
-    then reads and reports it for its own call.
+    ``assume_poisson``) are used, the others are accepted and ignored. An
+    optimisation only, so it never raises: nothing is read for histogram
+    objects, and whatever :func:`prepare_plot` will refuse, an unusable
+    ``data`` or ``label`` as much as an unknown branch, is left to the call
+    that needs it, which raises the error for its own task.
     """
     if histogram_objects(data) is not None:
         return
-    try:
+    # Every exception, not only rootfig's: a bad option of one task must not surface while
+    # the histograms of another are being read ahead (see histograms.prefetch for the reads).
+    with suppress(Exception):
         items = _items(
             data,
             tree=options.get("tree"),
@@ -458,17 +461,15 @@ def prefetch_plots(
             observed=options.get("observed"),
         )
         wanted = [as_variable(variable) for variable in variables]
-    except RootfigError:
-        return
-    prefetch(
-        cache,
-        items,
-        wanted,
-        selections=selections,
-        weight=options.get("weight"),
-        systematics=options.get("systematics"),
-        assume_poisson=bool(options.get("assume_poisson", False)),
-    )
+        prefetch(
+            cache,
+            items,
+            wanted,
+            selections=selections,
+            weight=options.get("weight"),
+            systematics=options.get("systematics"),
+            assume_poisson=bool(options.get("assume_poisson", False)),
+        )
 
 
 def draw_plot(

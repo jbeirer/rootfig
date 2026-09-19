@@ -24,6 +24,7 @@ from rootfig.errors import MissingBranchError, SourceError, SystematicError, ann
 from rootfig.expressions import Expression, parse
 from rootfig.histograms.build import Histogram, fill, from_sample, mirror
 from rootfig.histograms.groups import regroup_histograms
+from rootfig.histograms.sources import shared_source
 from rootfig.histograms.stats import summarize
 from rootfig.histograms.stored import read_stored, stored_mode
 from rootfig.io import ArraySource, FileSource, ReadCache, Source, as_source
@@ -242,7 +243,7 @@ def build_histograms(
     from the same files read them once; the result does not depend on it.
     """
     var = as_variable(variable)
-    samples = leaf_samples(items)
+    samples = [shared_source(s, cache) for s in leaf_samples(items)]
     if stored_mode(samples, [var]):
         stored = read_stored(
             samples,
@@ -368,7 +369,7 @@ def _load_with_variations(
                 elif syst.kind == "norm":
                     shifts.append(float(spec))
                 elif syst.kind == "samples":
-                    variant = _variant_sample(sample, spec, context)
+                    variant = _variant_sample(sample, spec, context, cache=cache)
                     shifts.append(
                         load_columns(
                             variant,
@@ -466,15 +467,19 @@ def _in_variation(context: str) -> AbstractContextManager[None]:
     return annotate(f"while evaluating the systematic variation {context}")
 
 
-def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
+def _variant_sample(
+    sample: Sample, spec: Any, context: str, *, cache: ReadCache | None = None
+) -> Sample:
     """Return the sample a ``Systematic.samples`` variation reads: ``spec``, or its data.
 
     It is labelled ``context`` so its warnings and errors name the variation. Data
     that cannot look up a string ``ngen`` itself (in-memory arrays) takes the
-    nominal sample's resolved number of generated events; files read their own.
+    nominal sample's resolved number of generated events; files read their own,
+    through the instance ``cache`` holds for them
+    (:func:`~rootfig.histograms.shared_source`).
     """
     if isinstance(spec, Sample):
-        return spec.replace(label=context)
+        return shared_source(spec.replace(label=context), cache)
     nominal = sample.source
     try:
         if isinstance(nominal, FileSource | ArraySource) and (
@@ -503,7 +508,7 @@ def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
         and not callable(getattr(source, "read_scalar", None))
     ):
         changes["ngen"] = sample.generated_events()
-    return sample.replace(**changes)
+    return shared_source(sample.replace(**changes), cache)
 
 
 def _is_file_spec(spec: Any) -> bool:

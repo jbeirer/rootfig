@@ -22,6 +22,7 @@ from typing import Any
 from rootfig._typing import Hist
 from rootfig.errors import SelectionError, SourceError, SystematicError, annotate
 from rootfig.histograms.build import Histogram, from_sample
+from rootfig.histograms.sources import shared_source
 from rootfig.io import FileSource, ReadCache
 from rootfig.io.objects import is_tree_class
 from rootfig.model.binning import merge_target
@@ -405,7 +406,7 @@ def _variation(
         else:
             context = f"{sample.label} [{syst_name} {direction}]"
             with annotate(f"while evaluating the systematic variation {context}"):
-                variant = _variant_sample(sample, spec, context)
+                variant = _variant_sample(sample, spec, context, cache=cache)
                 source = _stored_source(variant, name, variation=True)
                 shifts.append(
                     _read_scaled(
@@ -423,10 +424,16 @@ def _variation(
     return up, shifts[1]
 
 
-def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
-    """Return the sample a ``Systematic.samples`` variation reads: other files, nominal settings."""
+def _variant_sample(
+    sample: Sample, spec: Any, context: str, *, cache: ReadCache | None = None
+) -> Sample:
+    """Return the sample a ``Systematic.samples`` variation reads: other files, nominal settings.
+
+    Its files are read through the instance ``cache`` holds for them
+    (:func:`~rootfig.histograms.shared_source`).
+    """
     if isinstance(spec, Sample):
-        return spec.replace(label=context, systematics={})
+        return shared_source(spec.replace(label=context, systematics={}), cache)
     if isinstance(spec, str | PathLike) or (
         isinstance(spec, list | tuple) and all(isinstance(f, str | PathLike) for f in spec)
     ):
@@ -435,6 +442,6 @@ def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
         except SourceError as exc:
             msg = f"{context}: cannot use {spec!r} as varied data: {exc}"
             raise SystematicError(msg) from exc
-        return sample.replace(source=source, systematics={}, label=context)
+        return shared_source(sample.replace(source=source, systematics={}, label=context), cache)
     msg = f"{context}: a stored histogram takes its variations from other ROOT files, not {spec!r}"
     raise SystematicError(msg)

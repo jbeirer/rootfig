@@ -7,6 +7,7 @@ from contextlib import suppress
 
 from rootfig.errors import RootfigError
 from rootfig.histograms.pipeline import _read_plan, _sample_systematics, branch_names
+from rootfig.histograms.sources import shared_source
 from rootfig.histograms.stored import _stored_name, _stored_source, stored_mode
 from rootfig.io import FileSource, ReadCache
 from rootfig.model.cuts import CutLike
@@ -41,7 +42,7 @@ def prefetch(
     it as it would without a cache. The variations of ``Systematic.samples``
     read their own files and are not planned; the cache keeps what they read.
     """
-    samples = leaf_samples(items)
+    samples = [shared_source(sample, cache) for sample in leaf_samples(items)]
     try:
         plot_level = as_systematics(systematics, "plot")
     except RootfigError:

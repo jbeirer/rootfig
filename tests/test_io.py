@@ -560,6 +560,21 @@ class TestBatchReads:
         assert len(calls) == 3
         assert h.values(flow=True).sum() == pytest.approx(0.5 * 2000)
 
+    def test_read_cache_hands_out_one_source_per_value(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opens = _opens(monkeypatch)
+        cache = ReadCache()
+        first = FileSource(signal_file, tree="events")
+        assert cache.source(first) is first
+        again = FileSource(signal_file, tree="events")
+        assert cache.source(again) is first  # equal by value: the first instance is kept
+        other = FileSource(signal_file, tree="events", entry_stop=10)
+        assert cache.source(other) is other
+        assert cache.source(first).branches() == first.branches()
+        assert cache.source(again).branches() == first.branches()
+        assert opens == ["signal.root"]  # what the first instance learnt serves both
+
     def test_read_scalar_is_cached(self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         opens = _opens(monkeypatch)
         source = FileSource(stored_dir / "WW_sel0_histo.root")

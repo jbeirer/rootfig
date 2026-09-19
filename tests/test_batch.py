@@ -1035,6 +1035,52 @@ class TestBatching:
             "while running PlotBook task variable='nosuch', selection='all', variant='default'"
         ]
 
+    def test_a_bad_variant_fails_at_its_own_task(self, files: list[rf.Sample]) -> None:
+        # label=[123] is a TypeError, not a rootfig error: reading ahead for the good variant
+        # must not surface it, and it must carry the bad variant's note when its task runs.
+        book = rf.PlotBook(files[0], ["MET"], variants={"good": {}, "bad": {"label": [123]}})
+        plots = book.plots()
+        _, good = next(plots)
+        assert_same_plot(good, rf.plot(files[0], "MET"))
+        with pytest.raises(TypeError, match="label must be a string") as info:
+            next(plots)
+        assert info.value.__notes__ == [
+            "while running PlotBook task variable='MET', selection='all', variant='bad'"
+        ]
+
+    def test_raw_paths_learn_their_files_once(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        variables = ["MET", "Muon_pt", "nMuon"]
+        opens = _opens(monkeypatch)
+        list(rf.PlotBook(str(signal_file), variables, plot_kwargs={"tree": "events"}).plots())
+        from_paths = opens.count("signal.root")
+        del opens[:]
+        list(rf.PlotBook(rf.Sample(signal_file, tree="events"), variables).plots())
+        # a path rebuilds its FileSource for every task; the cache hands out the first one
+        assert from_paths == opens.count("signal.root")
+
+    def test_variation_files_learn_their_files_once(
+        self, signal_file: Path, background_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        variables = ["MET", "Muon_pt", "nMuon"]
+        opens = _opens(monkeypatch)
+        by_path = rf.Sample(
+            signal_file,
+            tree="events",
+            systematics={"alt": rf.Systematic.samples(background_file)},
+        )
+        results = list(rf.PlotBook(by_path, variables).plots())
+        from_paths = opens.count("background.root")
+        del opens[:]
+        by_sample = by_path.replace(
+            systematics={"alt": rf.Systematic.samples(rf.Sample(background_file, tree="events"))}
+        )
+        list(rf.PlotBook(by_sample, variables).plots())
+        assert from_paths == opens.count("background.root")
+        for task, result in results:
+            assert_same_plot(result, rf.plot(by_path, task.variable))
+
     def test_replace_systematic_missing_branch_fails_only_where_used(
         self, signal_file: Path
     ) -> None:
