@@ -129,8 +129,13 @@ met = rf.Variable(
   [Binning and range](plotting.md#binning-and-range).
 - `label` and `unit` form the axis label `label [unit]`; the unit also appears
   in the automatic y label (`Events / 4 GeV`).
-- `name` is used for file names by `Plot.save(directory)`; it must be a plain
-  file stem (no path separators).
+- `name` is used for file names by `Plot.save(directory)` and `PlotBook`; it
+  must be a file name component on every platform: no slash, control character
+  or `<>:"|?*`, no trailing dot or space, and not a Windows device name such as
+  `CON` ([`check_file_stem`][rootfig.model.check_file_stem]). Without it the
+  expression is reduced to one with
+  [`safe_file_stem`][rootfig.model.safe_file_stem]: `Muon_pt / 1000` names its
+  files `Muon_pt_1000`, and `CON` names them `CON_`.
 
 `bins`, `range`, `xlabel` and `unit` given to `plot()` override the variable.
 
@@ -192,4 +197,17 @@ for var in variables:
     p = rf.plot(samples, var, observed=data, selection=sr, stack=True, ratio=True, style=atlas)
     p.save("plots/")  # plots/Muon_pt.pdf, plots/met.pdf, plots/nMuon.pdf
     p.close()
+```
+
+The same loop over several selections and drawing variants, with deterministic
+file names, is what [`rf.PlotBook`](batch.md) does:
+
+```python
+rf.PlotBook(
+    samples,
+    variables,
+    selections={"baseline": base, "sr": sr},
+    variants={"lin": {}, "log": {"logy": True}},
+    plot_kwargs={"observed": data, "stack": True, "ratio": True, "style": atlas},
+).save("plots/")  # plots/Muon_pt__sr__log.pdf, ...
 ```

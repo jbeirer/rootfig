@@ -22,6 +22,7 @@ samples, normalisation, ratio panels and good defaults.
   experiment's style
 - [Expressions and selections](expressions.md)
 - [Samples, variables, cuts and styles](composable.md)
+- [Batch plotting](batch.md): many plots from one description
 - [Plotting options](plotting.md)
 - [Relation to the ecosystem](ecosystem.md)
 - [API reference](api.md)

@@ -24,9 +24,11 @@ __all__ = [
     "Layout",
     "apply_xbreak",
     "break_segments",
+    "close_figures_since",
     "finish_axes",
     "fit_ylabel",
     "make_figure",
+    "open_figure_ids",
     "ylabel_for",
 ]
 
@@ -555,3 +557,18 @@ def _extent(artist: Artist, renderer: Any) -> Any:
     if bbox.width <= 0 or bbox.height <= 0:
         return None
     return bbox
+
+
+def open_figure_ids() -> frozenset[int]:
+    """Return the numbers of the figures pyplot currently holds.
+
+    Paired with :func:`close_figures_since` to clean up after a drawing call that
+    raised: the figure it had already created is otherwise kept alive by pyplot.
+    """
+    return frozenset(plt.get_fignums())
+
+
+def close_figures_since(before: frozenset[int]) -> None:
+    """Close every figure pyplot gained since ``before`` was taken."""
+    for number in sorted(frozenset(plt.get_fignums()) - before):
+        plt.close(number)

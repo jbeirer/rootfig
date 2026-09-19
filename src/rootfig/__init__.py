@@ -7,12 +7,15 @@ The quick path::
     rf.plot("events.root", "Muon_pt", tree="events", selection="Muon_pt > 20", bins=50)
 
 The composable path uses :class:`Sample`, :class:`Variable`, :class:`Cut` and
-:class:`Style` objects with the same :func:`plot` function. Lower layers are
+:class:`Style` objects with the same :func:`plot` function; :class:`PlotBook`
+runs it over many variables, selections and variants. Lower layers are
 exposed as sub-packages: :mod:`rootfig.io`, :mod:`rootfig.expressions`,
 :mod:`rootfig.selection`, :mod:`rootfig.histograms`, :mod:`rootfig.plotting`.
 """
 
 from rootfig.api import (
+    PlotBook,
+    PlotTask,
     SummaryTable,
     correlation,
     cutflow,
@@ -68,6 +71,8 @@ __all__ = [
     "LuminosityError",
     "MissingBranchError",
     "Plot",
+    "PlotBook",
+    "PlotTask",
     "Profile",
     "Ratio",
     "RootfigError",

@@ -33,6 +33,7 @@ nav:
   - Gallery: gallery/index.md  # docs/hooks/gallery.py adds a page per example, by section
   - Expressions and selections: expressions.md
   - Samples, variables, cuts and styles: composable.md
+  - Batch plotting: batch.md
   - Plotting options: plotting.md
   - Ecosystem: ecosystem.md
   - API reference: api.md

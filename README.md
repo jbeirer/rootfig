@@ -130,6 +130,21 @@ vv = rf.Group([ww, zz], label="VV")
 rf.plot([vv, signal], pt, observed=data, stack=True, ratio=True, style=style)
 ```
 
+Whole sets of plots, every variable under each selection in every drawing
+variant, are one `rf.PlotBook`: it runs that same `rf.plot` call per
+combination and writes deterministically named files:
+
+```python
+book = rf.PlotBook(
+    [vv, signal],
+    [pt, rf.Variable("MET", bins=(40, 0, 200), unit="GeV")],
+    selections={"baseline": baseline, "sr": baseline & "MET > 50"},
+    variants={"lin": {}, "log": {"logy": True}},
+    plot_kwargs={"observed": data, "stack": True, "ratio": True, "style": style},
+)
+book.save("plots/", formats=["pdf", "png"])  # plots/Muon_pt__sr__log.pdf, ...
+```
+
 ## What you can do
 
 - **Select events and objects with readable expressions.** Write cuts such as
@@ -148,6 +163,9 @@ rf.plot([vv, signal], pt, observed=data, stack=True, ratio=True, style=style)
   accessible.
 - **Style figures for your analysis.** Add experiment labels, units, log axes
   and broken axes, then refine the result with matplotlib.
+- **Produce whole sets of plots.** `rf.PlotBook` runs one `rf.plot` call over
+  variables × selections × variants, lazily, and saves each under a
+  deterministic name; filter it down with `select()` while iterating on a plot.
 - **Go beyond 1D plots.** Draw 2D histograms, correlations, efficiencies,
   profiles, resolutions and significance panels; produce cut flows and
   summary statistics from the same inputs.

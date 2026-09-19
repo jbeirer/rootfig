@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.backend_bases import FigureCanvasBase
 from matplotlib.figure import Figure
 
 from rootfig.errors import BinningError
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
     from rootfig.histograms import Efficiency, Histogram, Profile, Ratio, Uncertainty
     from rootfig.model import Variable
 
-__all__ = ["Plot"]
+__all__ = ["Plot", "normalize_formats"]
 
 
 @dataclass
@@ -181,3 +182,30 @@ class Plot:
         labels = ", ".join(repr(h.label) for h in self.histograms)
         panels = "main+ratio" if self.ratio_ax is not None else "main"
         return f"Plot(histograms=[{labels}], panels={panels})"
+
+
+def normalize_formats(formats: str | Sequence[str]) -> tuple[str, ...]:
+    """Validate output formats and return them lower-cased, in order, without duplicates.
+
+    One format may be given bare (``"png"``), a leading dot is accepted
+    (``".png"``) and the order is kept. Anything matplotlib cannot write, and an
+    empty list, raises :class:`ValueError` here rather than part way through a
+    batch of figures.
+    """
+    names: list[object] = [formats] if isinstance(formats, str) else list(formats)
+    supported = FigureCanvasBase.get_supported_filetypes()
+    chosen: dict[str, None] = {}
+    for name in names:
+        if not isinstance(name, str):
+            msg = f"formats= must contain strings, got {type(name).__name__}"
+            raise TypeError(msg)
+        suffix = name.lstrip(".").lower()
+        if suffix not in supported:
+            known = ", ".join(sorted(supported))
+            msg = f"unknown output format {name!r}; matplotlib writes {known}"
+            raise ValueError(msg)
+        chosen[suffix] = None
+    if not chosen:
+        msg = "formats= must name at least one output format, e.g. formats=['pdf', 'png']"
+        raise ValueError(msg)
+    return tuple(chosen)

@@ -13,6 +13,7 @@ from rootfig.model.binning import (
     resolve_axis,
 )
 from rootfig.model.cuts import Cut, CutLike, as_cut
+from rootfig.model.filenames import check_file_stem, safe_file_stem
 from rootfig.model.groups import Group
 from rootfig.model.inputs import PlotItem, as_plot_items, as_samples, leaf_samples, map_samples
 from rootfig.model.samples import Sample
@@ -50,9 +51,11 @@ __all__ = [
     "as_systematics",
     "as_variable",
     "auto_range",
+    "check_file_stem",
     "leaf_samples",
     "log_bins",
     "map_samples",
     "merge_target",
     "resolve_axis",
+    "safe_file_stem",
 ]
