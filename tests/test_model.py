@@ -174,6 +174,8 @@ class TestFileStem:
             ("CONOUT$", "'CONOUT$' is a reserved device name", "; 'CONOUT' would work"),
             ("COM¹", "'COM¹' is a reserved device name", "; 'COM' would work"),
             ("lpt³.x", "'lpt³' is a reserved device name", "; 'lpt_x' would work"),
+            ("NUL .txt", "'NUL' is a reserved device name", "; 'NUL_txt' would work"),
+            ("com1 .root", "'com1' is a reserved device name", "; 'com1_root' would work"),
             # The suggestion is itself checked: stripping the bad part must not leave a device.
             ("CON.", "end with a dot or a space", "; 'CON_' would work"),
             ("COM1:", "it holds ':'", "; 'COM1_' would work"),

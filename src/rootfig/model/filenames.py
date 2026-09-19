@@ -31,7 +31,7 @@ def _unusable(value: str) -> str | None:
     if bad:
         shown = ", ".join(repr(c) for c in bad)
         return f'it holds {shown}; control characters, slashes and <>:"|?* are not allowed'
-    device = value.split(".", 1)[0]
+    device = value.split(".", 1)[0].rstrip(" ")  # "NUL .txt" is NUL too, as in ntpath
     if device.upper() in _RESERVED_STEMS:
         return f"{device!r} is a reserved device name on Windows"
     return None
