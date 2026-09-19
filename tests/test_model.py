@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import pickle
+import re
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from rootfig.model import (
     as_systematics,
     as_variable,
     auto_range,
+    check_file_stem,
     leaf_samples,
     log_bins,
     map_samples,
@@ -117,16 +119,19 @@ class TestVariable:
         with pytest.raises(BinningError):
             Variable("x", bins=10, range=range_)
 
-    @pytest.mark.parametrize("name", ["/abs", "../x", "a/b", "a\\b", ".", ".."])
+    @pytest.mark.parametrize(
+        "name", ["/abs", "../x", "a/b", "a\\b", ".", "..", "a:b", "pt.", "CON", "nul.x"]
+    )
     def test_name_must_be_a_file_stem(self, name: str) -> None:
-        with pytest.raises(ValueError, match="path separators"):
+        with pytest.raises(ValueError, match=r"Variable name .* cannot be a file name component"):
             Variable("x", name=name)
-        with pytest.raises(ValueError, match="path separators"):
+        with pytest.raises(ValueError, match=r"Variable name .* cannot be a file name component"):
             Variable("x").replace(name=name)
 
     def test_name_keeps_plain_stems(self) -> None:
         assert Variable("x", name="pt-lead.window").safe_name == "pt-lead.window"
         assert Variable("Muon_pt / 1000").safe_name == "Muon_pt_1000"
+        assert Variable("x", name="console").safe_name == "console"  # not a device name
 
     def test_as_variable(self) -> None:
         var = as_variable("x", bins=10, label=None)
@@ -135,6 +140,35 @@ class TestVariable:
         assert as_variable(var, bins=(5, 0.0, 1.0)).bins == (5, 0.0, 1.0)
         with pytest.raises(TypeError):
             as_variable(3)  # type: ignore[arg-type]
+
+
+class TestFileStem:
+    @pytest.mark.parametrize(
+        ("value", "reason", "hint"),
+        [
+            ("", "more than dots and spaces", ""),
+            (" .. ", "more than dots and spaces", ""),
+            ("lin.", "end with a dot or a space", "; 'lin' would work"),
+            ("lin ", "end with a dot or a space", "; 'lin' would work"),
+            ("SR:high", "it holds ':'", "; 'SR_high' would work"),
+            ('a"b<c>|?*', "it holds '\"', '*', '<', '>', '?', '|'", "; 'a_b_c' would work"),
+            ("a\x00b\x7f", "it holds '\\x00', '\\x7f'", "; 'a_b' would work"),
+            ("a/b\\c", "it holds '/', '\\\\'", "; 'a_b_c' would work"),
+            ("CON", "'CON' is a reserved device name on Windows", "; 'CON_' would work"),
+            ("com1", "'com1' is a reserved device name on Windows", "; 'com1_' would work"),
+            ("Nul.mass", "'Nul' is a reserved device name on Windows", "; 'Nul_mass' would work"),
+            ("CONOUT$", "'CONOUT$' is a reserved device name", "; 'CONOUT' would work"),
+        ],
+    )
+    def test_rejects_with_reason_and_suggestion(self, value: str, reason: str, hint: str) -> None:
+        with pytest.raises(ValueError, match=re.escape(reason) + ".*" + re.escape(hint) + "$"):
+            check_file_stem(value, what="selection name")
+
+    @pytest.mark.parametrize(
+        "value", ["mass", "pt-lead.window", "lin.2", "µ pt", "CONSOLE", "com", "lpt10", ".hidden"]
+    )
+    def test_accepts_portable_stems(self, value: str) -> None:
+        assert check_file_stem(value, what="name") is value
 
 
 class TestBinning:

@@ -13,7 +13,7 @@ from typing import Any
 
 from rootfig._mapping import FrozenMapping
 from rootfig.api.plots1d import plot
-from rootfig.model import Cut, CutLike, Variable, as_cut, as_variable
+from rootfig.model import Cut, CutLike, Variable, as_cut, as_variable, check_file_stem
 from rootfig.plotting import Plot
 from rootfig.plotting.figure import close_figures_since, open_figure_ids
 from rootfig.plotting.result import normalize_formats
@@ -59,12 +59,14 @@ def _file_key(stem: str) -> str:
     return unicodedata.normalize("NFKC", stem).casefold()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class PlotTask:
     """One plot of a :class:`PlotBook`: a variable, a selection and the keywords to draw it with.
 
-    Tasks hash by their :attr:`stem`, which is unique within a book, so they can be
-    collected in a set or used as dictionary keys.
+    Tasks compare and hash by their :attr:`stem`, which is unique within a book, so
+    they can be collected in a set or used as dictionary keys. The keyword values
+    are not compared: valid ones such as ``bins=np.array(...)`` have no scalar
+    equality.
 
     Attributes
     ----------
@@ -116,29 +118,19 @@ class PlotTask:
             f"variant={self.variant_id!r}"
         )
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, PlotTask) and self.stem == other.stem
+
     def __hash__(self) -> int:
         return hash(self.stem)
 
 
 def _identifier(value: object, *, what: str) -> str:
-    """Return ``value`` if it can name an output file component, else raise."""
+    """Return ``value`` if it can name an output file component on every platform, else raise."""
     if not isinstance(value, str):
         msg = f"{what} names must be non-empty strings, got {value!r}"
         raise TypeError(msg)
-    unusable = (
-        not value.strip(" .")
-        or any(character < " " or character == "\x7f" for character in value)
-        or "/" in value
-        or "\\" in value
-        or os.sep in value
-    )
-    if unusable:
-        msg = (
-            f"{what} name {value!r} cannot be a file name component: it must hold more than "
-            "dots and spaces, and no control character, slash or backslash"
-        )
-        raise ValueError(msg)
-    return value
+    return check_file_stem(value, what=f"{what} name")
 
 
 def _as_mapping(values: object, *, what: str, holds: str) -> Mapping[Any, Any]:
@@ -173,10 +165,8 @@ def _variables(values: str | Variable | Sequence[str | Variable]) -> tuple[Varia
     return variables
 
 
-def _plot_kwargs(values: Mapping[str, Any] | None, *, where: str) -> FrozenMapping[str, Any]:
+def _plot_kwargs(values: Mapping[str, Any], *, where: str) -> FrozenMapping[str, Any]:
     """Copy plot keywords, rejecting the ones the book fills in itself and unknown ones."""
-    if values is None:
-        return FrozenMapping({})
     mapping = _as_mapping(values, what=where, holds="plot() keywords to values")
     for key in mapping:
         if not isinstance(key, str):
@@ -264,10 +254,10 @@ class PlotBook:
     histogram objects behave exactly as they do there; ``data`` is passed on as
     given, never copied or inspected. The configuration mappings are copied, the
     values inside them (a ``systematics=`` mapping, a ``Style``) are shared. Names
-    of selections and variants are file name components: they must hold more than
-    dots and spaces, and no control character, slash or backslash. Two tasks whose
-    file names differ only in case or Unicode normalisation are one file on many
-    file systems and are rejected as a collision.
+    of selections and variants are file name components and must be usable on
+    every platform (:func:`~rootfig.model.check_file_stem`). Two tasks whose file
+    names differ only in case or Unicode normalisation are one file on many file
+    systems and are rejected as a collision.
 
     Parameters
     ----------
@@ -332,7 +322,11 @@ class PlotBook:
         object.__setattr__(self, "variables", _variables(variables))
         object.__setattr__(self, "selections", _selections(selections))
         object.__setattr__(self, "variants", _variants(variants))
-        object.__setattr__(self, "plot_kwargs", _plot_kwargs(plot_kwargs, where="plot_kwargs"))
+        object.__setattr__(
+            self,
+            "plot_kwargs",
+            _plot_kwargs({} if plot_kwargs is None else plot_kwargs, where="plot_kwargs"),
+        )
         by_file: dict[str, list[str]] = {}
         for variable in self.variables:
             for selection in self.selections if self.selections is not None else [None]:

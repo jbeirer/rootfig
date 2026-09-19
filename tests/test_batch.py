@@ -80,11 +80,14 @@ class TestConstruction:
         with pytest.raises(ValueError, match="variants= must name at least one"):
             rf.PlotBook(samples, [X], variants={})
 
-    @pytest.mark.parametrize("name", ["", ".", "..", "a/b", "a\\b", "a\0b"])
+    @pytest.mark.parametrize(
+        "name", ["", ".", "..", "a/b", "a\\b", "a\0b", "a:b", "lin.", "NUL", "com1.x"]
+    )
     def test_unsafe_names_rejected(self, samples: list[rf.Sample], name: str) -> None:
-        with pytest.raises(ValueError, match="selection name"):
+        # The rules are check_file_stem's, tested in test_model; here that both axes use them.
+        with pytest.raises(ValueError, match=r"selection name .* cannot be a file name component"):
             rf.PlotBook(samples, [X], selections={name: None})
-        with pytest.raises(ValueError, match="variant name"):
+        with pytest.raises(ValueError, match=r"variant name .* cannot be a file name component"):
             rf.PlotBook(samples, [X], variants={name: {}})
 
     def test_non_string_names_rejected(self, samples: list[rf.Sample]) -> None:
@@ -103,8 +106,9 @@ class TestConstruction:
             rf.PlotBook(samples, ["x+1", "x-1"])
 
     def test_variable_identifier_must_be_a_file_component(self) -> None:
-        with pytest.raises(ValueError, match="variable name"):
-            rf.PlotBook(None, rf.Variable("x", name="x\0y"))
+        # An explicit name= is checked by Variable itself; a sanitised expression only here.
+        with pytest.raises(ValueError, match="variable name 'nul' cannot be a file name component"):
+            rf.PlotBook(None, "nul")
 
     def test_stem_collision_rejected(self, samples: list[rf.Sample]) -> None:
         # variable a__b with selection c and variable a with selection b__c both spell a__b__c
@@ -170,6 +174,10 @@ class TestConstruction:
     def test_variant_must_be_a_mapping(self, samples: list[rf.Sample]) -> None:
         with pytest.raises(TypeError, match="variant 'log' must map plot\\(\\) keywords"):
             rf.PlotBook(samples, [X], variants={"log": True})  # type: ignore[dict-item]
+        # None means "no keywords" for plot_kwargs=, but a variant without overrides is {}.
+        with pytest.raises(TypeError, match=r"variant 'lin' must map .*, got NoneType"):
+            rf.PlotBook(samples, [X], variants={"lin": None})  # type: ignore[dict-item]
+        assert rf.PlotBook(samples, [X], plot_kwargs=None).plot_kwargs == {}
 
     @pytest.mark.parametrize("axis", ["selections", "variants", "plot_kwargs"])
     def test_configuration_must_be_a_mapping(self, samples: list[rf.Sample], axis: str) -> None:
@@ -281,6 +289,20 @@ class TestTasks:
         tasks = book.tasks()
         assert len(set(tasks)) == len(tasks)
         assert {task: task.stem for task in tasks}[tasks[0]] == "x__a"
+
+    def test_tasks_compare_by_stem_whatever_the_keywords_hold(
+        self, samples: list[rf.Sample]
+    ) -> None:
+        # Comparing kwargs would evaluate np.array == np.array and raise on its truth value.
+        edges = np.array([0.0, 0.5, 1.0])
+        book = rf.PlotBook(samples, ["x", "y"], plot_kwargs={"bins": edges})
+        first, other = book.tasks()
+        again = book.tasks()[0]
+        assert first == again
+        assert first != other
+        assert first != "x"
+        assert {first, again, other} == {first, other}
+        assert first.kwargs["bins"] is edges
 
 
 class FakePlot:

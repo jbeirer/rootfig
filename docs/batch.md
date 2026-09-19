@@ -87,8 +87,12 @@ built. A `selections=`, `variants=` or `plot_kwargs=` that is not a mapping, a
 name that is not a string, and a keyword `rf.plot` does not take, raise
 `TypeError`.
 
-Selection and variant names become file name components: non-empty, not `.`
-or `..`, without `/` or `\`.
+Selection and variant names become file name components and are checked, like
+`Variable.name`, for every platform: more than dots and spaces, no trailing dot
+or space, no slash, backslash, control character or `<>:"|?*`, and not a Windows
+device name (`CON`, `NUL`, `COM1`, ...). The check is
+[`check_file_stem`][rootfig.model.check_file_stem]; its message offers a
+spelling that works.
 
 ## Data passes through unchanged
 
@@ -157,7 +161,9 @@ for task, p in book.plots():
 
 A `PlotTask` carries the `variable`, the `selection` (`Cut` or `None`), the
 `selection_name` and `variant_name` (`None` for an axis the book was built
-without), the merged `kwargs` and the file `stem`. Each task is exactly
+without), the merged `kwargs` and the file `stem`. Tasks compare and hash by
+their `stem`, so they work as set members and dictionary keys whatever the
+keyword values hold. Each task is exactly
 
 ```python
 rf.plot(book.data, task.variable, selection=task.selection, **task.kwargs)

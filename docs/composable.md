@@ -129,8 +129,10 @@ met = rf.Variable(
   [Binning and range](plotting.md#binning-and-range).
 - `label` and `unit` form the axis label `label [unit]`; the unit also appears
   in the automatic y label (`Events / 4 GeV`).
-- `name` is used for file names by `Plot.save(directory)`; it must be a plain
-  file stem (no path separators).
+- `name` is used for file names by `Plot.save(directory)` and `PlotBook`; it
+  must be a file name component on every platform: no slash, control character
+  or `<>:"|?*`, no trailing dot or space, and not a Windows device name such as
+  `CON` ([`check_file_stem`][rootfig.model.check_file_stem]).
 
 `bins`, `range`, `xlabel` and `unit` given to `plot()` override the variable.
 

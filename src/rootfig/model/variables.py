@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, replace
 from typing import Any
 
 from rootfig.expressions import Expression, parse
 from rootfig.model.binning import DEFAULT_RANGE, Bins, RangeSpec, validate_bins
+from rootfig.model.filenames import check_file_stem
 
 __all__ = ["Variable", "as_variable"]
 
@@ -51,9 +51,11 @@ class Variable:
         Draw the x axis with a logarithmic scale.
     name
         Short identifier used for file names (:meth:`Plot.save` with a
-        directory). Defaults to a sanitised version of the expression. An
-        explicit name must be a plain file stem: it cannot contain path
-        separators or be ``"."``/``".."``.
+        directory, :class:`~rootfig.PlotBook`). Defaults to a sanitised version
+        of the expression. An explicit name must be a file name component on
+        every platform (:func:`~rootfig.model.check_file_stem`): no slash,
+        control character or ``<>:"|?*``, no trailing dot or space, and not a
+        Windows device name such as ``CON``.
     """
 
     expression: str
@@ -67,16 +69,8 @@ class Variable:
     def __post_init__(self) -> None:
         parse(self.expression)
         validate_bins(self.bins, self.range)
-        if self.name is not None and (
-            self.name in (".", "..") or any(sep in self.name for sep in {"/", "\\", os.sep})
-        ):
-            suggestion = _SAFE_NAME_RE.sub("_", self.name).strip("_") or "variable"
-            msg = (
-                f"Variable name {self.name!r} must be a plain file stem (it names the file "
-                "written by Plot.save(directory)) and cannot contain path separators or be "
-                f"'.' or '..'; use e.g. name={suggestion!r}"
-            )
-            raise ValueError(msg)
+        if self.name is not None:
+            check_file_stem(self.name, what="Variable name")
 
     def __str__(self) -> str:
         return self.expression
