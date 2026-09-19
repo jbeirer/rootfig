@@ -28,6 +28,11 @@
 ::: rootfig.Style
 ::: rootfig.Systematic
 
+## Batch plotting
+
+::: rootfig.PlotBook
+::: rootfig.PlotTask
+
 ## Results
 
 ::: rootfig.Plot

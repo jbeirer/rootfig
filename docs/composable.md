@@ -193,3 +193,16 @@ for var in variables:
     p.save("plots/")  # plots/Muon_pt.pdf, plots/met.pdf, plots/nMuon.pdf
     p.close()
 ```
+
+The same loop over several selections and drawing variants, with deterministic
+file names, is what [`rf.PlotBook`](batch.md) does:
+
+```python
+rf.PlotBook(
+    samples,
+    variables,
+    selections={"baseline": base, "sr": sr},
+    variants={"lin": {}, "log": {"logy": True}},
+    plot_kwargs={"observed": data, "stack": True, "ratio": True, "style": atlas},
+).save("plots/")  # plots/Muon_pt__sr__log.pdf, ...
+```
