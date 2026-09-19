@@ -22,6 +22,7 @@
 ## Descriptions
 
 ::: rootfig.Sample
+::: rootfig.Group
 ::: rootfig.Variable
 ::: rootfig.Cut
 ::: rootfig.Style

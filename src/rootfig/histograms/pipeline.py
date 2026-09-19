@@ -4,6 +4,8 @@ This is the orchestration layer: for each sample it determines the union of
 branches needed by the variable, selection and weight expressions, reads
 them once, applies the selection semantics, chooses a common binning across
 all samples, and fills one :class:`~rootfig.histograms.Histogram` per sample.
+A :class:`~rootfig.model.Group` is filled through its samples and gets the sum
+of their histograms.
 """
 
 from __future__ import annotations
@@ -21,12 +23,15 @@ from rootfig._typing import Hist
 from rootfig.errors import MissingBranchError, SourceError, SystematicError, annotate
 from rootfig.expressions import parse
 from rootfig.histograms.build import Histogram, fill, from_sample, mirror
+from rootfig.histograms.groups import regroup_histograms
 from rootfig.histograms.stats import summarize
 from rootfig.histograms.stored import read_stored, stored_mode
 from rootfig.io import ArraySource, FileSource, as_source
 from rootfig.io.sources import resolve_files
 from rootfig.model.binning import Axis, resolve_axis
 from rootfig.model.cuts import Cut, CutLike, as_cut
+from rootfig.model.groups import Group
+from rootfig.model.inputs import leaf_samples
 from rootfig.model.samples import Sample
 from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.variables import Variable, as_variable
@@ -180,7 +185,7 @@ def _read_for(
 
 
 def build_histograms(
-    samples: Sequence[Sample],
+    items: Sequence[Sample | Group],
     variable: Variable | str,
     *,
     selection: CutLike | None = None,
@@ -190,12 +195,14 @@ def build_histograms(
     systematics: Mapping[str, SystematicLike] | None = None,
     assume_poisson: bool = False,
 ) -> list[Histogram]:
-    """Fill one 1D histogram per sample with a binning shared by all of them.
+    """Fill one 1D histogram per sample or group, with a binning shared by all of them.
 
     Systematic variations (the sample's own and ``systematics``, which apply to
     every non-data sample; a sample's own source of the same name wins) are filled into
     :attr:`~rootfig.histograms.Histogram.variations` with the binning chosen
-    from the nominal values.
+    from the nominal values. A :class:`~rootfig.model.Group` is filled through
+    its samples, which share the binning like any other, and gets the sum of
+    their histograms (:func:`~rootfig.histograms.group_histogram`).
 
     A bare variable name that addresses a histogram stored in the samples'
     files (see :func:`~rootfig.histograms.stored_mode`) is read instead of
@@ -203,8 +210,9 @@ def build_histograms(
     squared weights.
     """
     var = as_variable(variable)
+    samples = leaf_samples(items)
     if stored_mode(samples, [var]):
-        return read_stored(
+        stored = read_stored(
             samples,
             [var],
             selection=selection,
@@ -214,6 +222,7 @@ def build_histograms(
             systematics=systematics,
             assume_poisson=assume_poisson,
         )
+        return regroup_histograms(items, stored)
     plot_level = as_systematics(systematics, "plot")
     loaded = [
         _load_with_variations(
@@ -233,6 +242,9 @@ def build_histograms(
         name=var.safe_name,
         weights=[item.nominal.weights for item in loaded],
     )
+    # unbinned statistics feed the stats box and Histogram.entries, which a group's histogram
+    # does not carry, so the samples inside groups skip the passes summarize() makes
+    with_stats = {id(item) for item in items if isinstance(item, Sample)}
     histograms = []
     for sample, item in zip(samples, loaded, strict=True):
         nominal = fill([axis], item.nominal)
@@ -240,14 +252,15 @@ def build_histograms(
             from_sample(
                 sample,
                 nominal,
-                stats=summarize(item.nominal),
+                stats=summarize(item.nominal) if id(sample) in with_stats else None,
+                per_object=item.nominal.per_object,
                 variations={
                     name: _fill_variation(axis, nominal, up, down)
                     for name, (up, down) in item.variations.items()
                 },
             )
         )
-    return histograms
+    return regroup_histograms(items, histograms)
 
 
 def _sample_systematics(
@@ -499,6 +512,8 @@ def build_histograms_2d(
     name_y = var_y.safe_name if var_y.safe_name != var_x.safe_name else f"{var_y.safe_name}_y"
     axis_y = resolve_axis(var_y, [c.arrays[1] for c in columns], name=name_y, weights=weights)
     return [
-        from_sample(sample, fill([axis_x, axis_y], cols), stats=summarize(cols))
+        from_sample(
+            sample, fill([axis_x, axis_y], cols), stats=summarize(cols), per_object=cols.per_object
+        )
         for sample, cols in zip(samples, columns, strict=True)
     ]

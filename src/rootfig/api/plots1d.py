@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from rootfig.api._common import normalize_for_plot, style_for
+from rootfig.api._common import as_observed, normalize_for_plot, style_for
 from rootfig.api._hists import (
     histogram_objects,
     rebin_ready_made,
@@ -31,7 +31,7 @@ from rootfig.model import (
     StyleLike,
     SystematicLike,
     Variable,
-    as_samples,
+    as_plot_items,
     as_style,
     as_variable,
 )
@@ -135,8 +135,9 @@ def plot(
     data
         What to plot: a file path or glob, ``"path:tree"``, a list of those (one
         sample each), a ``{label: files}`` mapping, one or more
-        :class:`~rootfig.model.Sample` objects, in-memory arrays (a mapping of
-        arrays or an Awkward record array), or histogram objects.
+        :class:`~rootfig.model.Sample` objects, :class:`~rootfig.model.Group`
+        objects (several samples drawn as one histogram), in-memory arrays (a
+        mapping of arrays or an Awkward record array), or histogram objects.
     variable
         Branch name or expression (see :mod:`rootfig.expressions`), the name of
         a histogram stored in the files, or a :class:`~rootfig.model.Variable`
@@ -177,9 +178,9 @@ def plot(
     label
         Legend label(s) for samples given as plain files or as histogram objects.
     observed
-        A sample of observed data (or the file(s) for one; histogram objects
-        when ``data`` are) drawn as points, excluded from stacks and used as
-        numerator of the ratio.
+        A sample or group of observed data (or the file(s) for one; histogram
+        objects when ``data`` are) drawn as points, excluded from stacks and
+        used as numerator of the ratio.
     xlabel, ylabel, unit, title
         Axis labels; defaults come from the variable (or the stored axis title),
         the normalisation and the bin width (``Events / 2 GeV``).
@@ -295,15 +296,12 @@ def plot(
         if variable is None:
             msg = "plot() needs a variable (a branch, expression or stored histogram name)"
             raise TypeError(msg)
-        samples = as_samples(data, tree=tree, labels=label)
+        items = as_plot_items(data, tree=tree, labels=label)
         if observed is not None:
-            observed_samples = [
-                s if s.is_data else s.replace(is_data=True) for s in as_samples(observed, tree=tree)
-            ]
-            samples = [*samples, *observed_samples]
+            items += [as_observed(item) for item in as_plot_items(observed, tree=tree)]
         var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
         hists = build_histograms(
-            samples,
+            items,
             var,
             selection=selection,
             weight=weight,
@@ -383,7 +381,7 @@ def _draw(
     if stats and all(h.stats is None for h in histograms_):
         msg = (
             "stats= needs the unbinned statistics collected while filling from event data; "
-            "stored histograms and histogram objects have none"
+            "stored histograms, histogram objects and groups have none"
         )
         raise ValueError(msg)
     if normalize is not None and normalize is not False:
@@ -444,7 +442,7 @@ def _draw(
         has_data = any(h.is_data for h in histograms_)
         add_experiment_label(layout.main, st, has_data=has_data, right=layout.main_right)
 
-        per_object = any(h.stats is not None and h.stats.per_object for h in histograms_)
+        per_object = any(h.per_object for h in histograms_)
         x_label, bin_unit = _axis_labels(xlabel, unit, variable, reference_hist)
         y_label = ylabel or ylabel_for(
             normalization=histograms_[0].normalization,

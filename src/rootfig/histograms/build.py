@@ -101,6 +101,9 @@ class Histogram:
         ``histogram.replace(variations=...)`` to replace it. The underlying
         ``hist.Hist`` objects remain mutable. Observed data (``is_data``) cannot
         carry variations, as for :class:`~rootfig.model.Sample`.
+    per_object
+        Whether an entry is an object rather than an event (a per-object
+        variable), which words the ``Entries``/``Events`` y label.
     """
 
     hist: Hist
@@ -112,6 +115,7 @@ class Histogram:
     histtype: HistType | None = None
     normalization: str | None = None
     variations: Mapping[str, tuple[Hist, Hist]] = field(default_factory=dict)
+    per_object: bool = False
 
     def __init__(  # noqa: PLR0917 - preserve the positional dataclass constructor API
         self,
@@ -124,6 +128,7 @@ class Histogram:
         histtype: HistType | None = None,
         normalization: str | None = None,
         variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
+        per_object: bool = False,
     ) -> None:
         object.__setattr__(self, "hist", hist)
         object.__setattr__(self, "label", label)
@@ -134,6 +139,7 @@ class Histogram:
         object.__setattr__(self, "histtype", histtype)
         object.__setattr__(self, "normalization", normalization)
         object.__setattr__(self, "variations", {} if variations is None else variations)
+        object.__setattr__(self, "per_object", per_object)
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -252,9 +258,10 @@ class Histogram:
     def entries(self) -> int | None:
         """Number of filled entries from the unbinned statistics, or ``None`` if unknown.
 
-        A histogram that was not filled by rootfig carries no entry count: its
-        bin contents are sums of weights, which only equal the number of fills
-        for unweighted, unscaled histograms (see :attr:`sum_weights`).
+        A histogram that was not filled by rootfig, or that sums several (a
+        group), carries no entry count: its bin contents are sums of weights,
+        which only equal the number of fills for unweighted, unscaled
+        histograms (see :attr:`sum_weights`).
         """
         return None if self.stats is None else self.stats.entries
 
@@ -523,6 +530,7 @@ def from_sample(
     *,
     stats: Summary | None = None,
     variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
+    per_object: bool = False,
 ) -> Histogram:
     """Wrap ``hist_`` as the :class:`Histogram` of ``sample`` (label, data flag, drawing hints)."""
     return Histogram(
@@ -534,6 +542,7 @@ def from_sample(
         color=sample.color,
         histtype=sample.histtype,
         variations=variations,
+        per_object=per_object,
     )
 
 

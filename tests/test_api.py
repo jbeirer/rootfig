@@ -2130,3 +2130,126 @@ class TestStoredHistogramPlots:
     def test_public_surface_has_no_separate_histogram_plotter(self) -> None:
         assert "plot_histograms" not in rf.__all__
         assert not hasattr(rf, "plot_histograms")
+
+
+class TestGroups:
+    @staticmethod
+    def _sample(mean: float, n: int, seed: int, **kwargs: Any) -> rf.Sample:
+        rng = np.random.default_rng(seed)
+        return rf.Sample({"x": rng.normal(mean, 1.0, n)}, **kwargs)
+
+    def test_histograms_and_histogram(self) -> None:
+        a = self._sample(0.0, 200, 1, label="A", systematics={"lumi": 0.1})
+        b = self._sample(0.5, 100, 2, label="B")
+        s = self._sample(3.0, 100, 3, label="S")
+        group = rf.Group([a, b], label="AB")
+        (h,) = rf.histograms(group, "x", bins=(10, -4, 6))
+        assert (h.label, h.sum_weights) == ("AB", 300)
+        assert [h.label for h in rf.histograms([group, s], "x", bins=10)] == ["AB", "S"]
+        labels = [h.label for h in rf.histograms({"VV": group, "Signal": s}, "x", bins=10)]
+        assert labels == ["VV", "Signal"]
+        assert group.label == "AB"
+        plain = rf.histogram(group, "x", bins=(10, -4, 6))
+        assert isinstance(plain, hist.Hist)
+        np.testing.assert_allclose(plain.values(), h.values())
+        with pytest.raises(SourceError, match="single sample or group"):
+            rf.histogram([group, s], "x")
+
+    def test_plot_treats_a_group_as_one_histogram(self) -> None:
+        ww = self._sample(0.0, 400, 1, label="WW", xsec="2 pb", ngen=100_000)
+        zz = self._sample(0.5, 200, 2, label="ZZ", xsec="8 pb", ngen=500_000)
+        qq = self._sample(1.0, 300, 3, label="qq")
+        tautau = self._sample(1.5, 100, 4, label="tautau")
+        signal = self._sample(3.0, 300, 5, label="Signal")
+        vv = rf.Group([ww, zz], label="VV", color="C0")
+        background = rf.Group([vv, rf.Group([qq, tautau], label="Other")], label="Background")
+        p = rf.plot(
+            [background, signal],
+            "x",
+            bins=(20, -4, 6),
+            lumi="5 ab^-1",
+            stack=True,
+            ratio=("s/sqrt(b)", "Signal"),
+        )
+        assert [h.label for h in p.histograms] == ["Background", "Signal"]
+        legend = [t.get_text() for t in p.ax.get_legend().get_texts()]
+        assert legend[:2] == ["Signal", "Background"]
+        assert len(p.ratios) == 1
+        assert len(rf.plot(background.components, "x", bins=10, lumi=1.0).histograms) == 2
+        assert len(rf.plot(background.samples, "x", bins=10, lumi=1.0).histograms) == 4
+        p = rf.plot([vv, signal], "x", bins=(20, -4, 6), lumi=1.0, ratio="VV")
+        assert len(p.ratios) == 1
+        assert "VV" in ratio_ylabel(p)
+
+    def test_observed_group_and_normalisation(self) -> None:
+        mc = rf.Group(
+            [
+                self._sample(0.0, 300, 1, label="A", systematics={"lumi": 0.1}),
+                self._sample(1.0, 100, 2, label="B"),
+            ],
+            label="MC",
+        )
+        data = rf.Group(
+            [
+                self._sample(0.0, 200, 3, label="D1", is_data=True),
+                self._sample(1.0, 100, 4, label="D2", is_data=True),
+            ],
+            label="Data",
+        )
+        p = rf.plot(mc, "x", bins=(10, -4, 5), observed=data, stack=True, ratio=True)
+        assert [(h.label, h.is_data) for h in p.histograms] == [("MC", False), ("Data", True)]
+        assert p.histograms[1].sum_weights == 300
+        assert p.uncertainty("MC").has_systematics
+        assert not p.uncertainty("Data").has_systematics
+        # simulation given as observed is marked as data, group and all
+        observed = rf.Group([self._sample(0.0, 50, 5, label="X")], label="Obs")
+        assert rf.plot(mc, "x", bins=10, observed=observed).histograms[1].is_data
+        # normalised after summing: the components' totals weight the sum
+        a = rf.Sample({"x": [0.25] * 3}, label="A")
+        b = rf.Sample({"x": [0.75]}, label="B")
+        (h,) = rf.histograms(rf.Group([a, b], label="AB"), "x", bins=(2, 0, 1), normalize=True)
+        np.testing.assert_allclose(h.values(), [0.75, 0.25])
+        p = rf.plot(rf.Group([a, b], label="AB"), "x", bins=(2, 0, 1), normalize=True)
+        np.testing.assert_allclose(p.histograms[0].values(), [0.75, 0.25])
+
+    def test_stats_box_and_functions_that_take_samples_only(self) -> None:
+        a = self._sample(0.0, 50, 1, label="A")
+        group = rf.Group([a, self._sample(1.0, 50, 2, label="B")], label="AB")
+        with pytest.raises(ValueError, match="groups have none"):
+            rf.plot(group, "x", bins=10, stats=True)
+        p = rf.plot([group, a], "x", bins=10, stats=True)
+        boxes = [t.get_text() for t in p.ax.texts if "N = " in t.get_text()]
+        assert len(boxes) == 1
+        assert boxes[0].startswith("A\n")
+        many: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = [
+            (rf.summarize, ("x",), {}),
+            (rf.cutflow, (["x > 0"],), {}),
+            (rf.efficiency, ("x",), {"passed": "x > 0"}),
+            (rf.profile, ("x", "x"), {}),
+        ]
+        one: list[tuple[Any, tuple[Any, ...]]] = [
+            (rf.load, ("x",)),
+            (rf.plot2d, ("x", "x")),
+            (rf.correlation, (["x", "x"],)),
+        ]
+        refused = r"groups are not accepted here \(\['AB'\]\).*Pass group.samples"
+        single = r"takes one sample and 'AB' is a group of 2; pass one of group.samples"
+        for function, args, kwargs in many:
+            with pytest.raises(TypeError, match=refused):
+                function(group, *args, **kwargs)
+            with pytest.raises(TypeError, match=refused):
+                function([group], *args, **kwargs)
+        for function, args in one:
+            with pytest.raises(TypeError, match=single):
+                function(group, *args)
+            with pytest.raises(TypeError, match=refused):
+                function([group], *args)
+
+    def test_per_object_label_survives_grouping(self) -> None:
+        jagged = rf.Sample({"pt": ak.Array([[1.0, 2.0], [3.0], []])}, label="A")
+        alone = rf.plot(jagged, "pt", bins=(4, 0, 4))
+        group = rf.Group([jagged, jagged.replace(label="B")], label="AB")
+        grouped = rf.plot(group, "pt", bins=(4, 0, 4))
+        assert alone.ax.get_ylabel() == grouped.ax.get_ylabel() == "Entries"
+        assert grouped.histograms[0].per_object
+        assert not rf.plot(rf.Sample({"x": [1.0]}), "x", bins=(1, 0, 2)).histograms[0].per_object

@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import copy
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
-from os import PathLike
 from typing import Any, Literal, TypeAlias
-
-import awkward as ak
 
 from rootfig._mapping import FrozenMapping
 from rootfig.errors import LuminosityError, SourceError, SystematicError
@@ -18,7 +15,7 @@ from rootfig.model.cuts import Cut, CutLike, as_cut
 from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.units import cross_section_pb, luminosity_fb
 
-__all__ = ["HistType", "Sample", "as_samples"]
+__all__ = ["HistType", "Sample"]
 
 HistType: TypeAlias = Literal["step", "fill", "errorbar", "band"]
 """How a histogram is drawn: outline, filled area, points with error bars, or a band."""
@@ -296,81 +293,3 @@ _FIELD_CHECKS: dict[str, Callable[[Any, str], Any]] = {
     "ngen": _check_ngen,
     "systematics": _check_systematics,
 }
-
-
-def as_samples(
-    data: Any,
-    *,
-    tree: str | None = None,
-    labels: str | Sequence[str] | None = None,
-    entry_start: int | None = None,
-    entry_stop: int | None = None,
-) -> list[Sample]:
-    """Normalise the ``data`` argument of :func:`rootfig.plot` into a list of samples.
-
-    * A :class:`Sample` gives one sample.
-    * A single path/glob/mapping/array gives one sample.
-    * A list gives one sample per element. Elements may mix ``Sample`` objects
-      with raw file specifications; each raw element becomes its own sample,
-      so ``["sig.root", "bkg.root"]`` produces two samples. To combine several
-      files into *one* sample wrap them in a ``Sample`` or pass a glob.
-    * A mapping from label to file specification, in-memory arrays or
-      ``Sample`` gives one labelled sample per entry (a ``Sample`` keeps its
-      selection, weight and cross section and only takes the label). A mapping
-      whose values are columns (arrays or lists of numbers) is one in-memory
-      sample instead.
-
-    Raises
-    ------
-    SourceError
-        If ``labels`` does not match the number of samples.
-    """
-    if isinstance(data, Sample):
-        samples = [data]
-    elif isinstance(data, Mapping) and _looks_like_label_map(data):
-        samples = [
-            value.replace(label=key)
-            if isinstance(value, Sample)
-            else Sample(value, tree=tree, label=key, entry_start=entry_start, entry_stop=entry_stop)
-            for key, value in data.items()
-        ]
-    elif isinstance(data, list | tuple):
-        if not data:
-            msg = "no samples given"
-            raise SourceError(msg)
-        samples = [
-            item
-            if isinstance(item, Sample)
-            else Sample(item, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
-            for item in data
-        ]
-    else:
-        samples = [Sample(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)]
-
-    if labels is not None:
-        label_list = [labels] if isinstance(labels, str) else list(labels)
-        if len(label_list) != len(samples):
-            msg = f"got {len(label_list)} labels for {len(samples)} samples"
-            raise SourceError(msg)
-        samples = [s.replace(label=lab) for s, lab in zip(samples, label_list, strict=True)]
-    return samples
-
-
-def _looks_like_label_map(data: Mapping[Any, Any]) -> bool:
-    """Distinguish ``{"Signal": "sig.root"}`` from a mapping of column arrays.
-
-    Values that describe a dataset (paths, lists of paths, ``Sample`` objects,
-    mappings of arrays, Awkward record arrays) make a label map; anything else
-    (NumPy arrays, lists of numbers, flat Awkward arrays) is a column.
-    """
-    return bool(data) and all(isinstance(k, str) and _is_dataset_spec(v) for k, v in data.items())
-
-
-def _is_dataset_spec(value: Any) -> bool:
-    if isinstance(value, str | PathLike | Sample | Mapping):
-        return True
-    if isinstance(value, ak.Array):
-        return bool(value.fields)
-    if isinstance(value, list | tuple):
-        return bool(value) and all(isinstance(item, str | PathLike) for item in value)
-    return False

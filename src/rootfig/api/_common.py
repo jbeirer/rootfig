@@ -7,31 +7,44 @@ from collections.abc import Sequence
 from typing import Any
 
 from rootfig.errors import RootfigWarning, SourceError
-from rootfig.histograms import (
-    Histogram,
-    NormalizeSpec,
-)
+from rootfig.histograms import Histogram, NormalizeSpec
 from rootfig.histograms import normalize as normalize_histogram
 from rootfig.model import (
+    Group,
+    PlotItem,
     Sample,
     StyleLike,
     as_samples,
     as_style,
+    map_samples,
 )
 
 
 def single_sample(
     data: Any,
     *,
+    function: str,
     tree: str | None,
     entry_start: int | None = None,
     entry_stop: int | None = None,
 ) -> Sample:
+    """Return the one sample ``data`` describes for ``function``, which takes no more."""
+    if isinstance(data, Group):
+        msg = (
+            f"{function} takes one sample and {data.label!r} is a group of {len(data.samples)}; "
+            f"pass one of group.samples, or call {function} once per component"
+        )
+        raise TypeError(msg)
     samples = as_samples(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
     if len(samples) != 1:
-        msg = f"expected a single sample, got {len(samples)}"
+        msg = f"{function} takes a single sample, got {len(samples)}"
         raise SourceError(msg)
     return samples[0]
+
+
+def as_observed(item: PlotItem) -> PlotItem:
+    """Mark a sample, or every sample of a group, as observed data."""
+    return map_samples(item, lambda s: s if s.is_data else s.replace(is_data=True))
 
 
 def style_for(

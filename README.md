@@ -118,6 +118,18 @@ Everything you get back is a standard object: `p.fig` and `p.ax` are
 matplotlib `Figure`/`Axes`, `p.hists` are `hist.Hist` objects, and
 `rf.load(...)` returns Awkward arrays.
 
+Samples that belong to one physics category are drawn as one histogram with
+`rf.Group`. Each keeps its own files, weights, cross section and systematics;
+they are summed only after filling:
+
+```python
+ww = rf.Sample("ww.root", tree="events", label="WW", weight="mc_weight")
+zz = rf.Sample("zz.root", tree="events", label="ZZ", weight="mc_weight")
+vv = rf.Group([ww, zz], label="VV")
+
+rf.plot([vv, signal], pt, observed=data, stack=True, ratio=True, style=style)
+```
+
 ## What you can do
 
 - **Select events and objects with readable expressions.** Write cuts such as
@@ -127,7 +139,9 @@ matplotlib `Figure`/`Axes`, `p.hists` are `hist.Hist` objects, and
   ratio panels share binning and propagate histogram uncertainties; bin edges
   and `(n, low, high)` are used as given, while a range inferred from the data
   ignores far outliers, so `-999` sentinels do not set the axis. Normalise to
-  unity, density, bin width or luminosity.
+  unity, density, bin width or luminosity. Draw several samples as one
+  histogram with `rf.Group`, each keeping its own weights, cross section and
+  systematics.
 - **Show systematic uncertainties.** Attach weight, branch, file or
   normalisation variations to a sample; stacks and ratio panels draw the
   combined statistical and systematic band, and every component stays

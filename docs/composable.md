@@ -2,7 +2,7 @@
 
 `rf.plot` accepts plain strings everywhere, which is all you need for a quick
 look. Analysis scripts that make dozens of plots from the same inputs are
-clearer when the pieces are named once. Four small frozen dataclasses do
+clearer when the pieces are named once. Five small frozen dataclasses do
 that; none of them opens a file or holds data.
 
 ## `Sample`
@@ -64,6 +64,46 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
 
 Passing a list of files to `plot()` creates one sample per file. To merge
 several files into *one* sample, use a glob or a `Sample`.
+
+## `Group`
+
+Several samples drawn as one histogram.
+
+```python
+ww = rf.Sample("ww.root", label="WW", xsec="16.4 pb", ngen="eventsProcessed")
+zz = rf.Sample("zz.root", label="ZZ", xsec="1.4 pb", ngen="eventsProcessed")
+vv = rf.Group([ww, zz], label="VV", color="C0")
+
+rf.plot([vv, zh], "recoil_mass", lumi="10.8 ab^-1", stack=True)  # two histograms: VV and ZH
+```
+
+- The components are filled independently, each with its own source,
+  selection, weight, scale, cross section and systematics, and their
+  histograms are summed afterwards. Every sample of a plot, grouped or not,
+  takes part in the shared binning.
+- Systematic sources with the same name in several components are correlated
+  and add linearly; a component without a source contributes its nominal
+  histogram; different names stay independent. These are the rules of
+  [Systematic uncertainties](plotting.md#systematic-uncertainties), applied to
+  the sum. `normalize=` also applies to the sum.
+- `label`, `color` and `histtype` describe the summed histogram. The
+  components' own are not used; `None` keeps the style defaults.
+- A group is all observed data or all simulation; mixing the two raises a
+  `ValueError`. A data group is drawn like any data sample and may be given as
+  `observed=`.
+- Groups nest: `rf.Group([vv, other], label="Background")`. `group.components`
+  are the direct members and `group.samples` every leaf sample, so
+  `rf.plot(group.components, ...)` and `rf.plot(group.samples, ...)` draw the
+  parts separately.
+- Only `rf.Group(...)` makes a group. A list of paths given to `plot()` is
+  still one sample per path, and `Sample([...])` one sample over several files.
+- The summed histogram has no `sample` and no unbinned statistics: `stats=`
+  skips it and `Histogram.entries` is `None`.
+- `group.replace(label="...")` returns a validated copy.
+
+`plot()`, `histograms()` and `histogram()` accept groups; `summarize()`,
+`cutflow()`, `efficiency()`, `profile()`, `correlation()`, `plot2d()` and
+`load()` take samples and point you to `group.samples`.
 
 ## `Variable`
 

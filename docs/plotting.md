@@ -15,6 +15,9 @@ objects you already have (see [the end of this page](#histograms-that-already-ex
 - **Data**: samples with `is_data=True` (or passed as `observed=...`) are
   points with error bars, drawn on top and never stacked, in the style's text
   colour (black by default) unless the sample sets `color`.
+- **Groups**: a [`Group`][rootfig.Group] of samples is one histogram of the
+  overlay or stack, the sum of its components filled apart; see
+  [Group](composable.md#group).
 - `errorbars=True` adds statistical error bars to non-data histograms.
 
 ## Systematic uncertainties
@@ -67,6 +70,8 @@ Rules:
   contributes its nominal contents), and a ratio varies numerator and
   denominator together, so a shared luminosity uncertainty cancels in an
   MC/MC ratio.
+- A [`Group`][rootfig.Group] sums its components' variations by the same rule
+  before it is drawn or normalised.
 - `normalize=True`, `"unity"`, `"density"` or a numeric target normalises every
   variation by its own total, so the plot shows shape uncertainties; a pure
   normalisation uncertainty drops out. `normalize="width"` only divides by
@@ -140,6 +145,7 @@ dataset scaled to the full one, for instance).
 | `"width"` | divide by bin width, no rescaling | `Entries / GeV` |
 | a number | visible bins sum to that number | `Normalised to 100` |
 
+A [`Group`][rootfig.Group] is summed first and normalised as one histogram.
 Variances are scaled consistently. Flow bins scale with the same factor; for
 `"width"` and `"density"` they are divided by the width of the neighbouring
 visible bin. Plain `hist.Hist` objects with a count storage passed to
@@ -167,8 +173,8 @@ weights cancel exactly, is left unchanged with a warning and keeps the plain
 - otherwise: every further sample / the first sample, uncertainties of both
   propagated in quadrature (`ratio_uncertainty="propagate"`).
 
-`ratio="Background"` picks the reference by label; all other histograms, data
-included, are divided by it. The uncertainty treatment is chosen per histogram:
+`ratio="Background"` picks the reference by label (a group's label counts);
+all other histograms, data included, are divided by it. The uncertainty treatment is chosen per histogram:
 data over simulation keeps the reference uncertainty as a band, simulation over
 simulation propagates both sides, so systematic sources they share cancel.
 `ratio_uncertainty=` applies one treatment to all.
@@ -486,6 +492,9 @@ rf.plot(
 h = rf.histogram("final/p8_ee_ZH_ecm240_sel0_histo.root", "mz")  # a hist.Hist
 rf.plot2d("final/p8_ee_ZH_ecm240_sel0_histo.root", "mz_recoil_2D")  # a stored TH2
 ```
+
+A [`Group`][rootfig.Group] of such samples sums their stored histograms into
+one, each scaled by its sample's `scale` and luminosity factor first.
 
 The decision is made per call and is deterministic. A variable that is a bare
 name is read as a stored histogram when every sample reads files without an

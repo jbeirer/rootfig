@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import pickle
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any
 
@@ -23,17 +24,21 @@ from rootfig.io import ArraySource, FileSource
 from rootfig.model import (
     DEFAULT_RANGE,
     Cut,
+    Group,
     Sample,
     Style,
     Systematic,
     Variable,
     as_cut,
+    as_plot_items,
     as_samples,
     as_style,
     as_systematics,
     as_variable,
     auto_range,
+    leaf_samples,
     log_bins,
+    map_samples,
     resolve_axis,
 )
 from rootfig.model.binning import ROBUST_COVERAGE_BUDGET
@@ -855,3 +860,158 @@ class TestMergeTarget:
             merge_target([0, 4, 1])
         with pytest.raises(BinningError, match="positive"):
             merge_target(0)
+
+
+class TestGroup:
+    @staticmethod
+    def _sample(label: str, **kwargs: Any) -> Sample:
+        return Sample({"x": np.arange(3.0)}, label=label, **kwargs)
+
+    def test_construction(self) -> None:
+        a, b = self._sample("A"), self._sample("B")
+        components = [a, b]
+        group = Group(components, label="AB", color="C0", histtype="fill")
+        components.append(a)  # the group keeps its own copy
+        assert group.components == (a, b)
+        assert group.samples == (a, b)
+        assert (group.label, group.color, group.histtype) == ("AB", "C0", "fill")
+        assert not group.is_data
+        assert repr(group) == "Group(['A', 'B'], label='AB', color='C0', histtype='fill')"
+        assert repr(Group([a], label="A")) == "Group(['A'], label='A')"
+
+    def test_nested(self) -> None:
+        ww, zz, qq, tautau = (self._sample(name) for name in ("WW", "ZZ", "qq", "tautau"))
+        vv = Group([ww, zz], label="VV")
+        other = Group([qq, tautau], label="Other")
+        background = Group([vv, other], label="Background")
+        assert background.components == (vv, other)
+        assert background.samples == (ww, zz, qq, tautau)
+        assert leaf_samples([background, ww]) == [ww, zz, qq, tautau, ww]
+
+    def test_is_data(self) -> None:
+        d1, d2 = self._sample("D1", is_data=True), self._sample("D2", is_data=True)
+        data = Group([d1, d2], label="Data")
+        assert data.is_data
+        assert Group([data], label="outer").is_data
+        with pytest.raises(
+            ValueError, match=r"mixes observed data \(\['D1', 'D2'\]\) and simulated"
+        ):
+            Group([data, self._sample("A")], label="Mixed")
+
+    @pytest.mark.parametrize(
+        ("components", "error", "message"),
+        [
+            ([], ValueError, "group 'G' has no components"),
+            (["a.root"], TypeError, r"component 0 of group 'G' is a str \('a.root'\).*rf.Sample"),
+            ([Sample({"x": [1.0]}), 3], TypeError, "component 1 of group 'G' is a int"),
+            ("a.root", TypeError, "Sample or Group objects, got str"),
+            ({"A": Sample({"x": [1.0]})}, TypeError, "Sample or Group objects, got dict"),
+            (Sample({"x": [1.0]}), TypeError, "Sample or Group objects, got Sample"),
+        ],
+    )
+    def test_invalid_components(
+        self, components: Any, error: type[Exception], message: str
+    ) -> None:
+        with pytest.raises(error, match=message):
+            Group(components, label="G")
+
+    def test_invalid_label(self) -> None:
+        a = self._sample("A")
+        with pytest.raises(TypeError, match="label must be a string, got int"):
+            Group([a], label=3)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="must not be blank"):
+            Group([a], label="  ")
+
+    def test_immutable(self) -> None:
+        group = Group([self._sample("A")], label="G")
+        with pytest.raises(FrozenInstanceError):
+            group.label = "H"  # type: ignore[misc]
+        assert isinstance(group.components, tuple)
+
+    def test_replace(self) -> None:
+        a, b, data = self._sample("A"), self._sample("B"), self._sample("D", is_data=True)
+        group = Group([a], label="G", color="C1")
+        changed = group.replace(label="H", components=[a, b])
+        assert (changed.label, changed.components, changed.color) == ("H", (a, b), "C1")
+        assert group.components == (a,)
+        assert group.replace(components=[data]).is_data
+        with pytest.raises(ValueError, match="mixes observed data"):
+            group.replace(components=[a, data])
+        with pytest.raises(TypeError, match="unknown Group field"):
+            group.replace(colour="C2")
+        with pytest.raises(ValueError, match="blank"):
+            group.replace(label="")
+        nested = group.replace(components=[group])  # holds the original: a tree, not a cycle
+        assert nested.components == (group,)
+        assert nested.samples == (a,)
+
+    @pytest.mark.parametrize("operation", ["copy", "deepcopy", "pickle"])
+    def test_copy_and_pickle(self, operation: str) -> None:
+        group = Group([Group([self._sample("A")], label="inner")], label="outer")
+        restored = (
+            pickle.loads(pickle.dumps(group))
+            if operation == "pickle"
+            else getattr(copy, operation)(group)
+        )
+        assert restored.label == "outer"
+        assert [s.label for s in restored.samples] == ["A"]
+
+    def test_map_samples(self) -> None:
+        a, b = self._sample("A"), self._sample("B")
+        group = Group([Group([a], label="inner"), b], label="outer", color="C0")
+        marked = map_samples(group, lambda s: s.replace(is_data=True))
+        assert isinstance(marked, Group)
+        assert marked.is_data
+        assert marked.color == "C0"
+        assert [s.label for s in marked.samples] == ["A", "B"]
+        assert not group.is_data
+        assert map_samples(a, lambda s: s.replace(label="Z")).label == "Z"
+
+
+class TestAsPlotItems:
+    def test_group_free_input_matches_as_samples(
+        self, signal_file: Path, background_file: Path
+    ) -> None:
+        for data in (
+            signal_file,
+            [signal_file, background_file],
+            {"S": signal_file, "B": background_file},
+            {"x": [1.0, 2.0]},
+        ):
+            items = as_plot_items(data, tree="events")
+            samples = as_samples(data, tree="events")
+            assert [(type(i), i.label) for i in items] == [(type(s), s.label) for s in samples]
+        labelled = as_plot_items([signal_file, background_file], tree="events", labels=["S", "B"])
+        assert [i.label for i in labelled] == ["S", "B"]
+
+    def test_groups_in_lists_and_mappings(self, signal_file: Path) -> None:
+        a = Sample({"x": [1.0]}, label="A")
+        group = Group([a], label="G")
+        assert as_plot_items(group) == [group]
+        items = as_plot_items([group, a, signal_file], tree="events")
+        assert items[:2] == [group, a]
+        assert items[2].label == "signal"
+        relabelled = as_plot_items({"VV": group, "S": a, "F": signal_file}, tree="events")
+        assert [i.label for i in relabelled] == ["VV", "S", "F"]
+        assert isinstance(relabelled[0], Group)
+        assert relabelled[0].components == (a,)
+        assert (group.label, a.label) == ("G", "A")  # the originals are untouched
+        assert [i.label for i in as_plot_items([group, a], labels=["X", "Y"])] == ["X", "Y"]
+        with pytest.raises(SourceError, match="got 1 labels for 2 samples"):
+            as_plot_items([group, a], labels="X")
+
+    def test_mapping_holding_a_group_is_a_label_map(self) -> None:
+        group = Group([Sample({"x": [1.0]}, label="A")], label="G")
+        with pytest.raises(SourceError, match="mapping holding groups"):
+            as_plot_items({"G": group, "x": [1.0, 2.0]})
+        with pytest.raises(SourceError, match="mapping holding groups"):
+            as_plot_items({1: group})
+
+    def test_as_samples_refuses_groups(self) -> None:
+        a = Sample({"x": [1.0]}, label="A")
+        group = Group([a], label="G")
+        with pytest.raises(TypeError, match=r"not accepted here \(\['G'\]\).*group.samples"):
+            as_samples([group, a])
+        with pytest.raises(TypeError, match="not accepted here"):
+            as_samples({"G": group})
+        assert as_samples([a]) == [a]
