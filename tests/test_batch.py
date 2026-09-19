@@ -882,6 +882,30 @@ class TestBatching:
         assert_same_plot(results["Muon_pt__coarse"], rf.plot(files, "Muon_pt", bins=10))
         assert_same_plot(results["MET__fine"], rf.plot(files, "MET", bins=20))
 
+    def test_preparations_needing_different_branches_share_one_read(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Variants whose preparation reads other branches are planned together, so a batch
+        # still costs one pass over each file rather than one per preparation.
+        reads = _reads(monkeypatch)
+        book = rf.PlotBook(
+            files,
+            ["MET"],
+            variants={
+                "plain": {},
+                "weighted": {"weight": "nMuon"},
+                "varied": {"systematics": {"scale": {"MET": "sentinel"}}},
+            },
+        )
+        results = list(book.plots())
+        assert len(reads) == 2
+        assert all(set(call) == {"MET", "weight", "nMuon", "sentinel"} for call in reads)
+        by_stem = {task.stem: result for task, result in results}
+        assert by_stem["MET__plain"].histograms[0].variations == {}
+        assert sorted(by_stem["MET__varied"].histograms[0].variations) == ["scale"]
+        for task, result in results:
+            assert_same_plot(result, rf.plot(files, task.variable, **task.kwargs))
+
     def test_normalisation_is_a_drawing_variant(
         self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
     ) -> None:

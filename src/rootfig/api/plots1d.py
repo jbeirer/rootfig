@@ -27,9 +27,9 @@ from rootfig.histograms import (
     Histogram,
     NormalizeSpec,
     RatioUncertainty,
+    ReadPlan,
     SignificanceKind,
     build_histograms,
-    prefetch,
     significance,
     sum_histograms,
 )
@@ -437,39 +437,44 @@ def prefetch_plots(
     data: Any,
     variables: Sequence[str | Variable],
     selections: Sequence[CutLike | None],
-    **options: Any,
+    options: Sequence[Mapping[str, Any]] = ({},),
 ) -> None:
-    """Read into ``cache`` what :func:`prepare_plot` reads for ``variables`` under ``selections``.
+    """Read into ``cache`` what :func:`prepare_plot` reads for ``variables`` and ``selections``.
 
-    ``options`` are the keywords of :func:`prepare_plot`; those deciding what
-    is read (``tree``, ``label``, ``observed``, ``weight``, ``systematics``,
-    ``assume_poisson``) are used, the others are accepted and ignored. An
-    optimisation only, so it never raises: nothing is read for histogram
+    Each entry of ``options`` is a set of :func:`prepare_plot` keywords to read
+    for; those deciding what is read (``tree``, ``label``, ``observed``,
+    ``weight``, ``systematics``, ``assume_poisson``) are used, the others are
+    accepted and ignored. All of them are planned before anything is read, so
+    sets needing different branches, such as two variants with different
+    weights, cost one pass over each file rather than one each.
+
+    An optimisation only, so it never raises: nothing is read for histogram
     objects, and whatever :func:`prepare_plot` will refuse, an unusable
     ``data`` or ``label`` as much as an unknown branch, is left to the call
     that needs it, which raises the error for its own task.
     """
     if histogram_objects(data) is not None:
         return
-    # Every exception, not only rootfig's: a bad option of one task must not surface while
-    # the histograms of another are being read ahead (see histograms.prefetch for the reads).
-    with suppress(Exception):
-        items = _items(
-            data,
-            tree=options.get("tree"),
-            label=options.get("label"),
-            observed=options.get("observed"),
-        )
-        wanted = [as_variable(variable) for variable in variables]
-        prefetch(
-            cache,
-            items,
-            wanted,
-            selections=selections,
-            weight=options.get("weight"),
-            systematics=options.get("systematics"),
-            assume_poisson=bool(options.get("assume_poisson", False)),
-        )
+    plan = ReadPlan(cache)
+    for option_set in options:
+        # Every exception, not only rootfig's: a bad option of one task must not surface
+        # while the histograms of another are read ahead, nor stop them being read.
+        with suppress(Exception):
+            items = _items(
+                data,
+                tree=option_set.get("tree"),
+                label=option_set.get("label"),
+                observed=option_set.get("observed"),
+            )
+            plan.add(
+                items,
+                [as_variable(variable) for variable in variables],
+                selections=selections,
+                weight=option_set.get("weight"),
+                systematics=option_set.get("systematics"),
+                assume_poisson=bool(option_set.get("assume_poisson", False)),
+            )
+    plan.read()
 
 
 def draw_plot(

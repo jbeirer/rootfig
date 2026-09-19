@@ -21,7 +21,7 @@ from rootfig.histograms.pipeline import (
     read_arrays,
     source_length,
 )
-from rootfig.histograms.prefetch import prefetch
+from rootfig.histograms.prefetch import ReadPlan, prefetch
 from rootfig.histograms.ratio import (
     SIGNIFICANCE_KINDS,
     Ratio,
@@ -48,6 +48,7 @@ __all__ = [
     "ProfileStatistic",
     "Ratio",
     "RatioUncertainty",
+    "ReadPlan",
     "SignificanceKind",
     "Summary",
     "Uncertainty",

@@ -3,8 +3,8 @@
 Every task produces what ``plot(data, task.variable, selection=task.selection,
 **task.kwargs)`` returns, through the two halves of that call: the variables
 are taken :data:`_VARIABLE_BATCH_SIZE` at a time, a :class:`~rootfig.io.ReadCache`
-warmed with the branches they and every selection need serves the reads of the
-batch (:func:`~rootfig.api.plots1d.prefetch_plots`), each ``(variable,
+warmed with the branches they, every selection and every preparation the batch
+uses need serves its reads (:func:`~rootfig.api.plots1d.prefetch_plots`), each ``(variable,
 selection)`` is prepared once for the variants that only change the drawing
 (:func:`~rootfig.api.plots1d.prepare_plot`) and every variant is drawn from that
 (:func:`~rootfig.api.plots1d.draw_plot`).
@@ -473,8 +473,10 @@ class PlotBook:
                         try:
                             if cache is None:
                                 cache = ReadCache()
-                                for options in self._preparation_options():
-                                    prefetch_plots(cache, self.data, chunk, cuts, **options)
+                                # one read per source for every preparation of the batch
+                                prefetch_plots(
+                                    cache, self.data, chunk, cuts, self._preparation_options()
+                                )
                             prepare_options, draw_options = _split_options(task.kwargs)
                             if variant_name not in drawing_only:
                                 prepared = prepare_plot(
