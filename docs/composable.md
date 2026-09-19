@@ -97,8 +97,9 @@ rf.plot([vv, zh], "recoil_mass", lumi="10.8 ab^-1", stack=True)  # two histogram
   parts separately.
 - Only `rf.Group(...)` makes a group. A list of paths given to `plot()` is
   still one sample per path, and `Sample([...])` one sample over several files.
-- The summed histogram has no `sample` and no unbinned statistics: `stats=`
-  skips it and `Histogram.entries` is `None`.
+- The summed histogram has no `sample` and no unbinned statistics:
+  `Histogram.entries` is `None`, and `stats=True` leaves it out of the
+  statistics box, or raises when no histogram of the plot has statistics.
 - `group.replace(label="...")` returns a validated copy.
 
 `plot()`, `histograms()` and `histogram()` accept groups; `summarize()`,
