@@ -2244,6 +2244,36 @@ class TestPrefetch:
                 np.testing.assert_array_equal(up.values(flow=True), want_up.values(flow=True))
                 np.testing.assert_array_equal(down.values(flow=True), want_down.values(flow=True))
 
+    def test_lower_level_callers_reuse_the_cached_source(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import uproot
+
+        import rootfig as rf
+        from rootfig.histograms import load_columns, read_arrays
+        from rootfig.io import ReadCache
+
+        opens: list[str] = []
+        original = uproot.open
+
+        def counting(path: Any, *args: Any, **kwargs: Any) -> Any:
+            opens.append(Path(path).name)
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(uproot, "open", counting)
+        reads = self._reads(monkeypatch)
+        cache = ReadCache()
+        # samples built apart from the same files: equal sources, each blank to begin with
+        first = load_columns(rf.Sample(signal_file, tree="events"), ["MET"], cache=cache)
+        again = load_columns(rf.Sample(signal_file, tree="events"), ["MET"], cache=cache)
+        arrays, _ = read_arrays(
+            rf.Sample(signal_file, tree="events"), [rf.Variable("MET").parsed()], cache=cache
+        )
+        assert opens == ["signal.root"]  # the branch list was learnt once, not three times
+        assert reads == [["MET"]]
+        np.testing.assert_array_equal(first.values, again.values)
+        np.testing.assert_array_equal(np.asarray(arrays["MET"]), first.values)
+
     def test_union_read_once_per_source(
         self, signal_file: Path, background_file: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -81,16 +81,21 @@ def read_arrays(
     """Read the branches ``expressions`` need from ``sample`` and return them with the event count.
 
     Only the union of the required branches is read (:func:`branch_names`). A
-    ``cache`` serves the branches it holds and reads the rest, for file sources;
+    ``cache`` serves the branches it holds and reads the rest, through the
+    source instance it holds for these files, so a source rebuilt from the same
+    paths reads neither the branches nor what the file says about itself again;
     in-memory sources are read directly. The number of events is taken from the
     arrays, or from the source when nothing had to be read (all expressions
     constant), so ``"1"`` or ``"True"`` still know how many events there are.
     """
     source = sample.source
-    needed = branch_names(source, expressions)
     if cache is not None and isinstance(source, FileSource):
+        # the instance the cache holds for these files, which has already learnt about them
+        source = cache.source(source)
+        needed = branch_names(source, expressions)
         arrays = cache.arrays(source, needed)
     else:
+        needed = branch_names(source, expressions)
         arrays = source.arrays(needed)
     if needed:
         return arrays, len(next(iter(arrays.values())))
@@ -140,9 +145,12 @@ def load_columns(
     The selection and weight given here are combined with those defined on the
     sample itself (see :func:`combined_selection` and :func:`combined_weight`).
     ``lumi`` scales samples that carry a cross section (see
-    :meth:`~rootfig.model.Sample.lumi_scale`). ``cache`` is passed to
-    :func:`read_arrays`.
+    :meth:`~rootfig.model.Sample.lumi_scale`). With a ``cache`` the sample reads
+    through the source instance it holds for its files
+    (:func:`~rootfig.histograms.sources.shared_source`), which is then also
+    where the branches and the cross-section numbers are read.
     """
+    sample = shared_source(sample, cache)
     var_exprs = [as_variable(v).expression for v in variables]
     cut = combined_selection(sample, selection)
     weight_expr = combined_weight(sample, weight)

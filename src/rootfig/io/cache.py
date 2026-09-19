@@ -38,7 +38,10 @@ class ReadCache:
         objects, tree, entry count, scalars) on the instance. Sources rebuilt
         from the same paths for every histogram, such as raw paths given as
         ``data`` or the files of a ``Systematic.samples`` variation, read through
-        the first instance and so learn it once.
+        the first instance and so learn it once. Reading through the cache
+        applies this (:func:`~rootfig.histograms.sources.shared_source`), so
+        callers only need it themselves for what they read from a source
+        directly.
         """
         return self._sources.setdefault(source, source)
 
