@@ -31,7 +31,6 @@ from rootfig.histograms.ratio import (
     ratio,
     significance,
 )
-from rootfig.histograms.sources import shared_source
 from rootfig.histograms.stats import Summary, correlation_matrix, describe_table, summarize
 from rootfig.histograms.stored import describe_axes, read_stored, stored_mode
 from rootfig.histograms.systematics import Uncertainty, sum_histograms, uncertainty
@@ -78,7 +77,6 @@ __all__ = [
     "read_arrays",
     "read_stored",
     "regroup_histograms",
-    "shared_source",
     "significance",
     "source_length",
     "stored_mode",

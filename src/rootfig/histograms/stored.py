@@ -430,7 +430,7 @@ def _variant_sample(
     """Return the sample a ``Systematic.samples`` variation reads: other files, nominal settings.
 
     Its files are read through the instance ``cache`` holds for them
-    (:func:`~rootfig.histograms.shared_source`).
+    (:func:`~rootfig.histograms.sources.shared_source`).
     """
     if isinstance(spec, Sample):
         return shared_source(spec.replace(label=context, systematics={}), cache)

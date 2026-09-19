@@ -476,7 +476,7 @@ def _variant_sample(
     that cannot look up a string ``ngen`` itself (in-memory arrays) takes the
     nominal sample's resolved number of generated events; files read their own,
     through the instance ``cache`` holds for them
-    (:func:`~rootfig.histograms.shared_source`).
+    (:func:`~rootfig.histograms.sources.shared_source`).
     """
     if isinstance(spec, Sample):
         return shared_source(spec.replace(label=context), cache)

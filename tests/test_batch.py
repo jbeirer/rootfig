@@ -1105,6 +1105,44 @@ class TestBatching:
         for task, result in results:
             assert_same_plot(result, rf.plot(by_path, task.variable))
 
+    def test_variation_files_are_read_once_for_the_batch(
+        self, signal_file: Path, background_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An alternative generator is one file for many variables, so it must not be read
+        # once per variable; its branches join the batch's plan like the nominal ones.
+        sample = rf.Sample(
+            signal_file,
+            tree="events",
+            label="S",
+            weight="weight",
+            systematics={"generator": rf.Systematic.samples(background_file)},
+        )
+        variables = ["MET", "Muon_pt", "nMuon"]
+        reads = _reads(monkeypatch)
+        results = list(rf.PlotBook(sample, variables).plots())
+        assert len(reads) == 2  # the nominal file and the variation's, once each
+        assert all(set(call) == {"MET", "Muon_pt", "nMuon", "weight"} for call in reads)
+        for task, result in results:
+            assert sorted(result.histograms[0].variations) == ["generator"]
+            assert_same_plot(result, rf.plot(sample, task.variable))
+
+    def test_stored_variation_files_are_read_once_for_the_batch(
+        self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sample = rf.Sample(
+            stored_dir / "WW_sel0_histo.root",
+            label="WW",
+            systematics={"alt": rf.Systematic.samples(stored_dir / "ZZ_sel0_histo.root")},
+        )
+        opens = _opens(monkeypatch)
+        results = list(rf.PlotBook(sample, ["mz", "mz_raw", "cutflow"]).plots())
+        # the nominal file is listed (stored_mode) and read; the variation's is only read
+        assert opens.count("ZZ_sel0_histo.root") == 1
+        assert opens.count("WW_sel0_histo.root") == 2
+        for task, result in results:
+            assert sorted(result.histograms[0].variations) == ["alt"]
+            assert_same_plot(result, rf.plot(sample, task.variable))
+
     def test_replace_systematic_missing_branch_fails_only_where_used(
         self, signal_file: Path
     ) -> None:

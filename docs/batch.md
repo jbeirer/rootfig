@@ -174,7 +174,8 @@ returns: the same histograms, binning, systematics, labels and errors.
 
 The book only reads less often than that call would. It runs the tasks in
 batches of a few dozen variables: the branches those variables and every
-selection need are read once per sample for the batch, and variants that only
+selection need are read once per sample for the batch, the files a
+`Systematic.samples` variation fills from included, and variants that only
 change the drawing (`logy`, `normalize`, `ratio`, `style`, ...) are drawn from
 one set of prepared histograms, each figure from its own copy. A variant that
 changes how the histograms are prepared (`bins`, `weight`, `observed`,
