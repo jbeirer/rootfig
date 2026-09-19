@@ -73,15 +73,19 @@ book = rf.PlotBook(
 draws `lin` with `stack=True, logy=False` and `log` with `stack=True, logy=True`.
 
 Every other keyword of `rf.plot` (`observed=`, `normalize=`, `ratio=`,
-`systematics=`, `style=`, ...) goes into `plot_kwargs` or a variant and is
-validated by `rf.plot` itself. Five are the book's own and are rejected there:
+`systematics=`, `style=`, ...) goes into `plot_kwargs` or a variant. The keyword
+names are checked against `rf.plot`'s signature when the book is built, so a
+misspelt `log_y` is reported, with `logy` as the suggestion, before anything is
+drawn rather than after the first tasks have written their files; the values are
+validated by `rf.plot` itself. Five keywords are the book's own and are rejected:
 `data`, `variable` and `selection` come from the task, `save` from
 `PlotBook.save()`, and `ax` because every task draws its own figure.
 
 A reserved keyword, an empty `selections=` or `variants=`, an unusable name and a
 pair of tasks whose files would collide all raise `ValueError` when the book is
-built. A `selections=`, `variants=` or `plot_kwargs=` that is not a mapping, and a
-name that is not a string, raise `TypeError`.
+built. A `selections=`, `variants=` or `plot_kwargs=` that is not a mapping, a
+name that is not a string, and a keyword `rf.plot` does not take, raise
+`TypeError`.
 
 Selection and variant names become file name components: non-empty, not `.`
 or `..`, without `/` or `\`.
@@ -89,13 +93,20 @@ or `..`, without `/` or `\`.
 ## Data passes through unchanged
 
 `data` is stored as given and handed to `rf.plot` as is, never copied,
-flattened or inspected. Everything `rf.plot` accepts therefore works
-identically in a book: file paths and globs, `Sample` objects, `Group` objects
-(drawn as one histogram), a `Group` as `observed=`, variables that name a
-`TH1` stored in the files, in-memory arrays and `hist.Hist` or `Histogram`
-objects. Only the book's configuration (variables, selections, variants and
-keywords) is copied and frozen, so changing the dictionaries afterwards does
-not change the book.
+flattened or inspected. Every form of `data` that `rf.plot` accepts can therefore
+be used in a book: file paths and globs, `Sample` objects, `Group` objects (drawn
+as one histogram), a `Group` as `observed=`, variables that name a `TH1` stored
+in the files, in-memory arrays and `hist.Hist` or `Histogram` objects. The rules
+of `rf.plot` apply unchanged: a book always names at least one variable, and a
+`selection` or `weight` raises for a ready-made histogram, which is drawn as it
+is.
+
+The book copies the mappings it is configured with (the variable list,
+`selections`, `variants` and each keyword mapping) into read-only copies, so
+adding to or replacing entries of those dictionaries afterwards does not change
+the book. The values inside them are shared, not copied: a `Style`, a `Group` or
+a `systematics=` mapping given in `plot_kwargs` is the caller's object, and
+changing it changes what the book draws.
 
 ## File names
 
@@ -122,9 +133,12 @@ remaining `savefig_kwargs` go to [`Plot.save`][rootfig.Plot.save]; `format` and
 `fname` are refused, because the file names come from `formats` and the task.
 
 Two tasks that would share a name are rejected when the book is built, not
-when the second file overwrites the first. `save()` returns the written paths in
-task order, then format order, and closes every figure after writing it, also
-when writing fails, so memory stays bounded however large the book is.
+when the second file overwrites the first. Names are compared ignoring case and
+Unicode normalisation, since `lin` and `LIN` are one file on the case-insensitive
+file systems of macOS and Windows; the message lists the spellings that clash.
+`save()` returns the written paths in task order, then format order, and closes
+every figure after writing it, also when writing fails, so memory stays bounded
+however large the book is.
 
 ## Running plots yourself
 

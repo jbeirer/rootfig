@@ -7,10 +7,8 @@ from rootfig.plotting.figure import (
     Layout,
     apply_xbreak,
     break_segments,
-    close_figures_since,
     finish_axes,
     make_figure,
-    open_figure_ids,
     overlay_artists,
     raise_ylim_above,
     ylabel_for,
@@ -28,7 +26,7 @@ from rootfig.plotting.hist1d import (
 from rootfig.plotting.hist2d import draw_hist2d
 from rootfig.plotting.points import draw_efficiencies, draw_profiles
 from rootfig.plotting.ratio import draw_ratio_panel, draw_significance_panel, ratio_ylim
-from rootfig.plotting.result import Plot, normalize_formats
+from rootfig.plotting.result import Plot
 from rootfig.plotting.style import (
     DARK_THEME,
     DEFAULT_COLORS,
@@ -62,7 +60,6 @@ __all__ = [
     "align_experiment_label",
     "apply_xbreak",
     "break_segments",
-    "close_figures_since",
     "color_cycle",
     "correlation_figsize",
     "dark_theme",
@@ -81,8 +78,6 @@ __all__ = [
     "label_flow_bins",
     "legend_location",
     "make_figure",
-    "normalize_formats",
-    "open_figure_ids",
     "overlay_artists",
     "raise_ylim_above",
     "ratio_ylim",

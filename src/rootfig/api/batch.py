@@ -2,22 +2,33 @@
 
 from __future__ import annotations
 
+import inspect
 import os
-from collections import Counter
+import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Any
 
 from rootfig._mapping import FrozenMapping
 from rootfig.api.plots1d import plot
 from rootfig.model import Cut, CutLike, Variable, as_cut, as_variable
-from rootfig.plotting import Plot, close_figures_since, normalize_formats, open_figure_ids
+from rootfig.plotting import Plot
+from rootfig.plotting.figure import close_figures_since, open_figure_ids
+from rootfig.plotting.result import normalize_formats
 
 __all__ = ["PlotBook", "PlotTask"]
 
 _RESERVED_PLOT_KWARGS = frozenset({"data", "variable", "selection", "save", "ax"})
 """Keywords of :func:`~rootfig.plot` that :class:`PlotBook` fills in itself."""
+
+_PLOT_KEYWORDS = frozenset(inspect.signature(plot).parameters) - _RESERVED_PLOT_KWARGS
+"""Keywords of :func:`~rootfig.plot` a book or variant may set.
+
+Checked when the book is built: a misspelt keyword would otherwise surface only
+once the batch is running, after earlier tasks have written their files.
+"""
 
 _RESERVED_SAVEFIG_KWARGS = frozenset({"format", "fname"})
 """Keywords of ``savefig`` that would fight the file names :meth:`PlotBook.save` builds."""
@@ -36,6 +47,16 @@ _IMPLICIT_VARIANT = "default"
 def _stem(variable: str, selection: str | None, variant: str | None) -> str:
     """Join the components of an output file name, leaving out the implicit axes."""
     return _SEPARATOR.join(part for part in (variable, selection, variant) if part is not None)
+
+
+def _file_key(stem: str) -> str:
+    """Fold a stem the way case- and normalisation-insensitive file systems compare names.
+
+    Two stems with one key would be one file on such a file system, so the second
+    save would overwrite the first; the book rejects them. NFKC plus ``casefold``
+    is deliberately conservative: a false clash costs a rename, a missed one a plot.
+    """
+    return unicodedata.normalize("NFKC", stem).casefold()
 
 
 @dataclass(frozen=True)
@@ -120,8 +141,11 @@ def _identifier(value: object, *, what: str) -> str:
     return value
 
 
-def _as_mapping(values: object, *, what: str, holds: str) -> Mapping[str, Any]:
-    """Return ``values`` if it is a mapping, else raise naming what was expected."""
+def _as_mapping(values: object, *, what: str, holds: str) -> Mapping[Any, Any]:
+    """Return ``values`` if it is a mapping, else raise naming what was expected.
+
+    Keys are ``Any``: that they are strings is checked by the caller, with a message.
+    """
     if not isinstance(values, Mapping):
         msg = f"{what} must map {holds}, got {type(values).__name__}"
         raise TypeError(msg)
@@ -150,10 +174,14 @@ def _variables(values: str | Variable | Sequence[str | Variable]) -> tuple[Varia
 
 
 def _plot_kwargs(values: Mapping[str, Any] | None, *, where: str) -> FrozenMapping[str, Any]:
-    """Copy plot keywords, rejecting the ones the book fills in itself."""
+    """Copy plot keywords, rejecting the ones the book fills in itself and unknown ones."""
     if values is None:
         return FrozenMapping({})
     mapping = _as_mapping(values, what=where, holds="plot() keywords to values")
+    for key in mapping:
+        if not isinstance(key, str):
+            msg = f"{where} keys must be plot() keyword names, got {key!r}"
+            raise TypeError(msg)
     reserved = sorted(_RESERVED_PLOT_KWARGS.intersection(mapping))
     if reserved:
         msg = (
@@ -162,6 +190,14 @@ def _plot_kwargs(values: Mapping[str, Any] | None, *, where: str) -> FrozenMappi
             "its own figure (no ax=)"
         )
         raise ValueError(msg)
+    unknown = [key for key in mapping if key not in _PLOT_KEYWORDS]
+    if unknown:
+        described = []
+        for key in unknown:
+            close = get_close_matches(key, _PLOT_KEYWORDS, n=1)
+            described.append(f"{key!r} (did you mean {close[0]!r}?)" if close else repr(key))
+        msg = f"{where} names keywords plot() does not have: {', '.join(described)}"
+        raise TypeError(msg)
     return FrozenMapping(mapping)
 
 
@@ -226,9 +262,12 @@ class PlotBook:
     task under deterministic names. Each plot is an ordinary
     :func:`~rootfig.plot` call, so samples, groups, stored histograms, arrays and
     histogram objects behave exactly as they do there; ``data`` is passed on as
-    given, never copied or inspected. Names of selections and variants are file
-    name components: they must hold more than dots and spaces, and no control
-    character, slash or backslash.
+    given, never copied or inspected. The configuration mappings are copied, the
+    values inside them (a ``systematics=`` mapping, a ``Style``) are shared. Names
+    of selections and variants are file name components: they must hold more than
+    dots and spaces, and no control character, slash or backslash. Two tasks whose
+    file names differ only in case or Unicode normalisation are one file on many
+    file systems and are rejected as a collision.
 
     Parameters
     ----------
@@ -259,7 +298,8 @@ class PlotBook:
         output files would collide.
     TypeError
         ``selections=``, ``variants=``, ``plot_kwargs=`` or one variant's overrides
-        is not a mapping, or a name is not a string.
+        is not a mapping, a name is not a string, or a keyword is not one
+        :func:`~rootfig.plot` takes (the message names the closest one).
 
     Examples
     --------
@@ -293,17 +333,19 @@ class PlotBook:
         object.__setattr__(self, "selections", _selections(selections))
         object.__setattr__(self, "variants", _variants(variants))
         object.__setattr__(self, "plot_kwargs", _plot_kwargs(plot_kwargs, where="plot_kwargs"))
-        counts = Counter(
-            _stem(variable.safe_name, selection, variant)
-            for variable in self.variables
-            for selection in (self.selections if self.selections is not None else [None])
-            for variant in (self.variants if self.variants is not None else [None])
-        )
-        clashes = sorted(stem for stem, count in counts.items() if count > 1)
+        by_file: dict[str, list[str]] = {}
+        for variable in self.variables:
+            for selection in self.selections if self.selections is not None else [None]:
+                for variant in self.variants if self.variants is not None else [None]:
+                    stem = _stem(variable.safe_name, selection, variant)
+                    by_file.setdefault(_file_key(stem), []).append(stem)
+        clashes = [dict.fromkeys(stems) for stems in by_file.values() if len(stems) > 1]
         if clashes:
+            shown = "; ".join(" and ".join(repr(stem) for stem in group) for group in clashes)
             msg = (
-                f"output names collide: {clashes}; rename a variable, selection or variant "
-                f"so that no two tasks share <variable>{_SEPARATOR}<selection>{_SEPARATOR}<variant>"
+                f"output names collide: {shown} (compared ignoring case, as case-insensitive "
+                "file systems do); rename a variable, selection or variant so that no two tasks "
+                f"share <variable>{_SEPARATOR}<selection>{_SEPARATOR}<variant>"
             )
             raise ValueError(msg)
 

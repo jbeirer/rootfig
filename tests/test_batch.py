@@ -108,12 +108,30 @@ class TestConstruction:
 
     def test_stem_collision_rejected(self, samples: list[rf.Sample]) -> None:
         # variable a__b with selection c and variable a with selection b__c both spell a__b__c
-        with pytest.raises(ValueError, match=re.escape("output names collide: ['a__b__c']")):
+        with pytest.raises(ValueError, match=re.escape("output names collide: 'a__b__c' (")):
             rf.PlotBook(
                 samples,
                 [rf.Variable("y", name="a__b"), rf.Variable("x", name="a")],
                 selections={"c": None, "b__c": None},
             )
+
+    def test_stems_that_are_one_file_on_case_insensitive_systems_collide(
+        self, samples: list[rf.Sample]
+    ) -> None:
+        # lin and LIN are one file on macOS and Windows; the message lists both spellings.
+        with pytest.raises(ValueError, match=re.escape("collide: 'x__lin' and 'x__LIN' (")):
+            rf.PlotBook(samples, [X], variants={"lin": {}, "LIN": {"logy": True}})
+        with pytest.raises(ValueError, match="'Mass' and 'mass'"):
+            rf.PlotBook(samples, [rf.Variable("y", name="Mass"), rf.Variable("x", name="mass")])
+        # Composed and decomposed spellings of an accented letter, and a ligature.
+        with pytest.raises(ValueError, match="collide"):
+            rf.PlotBook(samples, [X], selections={"\u00e9": None, "e\u0301": None})
+        with pytest.raises(ValueError, match="collide"):
+            rf.PlotBook(samples, [X], selections={"\ufb01t": None, "fit": None})
+        # Case only matters within one book's names, not for what plot() receives.
+        assert [t.stem for t in rf.PlotBook(samples, [X], variants={"LIN": {}}).tasks()] == [
+            "x__LIN"
+        ]
 
     @pytest.mark.parametrize("keyword", sorted(batch._RESERVED_PLOT_KWARGS))
     def test_reserved_keywords_rejected(self, samples: list[rf.Sample], keyword: str) -> None:
@@ -121,6 +139,28 @@ class TestConstruction:
             rf.PlotBook(samples, [X], plot_kwargs={keyword: None})
         with pytest.raises(ValueError, match=f"variant 'v' must not set '{keyword}'"):
             rf.PlotBook(samples, [X], variants={"v": {keyword: None}})
+
+    def test_unknown_keywords_rejected_when_built(self, samples: list[rf.Sample]) -> None:
+        # plot() would raise the same TypeError, but only once the batch is running.
+        with pytest.raises(TypeError, match=r"plot_kwargs names keywords plot\(\) does not have"):
+            rf.PlotBook(samples, [X], plot_kwargs={"log_y": True})
+        with pytest.raises(TypeError, match=r"'log_y' \(did you mean 'logy'\?\)"):
+            rf.PlotBook(samples, [X], plot_kwargs={"log_y": True})
+        with pytest.raises(TypeError, match=r"variant 'v' names keywords .*: 'nothing_like_it'$"):
+            rf.PlotBook(samples, [X], variants={"v": {"nothing_like_it": 1}})
+        with pytest.raises(TypeError, match=r"'log_y' \(did you mean 'logy'\?\), 'zz'$"):
+            rf.PlotBook(samples, [X], plot_kwargs={"log_y": True, "zz": 1})
+        with pytest.raises(TypeError, match=r"plot_kwargs keys must be .* names, got 1"):
+            rf.PlotBook(samples, [X], plot_kwargs={1: True})  # type: ignore[dict-item]
+        with pytest.raises(TypeError, match=r"variant 'v' keys must be .*, got None"):
+            rf.PlotBook(samples, [X], variants={"v": {None: True}})  # type: ignore[dict-item]
+
+    def test_every_plot_keyword_is_accepted(self, samples: list[rf.Sample]) -> None:
+        accepted = set(batch._PLOT_KEYWORDS)
+        assert {"logy", "stack", "observed", "systematics", "style", "figsize"} <= accepted
+        assert accepted.isdisjoint(batch._RESERVED_PLOT_KWARGS)
+        book = rf.PlotBook(samples, [X], plot_kwargs=dict.fromkeys(accepted))
+        assert set(book.plot_kwargs) == accepted
 
     def test_ax_rejected_with_explanation(self, samples: list[rf.Sample]) -> None:
         _, ax = plt.subplots()
@@ -172,11 +212,13 @@ class TestFreezing:
         assert book.tasks()[0].kwargs == {"stack": True, "logy": True}
 
     def test_book_and_tasks_are_read_only(self, samples: list[rf.Sample]) -> None:
-        book = rf.PlotBook(samples, [X], variants={"log": {"logy": True}}, plot_kwargs={"a": 1})
+        book = rf.PlotBook(
+            samples, [X], variants={"log": {"logy": True}}, plot_kwargs={"stack": True}
+        )
         with pytest.raises(dataclasses.FrozenInstanceError):
             book.variables = ()  # type: ignore[misc]
         with pytest.raises(TypeError):
-            book.plot_kwargs["a"] = 2  # type: ignore[index]
+            book.plot_kwargs["stack"] = False  # type: ignore[index]
         with pytest.raises(TypeError):
             (book.variants or {})["log"]["logy"] = False  # type: ignore[index]
         task = book.tasks()[0]
