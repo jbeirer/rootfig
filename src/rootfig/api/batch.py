@@ -1,18 +1,30 @@
-"""Batch plotting: :class:`PlotBook` repeats :func:`~rootfig.plot` over variables and selections."""
+"""Batch plotting: :class:`PlotBook` repeats :func:`~rootfig.plot` over variables and selections.
+
+Every task produces what ``plot(data, task.variable, selection=task.selection,
+**task.kwargs)`` returns, through the two halves of that call: the variables
+are taken :data:`_VARIABLE_BATCH_SIZE` at a time, a :class:`~rootfig.io.ReadCache`
+warmed with the branches they, every selection and every preparation the batch
+uses need serves its reads (:func:`~rootfig.api.plots1d.prefetch_plots`), each ``(variable,
+selection)`` is prepared once for the variants that only change the drawing
+(:func:`~rootfig.api.plots1d.prepare_plot`) and every variant is drawn from that
+(:func:`~rootfig.api.plots1d.draw_plot`).
+"""
 
 from __future__ import annotations
 
 import inspect
+import itertools
 import os
 import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from difflib import get_close_matches
 from pathlib import Path
 from typing import Any
 
 from rootfig._mapping import FrozenMapping
-from rootfig.api.plots1d import plot
+from rootfig.api.plots1d import PreparedPlot, draw_plot, plot, prefetch_plots, prepare_plot
+from rootfig.io import ReadCache
 from rootfig.model import Cut, CutLike, Variable, as_cut, as_variable, check_file_stem
 from rootfig.plotting import Plot
 from rootfig.plotting.figure import close_figures_since, open_figure_ids
@@ -28,6 +40,27 @@ _PLOT_KEYWORDS = frozenset(inspect.signature(plot).parameters) - _RESERVED_PLOT_
 
 Checked when the book is built: a misspelt keyword would otherwise surface only
 once the batch is running, after earlier tasks have written their files.
+"""
+
+_PREPARE_KEYWORDS = frozenset(inspect.signature(prepare_plot).parameters) - {
+    "data",
+    "variable",
+    "cache",
+}
+"""Keywords of :func:`~rootfig.plot` that decide what is read and how the histograms are filled.
+
+A variant that overrides none of them draws the histograms prepared for the
+book's own keywords; one that does is prepared on its own.
+"""
+
+_DRAW_KEYWORDS = frozenset(inspect.signature(draw_plot).parameters) - {"prepared"}
+"""Keywords of :func:`~rootfig.plot` that only change the drawing."""
+
+_VARIABLE_BATCH_SIZE = 32
+"""Variables whose branches are read together.
+
+Bounds what a batch holds in memory: the arrays of this many variables, plus
+those of the selections and weights, for every sample of the book.
 """
 
 _RESERVED_SAVEFIG_KWARGS = frozenset({"format", "fname"})
@@ -241,6 +274,29 @@ def _chosen(
     return [name for name in available if name in names]
 
 
+def _prepares(overrides: Mapping[str, Any]) -> bool:
+    """Whether a variant's overrides change how the histograms are prepared, not only drawn."""
+    return not _PREPARE_KEYWORDS.isdisjoint(overrides)
+
+
+def _split_options(kwargs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split a task's keywords into those of ``prepare_plot`` and those of ``draw_plot``."""
+    prepare = {key: value for key, value in kwargs.items() if key in _PREPARE_KEYWORDS}
+    draw = {key: value for key, value in kwargs.items() if key in _DRAW_KEYWORDS}
+    return prepare, draw
+
+
+def _copied(prepared: PreparedPlot) -> PreparedPlot:
+    """Return a copy of ``prepared`` whose histograms are independent of its own.
+
+    Drawing does not modify histograms, but ``hist.Hist`` objects are mutable and
+    the plots of several variants must not share them, or changing one figure's
+    histogram would change the next variant drawn from the same preparation.
+    """
+    copies = [histogram.map_hists(lambda h: h.copy()) for histogram in prepared.histograms]
+    return replace(prepared, histograms=copies)
+
+
 @dataclass(frozen=True, init=False, eq=False, repr=False)
 class PlotBook:
     """Many :func:`~rootfig.plot` calls described once: variables, selections and variants.
@@ -249,10 +305,12 @@ class PlotBook:
     three axes that vary. :meth:`tasks` lists the Cartesian product in a fixed
     order (variables, then selections, then variants, each in insertion order),
     :meth:`plots` runs it one plot at a time and :meth:`save` writes one file per
-    task under deterministic names. Each plot is an ordinary
-    :func:`~rootfig.plot` call, so samples, groups, stored histograms, arrays and
-    histogram objects behave exactly as they do there; ``data`` is passed on as
-    given, never copied or inspected. The configuration mappings are copied, the
+    task under deterministic names. Each plot is what the corresponding
+    :func:`~rootfig.plot` call returns, so samples, groups, stored histograms,
+    arrays and histogram objects behave exactly as they do there; ``data`` is
+    passed on as given, never copied or inspected. The book only reads the files
+    less often: once per batch of variables, for every selection and variant
+    (see :meth:`plots`). The configuration mappings are copied, the
     values inside them (a ``systematics=`` mapping, a ``Style``) are shared. Names
     of selections and variants are file name components and must be usable on
     every platform (:func:`~rootfig.model.check_file_stem`). Two tasks whose file
@@ -373,26 +431,95 @@ class PlotBook:
     def plots(self) -> Iterator[tuple[PlotTask, Plot]]:
         """Run the tasks lazily, yielding ``(task, plot)`` one figure at a time.
 
-        Each step is ``plot(data, task.variable, selection=task.selection,
-        **task.kwargs)``, and the tasks themselves are built one at a time. The
-        caller owns the figures that are yielded and closes them
+        Each result is what ``plot(data, task.variable, selection=task.selection,
+        **task.kwargs)`` returns, produced in batches: the variables are taken a
+        few dozen at a time, the branches they and every selection need are read
+        once per sample for the batch, and variants that only change the drawing
+        (``logy``, ``normalize``, ``ratio``, ``style``, ...) are drawn from one
+        set of prepared histograms, each from its own copy. A variant that
+        changes how the histograms are prepared (``bins``, ``weight``,
+        ``observed``, ``systematics``, ...) is prepared on its own. The tasks
+        themselves are built one at a time and nothing is read before the first
+        one runs. The caller owns the figures that are yielded and closes them
         (:meth:`Plot.close`); the figure a failing call had already created is
         closed here. An error keeps its type and gains a note naming the task
-        (``variable=..., selection=..., variant=...``).
+        (``variable=..., selection=..., variant=...``); one raised while reading
+        a batch names the batch's first task.
         """
-        for task in self._iter_tasks():
-            before = open_figure_ids()
-            drawn = False
-            try:
-                result = plot(self.data, task.variable, selection=task.selection, **task.kwargs)
-                drawn = True
-            except Exception as exc:
-                exc.add_note(f"while running PlotBook task {task.describe()}")
-                raise
-            finally:
-                if not drawn:
-                    close_figures_since(before)
-            yield task, result
+        selections: Sequence[tuple[str | None, Cut | None]] = (
+            list(self.selections.items()) if self.selections is not None else [(None, None)]
+        )
+        variants: Sequence[tuple[str | None, Mapping[str, Any]]] = (
+            list(self.variants.items()) if self.variants is not None else [(None, {})]
+        )
+        cuts = [cut for _, cut in selections]
+        # variants drawn from the histograms prepared for the book's own keywords
+        drawing_only = [name for name, overrides in variants if not _prepares(overrides)]
+        for chunk in itertools.batched(self.variables, _VARIABLE_BATCH_SIZE):
+            cache: ReadCache | None = None
+            for variable in chunk:
+                for selection_name, cut in selections:
+                    shared: PreparedPlot | None = None
+                    for variant_name, overrides in variants:
+                        task = PlotTask(
+                            variable,
+                            selection_name,
+                            cut,
+                            variant_name,
+                            FrozenMapping({**self.plot_kwargs, **overrides}),
+                        )
+                        before = open_figure_ids()
+                        drawn = False
+                        try:
+                            if cache is None:
+                                cache = ReadCache()
+                                # one read per source for every preparation of the batch
+                                prefetch_plots(
+                                    cache, self.data, chunk, cuts, self._preparation_options()
+                                )
+                            prepare_options, draw_options = _split_options(task.kwargs)
+                            if variant_name not in drawing_only:
+                                prepared = prepare_plot(
+                                    self.data,
+                                    variable,
+                                    selection=cut,
+                                    cache=cache,
+                                    **prepare_options,
+                                )
+                            else:
+                                if shared is None:
+                                    shared = prepare_plot(
+                                        self.data,
+                                        variable,
+                                        selection=cut,
+                                        cache=cache,
+                                        **prepare_options,
+                                    )
+                                prepared = _copied(shared) if len(drawing_only) > 1 else shared
+                            result = draw_plot(prepared, **draw_options)
+                            drawn = True
+                        except Exception as exc:
+                            exc.add_note(f"while running PlotBook task {task.describe()}")
+                            raise
+                        finally:
+                            if not drawn:
+                                close_figures_since(before)
+                        yield task, result
+
+    def _preparation_options(self) -> list[dict[str, Any]]:
+        """Return the distinct preparation keyword sets the tasks use.
+
+        The book's own (when a variant, or the implicit one, draws from it) and
+        one per variant that overrides a preparation keyword.
+        """
+        base = {key: value for key, value in self.plot_kwargs.items() if key in _PREPARE_KEYWORDS}
+        overriding = [
+            {key: value for key, value in overrides.items() if key in _PREPARE_KEYWORDS}
+            for overrides in (self.variants.values() if self.variants is not None else [{}])
+        ]
+        result = [base] if any(not own for own in overriding) else []
+        result.extend({**base, **own} for own in overriding if own)
+        return result
 
     def save(
         self,

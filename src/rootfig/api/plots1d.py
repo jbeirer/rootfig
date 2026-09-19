@@ -1,8 +1,16 @@
-"""One-dimensional plots: :func:`plot`, from trees, stored histograms or histogram objects."""
+"""One-dimensional plots: :func:`plot`, from trees, stored histograms or histogram objects.
+
+:func:`plot` is :func:`prepare_plot` (read or fill the histograms) followed by
+:func:`draw_plot` (render them). :class:`~rootfig.PlotBook` calls the two apart
+to prepare once and draw several variants, with :func:`prefetch_plots` reading
+the branches of several variables together.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 from rootfig.api._common import as_observed, normalize_for_plot, style_for
@@ -19,20 +27,22 @@ from rootfig.histograms import (
     Histogram,
     NormalizeSpec,
     RatioUncertainty,
+    ReadPlan,
     SignificanceKind,
     build_histograms,
     significance,
     sum_histograms,
 )
+from rootfig.io import ReadCache
 from rootfig.model import (
     Bins,
     CutLike,
+    PlotItem,
     RangeSpec,
     StyleLike,
     SystematicLike,
     Variable,
     as_plot_items,
-    as_style,
     as_variable,
 )
 from rootfig.model.samples import HistType
@@ -69,6 +79,35 @@ __all__ = ["plot"]
 
 RatioSpec = bool | str | tuple[str, str]
 """What ``ratio=`` accepts: a flag, a reference label, a significance kind, or (kind, signal)."""
+
+
+@dataclass(frozen=True)
+class PreparedPlot:
+    """The histograms :func:`plot` draws and what it was asked to label them with.
+
+    Attributes
+    ----------
+    histograms
+        One :class:`~rootfig.histograms.Histogram` per sample or group, observed
+        data last, as :func:`~rootfig.histograms.build_histograms` returns them,
+        or the histogram objects given as ``data``.
+    variable
+        The :class:`~rootfig.model.Variable` with the ``bins``, ``range``,
+        ``xlabel`` and ``unit`` options applied; ``None`` for histogram objects
+        drawn without one.
+    xlabel, unit
+        As given to :func:`plot`; they label histogram objects drawn without a
+        variable.
+    lumi
+        The luminosity the samples were scaled to, written into the experiment
+        label.
+    """
+
+    histograms: list[Histogram]
+    variable: Variable | None
+    xlabel: str | None = None
+    unit: str | None = None
+    lumi: float | str | None = None
 
 
 def plot(
@@ -263,6 +302,77 @@ def plot(
     Plot
         The figure, axes, histograms and ratios.
     """
+    prepared = prepare_plot(
+        data,
+        variable,
+        tree=tree,
+        selection=selection,
+        weight=weight,
+        lumi=lumi,
+        bins=bins,
+        range=range,
+        label=label,
+        observed=observed,
+        xlabel=xlabel,
+        unit=unit,
+        nonfinite=nonfinite,
+        systematics=systematics,
+        assume_poisson=assume_poisson,
+    )
+    return draw_plot(
+        prepared,
+        ylabel=ylabel,
+        title=title,
+        normalize=normalize,
+        stack=stack,
+        ratio=ratio,
+        ratio_ylim=ratio_ylim,
+        ratio_label=ratio_label,
+        ratio_uncertainty=ratio_uncertainty,
+        logx=logx,
+        logy=logy,
+        flow=flow,
+        histtype=histtype,
+        errorbars=errorbars,
+        xlim=xlim,
+        ylim=ylim,
+        xbreak=xbreak,
+        legend=legend,
+        stats=stats,
+        text=text,
+        style=style,
+        figsize=figsize,
+        ax=ax,
+        save=save,
+    )
+
+
+def prepare_plot(
+    data: Any,
+    variable: str | Variable | None = None,
+    *,
+    tree: str | None = None,
+    selection: CutLike | None = None,
+    weight: str | None = None,
+    lumi: float | str | None = None,
+    bins: Bins | None = None,
+    range: RangeSpec = None,
+    label: str | Sequence[str] | None = None,
+    observed: Any = None,
+    xlabel: str | None = None,
+    unit: str | None = None,
+    nonfinite: NonFinitePolicy = "drop",
+    systematics: Mapping[str, SystematicLike] | None = None,
+    assume_poisson: bool = False,
+    cache: ReadCache | None = None,
+) -> PreparedPlot:
+    """Read or fill the histograms :func:`plot` draws; see there for the options.
+
+    Everything that decides what is read and how the histograms are filled
+    happens here; :func:`draw_plot` takes the result. A ``cache``
+    (:class:`~rootfig.io.ReadCache`) serves the branch arrays and stored
+    histograms it holds and reads the rest, for file sources.
+    """
     objects = histogram_objects(data)
     if objects is not None:
         reject_fill_options(
@@ -296,9 +406,7 @@ def plot(
         if variable is None:
             msg = "plot() needs a variable (a branch, expression or stored histogram name)"
             raise TypeError(msg)
-        items = as_plot_items(data, tree=tree, labels=label)
-        if observed is not None:
-            items += [as_observed(item) for item in as_plot_items(observed, tree=tree)]
+        items = _items(data, tree=tree, label=label, observed=observed)
         var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
         hists = build_histograms(
             items,
@@ -309,67 +417,101 @@ def plot(
             nonfinite=nonfinite,
             systematics=systematics,
             assume_poisson=assume_poisson,
+            cache=cache,
         )
-    return _draw(
-        hists,
-        variable=var,
-        xlabel=xlabel,
-        unit=unit,
-        ylabel=ylabel,
-        title=title,
-        normalize=normalize,
-        stack=stack,
-        ratio=ratio,
-        ratio_ylim=ratio_ylim,
-        ratio_label=ratio_label,
-        ratio_uncertainty=ratio_uncertainty,
-        logx=logx,
-        logy=logy,
-        flow=flow,
-        histtype=histtype,
-        errorbars=errorbars,
-        xlim=xlim,
-        ylim=ylim,
-        xbreak=xbreak,
-        legend=legend,
-        stats=stats,
-        style=style_for(style, text, lumi),
-        figsize=figsize,
-        ax=ax,
-        save=save,
-    )
+    return PreparedPlot(hists, var, xlabel=xlabel, unit=unit, lumi=lumi)
 
 
-def _draw(
-    histograms_: list[Histogram],
+def _items(
+    data: Any, *, tree: str | None, label: str | Sequence[str] | None, observed: Any
+) -> list[PlotItem]:
+    """Return the samples and groups :func:`plot` fills from: ``data``, then ``observed``."""
+    items = as_plot_items(data, tree=tree, labels=label)
+    if observed is not None:
+        items += [as_observed(item) for item in as_plot_items(observed, tree=tree)]
+    return items
+
+
+def prefetch_plots(
+    cache: ReadCache,
+    data: Any,
+    variables: Sequence[str | Variable],
+    selections: Sequence[CutLike | None],
+    options: Sequence[Mapping[str, Any]] = ({},),
+) -> None:
+    """Read into ``cache`` what :func:`prepare_plot` reads for ``variables`` and ``selections``.
+
+    Each entry of ``options`` is a set of :func:`prepare_plot` keywords to read
+    for; those deciding what is read (``tree``, ``label``, ``observed``,
+    ``weight``, ``systematics``, ``assume_poisson``) are used, the others are
+    accepted and ignored. All of them are planned before anything is read, so
+    sets needing different branches, such as two variants with different
+    weights, cost one pass over each file rather than one each.
+
+    An optimisation only, so it never raises: nothing is read for histogram
+    objects, and whatever :func:`prepare_plot` will refuse, an unusable
+    ``data`` or ``label`` as much as an unknown branch, is left to the call
+    that needs it, which raises the error for its own task.
+    """
+    if histogram_objects(data) is not None:
+        return
+    plan = ReadPlan(cache)
+    for option_set in options:
+        # Every exception, not only rootfig's: a bad option of one task must not surface
+        # while the histograms of another are read ahead, nor stop them being read.
+        with suppress(Exception):
+            items = _items(
+                data,
+                tree=option_set.get("tree"),
+                label=option_set.get("label"),
+                observed=option_set.get("observed"),
+            )
+            plan.add(
+                items,
+                [as_variable(variable) for variable in variables],
+                selections=selections,
+                weight=option_set.get("weight"),
+                systematics=option_set.get("systematics"),
+                assume_poisson=bool(option_set.get("assume_poisson", False)),
+            )
+    plan.read()
+
+
+def draw_plot(
+    prepared: PreparedPlot,
     *,
-    variable: Variable | None,
-    xlabel: str | None,
-    unit: str | None,
-    ylabel: str | None,
-    title: str | None,
-    normalize: NormalizeSpec,
-    stack: bool,
-    ratio: RatioSpec,
-    ratio_ylim: tuple[float, float] | None,
-    ratio_label: str | None,
-    ratio_uncertainty: RatioUncertainty | None,
-    logx: bool | None,
-    logy: bool,
-    flow: FlowSpec,
-    histtype: HistType | None,
-    errorbars: bool | None,
-    xlim: tuple[float, float] | None,
-    ylim: tuple[float | None, float | None] | None,
-    xbreak: tuple[float, float] | None,
-    legend: bool | str | None,
-    stats: bool | str,
-    style: StyleLike,
-    figsize: tuple[float, float] | None,
-    ax: AxesLike,
-    save: str | None,
+    ylabel: str | None = None,
+    title: str | None = None,
+    normalize: NormalizeSpec = None,
+    stack: bool = False,
+    ratio: RatioSpec = False,
+    ratio_ylim: tuple[float, float] | None = None,
+    ratio_label: str | None = None,
+    ratio_uncertainty: RatioUncertainty | None = None,
+    logx: bool | None = None,
+    logy: bool = False,
+    flow: FlowSpec = "hint",
+    histtype: HistType | None = None,
+    errorbars: bool | None = None,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float | None, float | None] | None = None,
+    xbreak: tuple[float, float] | None = None,
+    legend: bool | str | None = None,
+    stats: bool | str = False,
+    text: str | Sequence[str] | None = None,
+    style: StyleLike = None,
+    figsize: tuple[float, float] | None = None,
+    ax: AxesLike = None,
+    save: str | None = None,
 ) -> Plot:
-    """Draw filled :class:`Histogram` objects; see :func:`plot` for the options."""
+    """Draw prepared histograms; see :func:`plot` for the options.
+
+    The histograms are not modified: every transformation for display
+    (normalisation, flow bins, sums) works on copies, so one
+    :class:`PreparedPlot` can be drawn several ways.
+    """
+    histograms_ = prepared.histograms
+    variable = prepared.variable
     if logx is None:
         logx = variable.log if variable is not None else False
     if not histograms_:
@@ -386,7 +528,7 @@ def _draw(
         raise ValueError(msg)
     if normalize is not None and normalize is not False:
         histograms_ = [normalize_for_plot(h, normalize) for h in histograms_]
-    resolved_style = as_style(style)
+    resolved_style = style_for(style, text, prepared.lumi)
     if legend is not None:
         resolved_style = resolved_style.replace(legend=legend)
 
@@ -443,7 +585,7 @@ def _draw(
         add_experiment_label(layout.main, st, has_data=has_data, right=layout.main_right)
 
         per_object = any(h.per_object for h in histograms_)
-        x_label, bin_unit = _axis_labels(xlabel, unit, variable, reference_hist)
+        x_label, bin_unit = _axis_labels(prepared.xlabel, prepared.unit, variable, reference_hist)
         y_label = ylabel or ylabel_for(
             normalization=histograms_[0].normalization,
             unit=bin_unit,

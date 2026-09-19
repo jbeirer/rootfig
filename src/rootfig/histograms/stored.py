@@ -22,7 +22,8 @@ from typing import Any
 from rootfig._typing import Hist
 from rootfig.errors import SelectionError, SourceError, SystematicError, annotate
 from rootfig.histograms.build import Histogram, from_sample
-from rootfig.io import FileSource
+from rootfig.histograms.sources import shared_source
+from rootfig.io import FileSource, ReadCache
 from rootfig.io.objects import is_tree_class
 from rootfig.model.binning import merge_target
 from rootfig.model.cuts import CutLike
@@ -156,6 +157,7 @@ def read_stored(
     systematics: Mapping[str, SystematicLike] | None = None,
     assume_poisson: bool = False,
     include_systematics: bool = True,
+    cache: ReadCache | None = None,
 ) -> list[Histogram]:
     """Read the histogram named by ``variables`` from every sample's files.
 
@@ -169,7 +171,9 @@ def read_stored(
     which are checked like the nominal ones; the other kinds need event data.
     ``include_systematics=False`` reads the nominal histograms only and leaves
     the samples' systematics unexamined, for callers that draw no variations
-    (2D plots); the samples themselves are kept on the result as given.
+    (2D plots); the samples themselves are kept on the result as given. A
+    ``cache`` (:class:`~rootfig.io.ReadCache`) serves the stored histograms it
+    holds and reads the rest.
 
     Raises
     ------
@@ -204,7 +208,7 @@ def read_stored(
     for sample in samples:
         source = _stored_source(sample, name)
         nominal = _read_scaled(
-            sample, source, name, variables, lumi=lumi, assume_poisson=assume_poisson
+            sample, source, name, variables, lumi=lumi, assume_poisson=assume_poisson, cache=cache
         )
         sources = (
             {}
@@ -221,6 +225,7 @@ def read_stored(
                 variables=variables,
                 lumi=lumi,
                 assume_poisson=assume_poisson,
+                cache=cache,
             )
             for syst_name, syst in sources.items()
         }
@@ -283,8 +288,12 @@ def _read_scaled(
     *,
     lumi: float | str | None,
     assume_poisson: bool,
+    cache: ReadCache | None = None,
 ) -> Hist:
-    stored = source.read_histogram(name, assume_poisson=assume_poisson)
+    if cache is not None:
+        stored = cache.histogram(source, name, assume_poisson=assume_poisson)
+    else:
+        stored = source.read_histogram(name, assume_poisson=assume_poisson)
     if stored.ndim != len(variables):
         other = "plot2d" if stored.ndim == 2 else "plot"
         msg = (
@@ -379,6 +388,7 @@ def _variation(
     variables: Sequence[Variable],
     lumi: float | str | None,
     assume_poisson: bool,
+    cache: ReadCache | None = None,
 ) -> tuple[Hist, Hist | None]:
     if syst.kind not in ("norm", "samples"):
         msg = (
@@ -396,11 +406,17 @@ def _variation(
         else:
             context = f"{sample.label} [{syst_name} {direction}]"
             with annotate(f"while evaluating the systematic variation {context}"):
-                variant = _variant_sample(sample, spec, context)
+                variant = _variant_sample(sample, spec, context, cache=cache)
                 source = _stored_source(variant, name, variation=True)
                 shifts.append(
                     _read_scaled(
-                        variant, source, name, variables, lumi=lumi, assume_poisson=assume_poisson
+                        variant,
+                        source,
+                        name,
+                        variables,
+                        lumi=lumi,
+                        assume_poisson=assume_poisson,
+                        cache=cache,
                     )
                 )
     up = shifts[0]
@@ -408,10 +424,16 @@ def _variation(
     return up, shifts[1]
 
 
-def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
-    """Return the sample a ``Systematic.samples`` variation reads: other files, nominal settings."""
+def _variant_sample(
+    sample: Sample, spec: Any, context: str, *, cache: ReadCache | None = None
+) -> Sample:
+    """Return the sample a ``Systematic.samples`` variation reads: other files, nominal settings.
+
+    Its files are read through the instance ``cache`` holds for them
+    (:func:`~rootfig.histograms.sources.shared_source`).
+    """
     if isinstance(spec, Sample):
-        return spec.replace(label=context, systematics={})
+        return shared_source(spec.replace(label=context, systematics={}), cache)
     if isinstance(spec, str | PathLike) or (
         isinstance(spec, list | tuple) and all(isinstance(f, str | PathLike) for f in spec)
     ):
@@ -420,6 +442,6 @@ def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
         except SourceError as exc:
             msg = f"{context}: cannot use {spec!r} as varied data: {exc}"
             raise SystematicError(msg) from exc
-        return sample.replace(source=source, systematics={}, label=context)
+        return shared_source(sample.replace(source=source, systematics={}, label=context), cache)
     msg = f"{context}: a stored histogram takes its variations from other ROOT files, not {spec!r}"
     raise SystematicError(msg)

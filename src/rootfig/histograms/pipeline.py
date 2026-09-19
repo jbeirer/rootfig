@@ -21,12 +21,13 @@ import numpy as np
 
 from rootfig._typing import Hist
 from rootfig.errors import MissingBranchError, SourceError, SystematicError, annotate
-from rootfig.expressions import parse
+from rootfig.expressions import Expression, parse
 from rootfig.histograms.build import Histogram, fill, from_sample, mirror
 from rootfig.histograms.groups import regroup_histograms
+from rootfig.histograms.sources import shared_source
 from rootfig.histograms.stats import summarize
 from rootfig.histograms.stored import read_stored, stored_mode
-from rootfig.io import ArraySource, FileSource, as_source
+from rootfig.io import ArraySource, FileSource, ReadCache, Source, as_source
 from rootfig.io.sources import resolve_files
 from rootfig.model.binning import Axis, resolve_axis
 from rootfig.model.cuts import Cut, CutLike, as_cut
@@ -38,6 +39,7 @@ from rootfig.model.variables import Variable, as_variable
 from rootfig.selection import Columns, NonFinitePolicy, prepare
 
 __all__ = [
+    "branch_names",
     "build_histograms",
     "build_histograms_2d",
     "combined_selection",
@@ -73,24 +75,48 @@ def _product(first: str | None, second: str | None) -> str | None:
     return f"({first}) * ({second})"
 
 
-def read_arrays(sample: Sample, expressions: Sequence[Any]) -> tuple[dict[str, Any], int]:
+def read_arrays(
+    sample: Sample, expressions: Sequence[Any], *, cache: ReadCache | None = None
+) -> tuple[dict[str, Any], int]:
     """Read the branches ``expressions`` need from ``sample`` and return them with the event count.
 
-    Only the union of the required branches is read. The number of events is
-    taken from the arrays, or from the source when nothing had to be read
-    (all expressions constant), so ``"1"`` or ``"True"`` still know how many
-    events there are.
+    Only the union of the required branches is read (:func:`branch_names`). A
+    ``cache`` serves the branches it holds and reads the rest, through the
+    source instance it holds for these files, so a source rebuilt from the same
+    paths reads neither the branches nor what the file says about itself again;
+    in-memory sources are read directly. The number of events is taken from the
+    arrays, or from the source when nothing had to be read (all expressions
+    constant), so ``"1"`` or ``"True"`` still know how many events there are.
     """
-    available = sample.source.branches()
+    source = sample.source
+    if cache is not None and isinstance(source, FileSource):
+        # the instance the cache holds for these files, which has already learnt about them
+        source = cache.source(source)
+        needed = branch_names(source, expressions)
+        arrays = cache.arrays(source, needed)
+    else:
+        needed = branch_names(source, expressions)
+        arrays = source.arrays(needed)
+    if needed:
+        return arrays, len(next(iter(arrays.values())))
+    return arrays, source_length(source)
+
+
+def branch_names(source: Source, expressions: Sequence[Any]) -> list[str]:
+    """Return the branches of ``source`` that ``expressions`` need, once each, in order of use.
+
+    Raises
+    ------
+    MissingBranchError
+        For a name that is neither a branch nor a constant.
+    """
+    available = source.branches()
     needed: list[str] = []
     for expression in expressions:
         for name in expression.required_branches(available):
             if name not in needed:
                 needed.append(name)
-    arrays = sample.source.arrays(needed)
-    if needed:
-        return arrays, len(next(iter(arrays.values())))
-    return arrays, source_length(sample.source)
+    return needed
 
 
 def source_length(source: Any) -> int:
@@ -112,18 +138,23 @@ def load_columns(
     weight: str | None = None,
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
+    cache: ReadCache | None = None,
 ) -> Columns:
     """Read the required branches of ``sample`` and prepare flat columns.
 
     The selection and weight given here are combined with those defined on the
     sample itself (see :func:`combined_selection` and :func:`combined_weight`).
     ``lumi`` scales samples that carry a cross section (see
-    :meth:`~rootfig.model.Sample.lumi_scale`).
+    :meth:`~rootfig.model.Sample.lumi_scale`). With a ``cache`` the sample reads
+    through the source instance it holds for its files
+    (:func:`~rootfig.histograms.sources.shared_source`), which is then also
+    where the branches and the cross-section numbers are read.
     """
+    sample = shared_source(sample, cache)
     var_exprs = [as_variable(v).expression for v in variables]
     cut = combined_selection(sample, selection)
     weight_expr = combined_weight(sample, weight)
-    arrays, n_events = _read_for(sample, var_exprs, cut, weight_expr)
+    arrays, n_events = _read_for(sample, var_exprs, cut, weight_expr, cache=cache)
     return prepare(
         arrays,
         var_exprs,
@@ -173,7 +204,12 @@ def load_columns_each(
 
 
 def _read_for(
-    sample: Sample, var_exprs: Sequence[str], cut: Cut | None, weight_expr: str | None
+    sample: Sample,
+    var_exprs: Sequence[str],
+    cut: Cut | None,
+    weight_expr: str | None,
+    *,
+    cache: ReadCache | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Read the branches needed by the variables, the selection and the weight."""
     expressions = [parse(v) for v in var_exprs]
@@ -181,7 +217,7 @@ def _read_for(
         expressions.append(cut.parsed())
     if weight_expr is not None:
         expressions.append(parse(weight_expr))
-    return read_arrays(sample, expressions)
+    return read_arrays(sample, expressions, cache=cache)
 
 
 def build_histograms(
@@ -194,6 +230,7 @@ def build_histograms(
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
     assume_poisson: bool = False,
+    cache: ReadCache | None = None,
 ) -> list[Histogram]:
     """Fill one 1D histogram per sample or group, with a binning shared by all of them.
 
@@ -208,9 +245,13 @@ def build_histograms(
     files (see :func:`~rootfig.histograms.stored_mode`) is read instead of
     filled; ``assume_poisson`` then accepts stored histograms without a sum of
     squared weights.
+
+    A ``cache`` (:class:`~rootfig.io.ReadCache`) serves the branch arrays and
+    stored histograms it holds and reads the rest, so several histograms built
+    from the same files read them once; the result does not depend on it.
     """
     var = as_variable(variable)
-    samples = leaf_samples(items)
+    samples = [shared_source(s, cache) for s in leaf_samples(items)]
     if stored_mode(samples, [var]):
         stored = read_stored(
             samples,
@@ -221,6 +262,7 @@ def build_histograms(
             nonfinite=nonfinite,
             systematics=systematics,
             assume_poisson=assume_poisson,
+            cache=cache,
         )
         return regroup_histograms(items, stored)
     plot_level = as_systematics(systematics, "plot")
@@ -233,6 +275,7 @@ def build_histograms(
             weight=weight,
             lumi=lumi,
             nonfinite=nonfinite,
+            cache=cache,
         )
         for s in samples
     ]
@@ -296,6 +339,7 @@ def _load_with_variations(
     weight: str | None,
     lumi: float | str | None,
     nonfinite: NonFinitePolicy,
+    cache: ReadCache | None = None,
 ) -> _Loaded:
     """Prepare the nominal columns and every variation, reading the sample's branches once.
 
@@ -308,37 +352,8 @@ def _load_with_variations(
     cut_text = None if cut is None else cut.expression
     weight_expr = combined_weight(sample, weight)
     scale = sample.scale * sample.lumi_scale(lumi)
-
-    parsed = [parse(var.expression)]
-    if cut is not None:
-        parsed.append(cut.parsed())
-    if weight_expr is not None:
-        parsed.append(parse(weight_expr))
-    available = sample.source.branches()
-    used = {name for expression in parsed for name in expression.required_branches(available)}
-    # weight variations and the branches that replace used ones join the single read
-    extra = []
-    for name, syst in systematics.items():
-        for direction, spec in (("up", syst.up), ("down", syst.down)):
-            if spec is None or syst.kind not in ("weight", "replace"):
-                continue
-            if syst.kind == "weight":
-                with _in_variation(f"{sample.label} [{name} {direction}]"):
-                    spec_expression = parse(spec)
-                    spec_expression.required_branches(available)
-                extra.append(spec_expression)
-            else:
-                for old, new in spec.items():
-                    if old not in used:
-                        continue
-                    if new not in available:
-                        raise MissingBranchError(
-                            new,
-                            available=available,
-                            context=f"{sample.label} [{name} {direction}]: replacing {old!r}",
-                        )
-                    extra.append(parse(f"`{new}`"))
-    arrays, n_events = read_arrays(sample, [*parsed, *extra])
+    expressions, used = _read_plan(sample, var, systematics, selection=selection, weight=weight)
+    arrays, n_events = read_arrays(sample, expressions, cache=cache)
 
     nominal = prepare(
         arrays,
@@ -362,7 +377,7 @@ def _load_with_variations(
                 elif syst.kind == "norm":
                     shifts.append(float(spec))
                 elif syst.kind == "samples":
-                    variant = _variant_sample(sample, spec, context)
+                    variant = _variant_sample(sample, spec, context, cache=cache)
                     shifts.append(
                         load_columns(
                             variant,
@@ -371,6 +386,7 @@ def _load_with_variations(
                             weight=weight,
                             lumi=lumi,
                             nonfinite=nonfinite,
+                            cache=cache,
                         )
                     )
                 else:
@@ -397,20 +413,81 @@ def _load_with_variations(
     return _Loaded(nominal, variations)
 
 
+def _read_plan(
+    sample: Sample,
+    var: Variable,
+    systematics: Mapping[str, Systematic],
+    *,
+    selection: CutLike | None,
+    weight: str | None,
+) -> tuple[list[Expression], set[str]]:
+    """Return what :func:`_load_with_variations` reads for ``var``, and the branches it uses.
+
+    The variable, the sample's selection and weight combined with the given
+    ones, the weight expressions of ``weight`` systematics and the branches that
+    replace used ones under ``replace`` systematics; the set holds the branches
+    of the nominal expressions, which decides what a replacement applies to.
+    :func:`~rootfig.histograms.prefetch` reads the same plan ahead, so both read
+    the same branches.
+
+    Raises
+    ------
+    MissingBranchError
+        For a name that is not a branch, also in a variation (the message names
+        the sample, source and direction).
+    """
+    cut = combined_selection(sample, selection)
+    weight_expr = combined_weight(sample, weight)
+    parsed = [parse(var.expression)]
+    if cut is not None:
+        parsed.append(cut.parsed())
+    if weight_expr is not None:
+        parsed.append(parse(weight_expr))
+    available = sample.source.branches()
+    used = {name for expression in parsed for name in expression.required_branches(available)}
+    # weight variations and the branches that replace used ones join the single read
+    extra: list[Expression] = []
+    for name, syst in systematics.items():
+        for direction, spec in (("up", syst.up), ("down", syst.down)):
+            if spec is None or syst.kind not in ("weight", "replace"):
+                continue
+            if syst.kind == "weight":
+                with _in_variation(f"{sample.label} [{name} {direction}]"):
+                    spec_expression = parse(spec)
+                    spec_expression.required_branches(available)
+                extra.append(spec_expression)
+            else:
+                for old, new in spec.items():
+                    if old not in used:
+                        continue
+                    if new not in available:
+                        raise MissingBranchError(
+                            new,
+                            available=available,
+                            context=f"{sample.label} [{name} {direction}]: replacing {old!r}",
+                        )
+                    extra.append(parse(f"`{new}`"))
+    return [*parsed, *extra], used
+
+
 def _in_variation(context: str) -> AbstractContextManager[None]:
     """Name the variation (sample, source, direction) in any rootfig error raised inside."""
     return annotate(f"while evaluating the systematic variation {context}")
 
 
-def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
+def _variant_sample(
+    sample: Sample, spec: Any, context: str, *, cache: ReadCache | None = None
+) -> Sample:
     """Return the sample a ``Systematic.samples`` variation reads: ``spec``, or its data.
 
     It is labelled ``context`` so its warnings and errors name the variation. Data
     that cannot look up a string ``ngen`` itself (in-memory arrays) takes the
-    nominal sample's resolved number of generated events; files read their own.
+    nominal sample's resolved number of generated events; files read their own,
+    through the instance ``cache`` holds for them
+    (:func:`~rootfig.histograms.sources.shared_source`).
     """
     if isinstance(spec, Sample):
-        return spec.replace(label=context)
+        return shared_source(spec.replace(label=context), cache)
     nominal = sample.source
     try:
         if isinstance(nominal, FileSource | ArraySource) and (
@@ -439,7 +516,7 @@ def _variant_sample(sample: Sample, spec: Any, context: str) -> Sample:
         and not callable(getattr(source, "read_scalar", None))
     ):
         changes["ngen"] = sample.generated_events()
-    return sample.replace(**changes)
+    return shared_source(sample.replace(**changes), cache)
 
 
 def _is_file_spec(spec: Any) -> bool:

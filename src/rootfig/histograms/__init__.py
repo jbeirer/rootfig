@@ -11,6 +11,7 @@ from rootfig.histograms.normalize import (
     normalize_hist,
 )
 from rootfig.histograms.pipeline import (
+    branch_names,
     build_histograms,
     build_histograms_2d,
     combined_selection,
@@ -20,6 +21,7 @@ from rootfig.histograms.pipeline import (
     read_arrays,
     source_length,
 )
+from rootfig.histograms.prefetch import ReadPlan, prefetch
 from rootfig.histograms.ratio import (
     SIGNIFICANCE_KINDS,
     Ratio,
@@ -45,10 +47,12 @@ __all__ = [
     "ProfileStatistic",
     "Ratio",
     "RatioUncertainty",
+    "ReadPlan",
     "SignificanceKind",
     "Summary",
     "Uncertainty",
     "as_weight_storage",
+    "branch_names",
     "build_histograms",
     "build_histograms_2d",
     "combined_selection",
@@ -67,6 +71,7 @@ __all__ = [
     "normalization_label",
     "normalize",
     "normalize_hist",
+    "prefetch",
     "profile",
     "ratio",
     "read_arrays",

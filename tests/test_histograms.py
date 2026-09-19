@@ -2212,3 +2212,288 @@ class TestGroupedHistograms:
         assert from_sample(Sample({"pt": [1.0]}), contents([1.0, 2.0]), stats=stats).per_object
         assert sum_histograms([h, Histogram(contents([1.0, 2.0]), "D")]).per_object
         assert not sum_histograms([Histogram(contents([1.0, 2.0]), "D")]).per_object
+
+
+class TestPrefetch:
+    """prefetch() warms a ReadCache with what build_histograms reads; results do not change."""
+
+    @staticmethod
+    def _reads(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+        from rootfig.io import FileSource
+
+        calls: list[list[str]] = []
+        original = FileSource.arrays
+
+        def counting(self: FileSource, branches: Any) -> Any:
+            calls.append(list(branches))
+            return original(self, branches)
+
+        monkeypatch.setattr(FileSource, "arrays", counting)
+        return calls
+
+    @staticmethod
+    def _assert_same(cached: list[Any], plain: list[Any]) -> None:
+        for got, want in zip(cached, plain, strict=True):
+            np.testing.assert_array_equal(got.values(flow=True), want.values(flow=True))
+            np.testing.assert_array_equal(got.variances(flow=True), want.variances(flow=True))
+            assert got.stats == want.stats
+            assert got.per_object == want.per_object
+            assert sorted(got.variations) == sorted(want.variations)
+            for name, (up, down) in got.variations.items():
+                want_up, want_down = want.variations[name]
+                np.testing.assert_array_equal(up.values(flow=True), want_up.values(flow=True))
+                np.testing.assert_array_equal(down.values(flow=True), want_down.values(flow=True))
+
+    def test_lower_level_callers_reuse_the_cached_source(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import uproot
+
+        import rootfig as rf
+        from rootfig.histograms import load_columns, read_arrays
+        from rootfig.io import ReadCache
+
+        opens: list[str] = []
+        original = uproot.open
+
+        def counting(path: Any, *args: Any, **kwargs: Any) -> Any:
+            opens.append(Path(path).name)
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(uproot, "open", counting)
+        reads = self._reads(monkeypatch)
+        cache = ReadCache()
+        # samples built apart from the same files: equal sources, each blank to begin with
+        first = load_columns(rf.Sample(signal_file, tree="events"), ["MET"], cache=cache)
+        again = load_columns(rf.Sample(signal_file, tree="events"), ["MET"], cache=cache)
+        arrays, _ = read_arrays(
+            rf.Sample(signal_file, tree="events"), [rf.Variable("MET").parsed()], cache=cache
+        )
+        assert opens == ["signal.root"]  # the branch list was learnt once, not three times
+        assert reads == [["MET"]]
+        np.testing.assert_array_equal(first.values, again.values)
+        np.testing.assert_array_equal(np.asarray(arrays["MET"]), first.values)
+
+    def test_union_read_once_per_source(
+        self, signal_file: Path, background_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import rootfig as rf
+        from rootfig.histograms import build_histograms, prefetch
+        from rootfig.io import ReadCache
+
+        samples = [
+            rf.Sample(signal_file, tree="events", weight="weight", label="S"),
+            rf.Sample(background_file, tree="events", label="B"),
+        ]
+        variables = [rf.Variable("MET"), rf.Variable("Muon_pt"), rf.Variable("nMuon * 2")]
+        selections = [None, "nMuon > 0"]
+        plain = {
+            (variable.expression, selection): build_histograms(
+                samples, variable, selection=selection
+            )
+            for variable in variables
+            for selection in selections
+        }
+        reads = self._reads(monkeypatch)
+        cache = ReadCache()
+        prefetch(cache, samples, variables, selections=selections)
+        assert [set(call) for call in reads] == [
+            {"MET", "Muon_pt", "nMuon", "weight"},
+            {"MET", "Muon_pt", "nMuon"},
+        ]
+        for (expression, selection), want in plain.items():
+            cached = build_histograms(samples, expression, selection=selection, cache=cache)
+            assert len(reads) == 2  # every histogram of the batch is filled from the two reads
+            self._assert_same(cached, want)
+
+    def test_systematics_join_the_plan(
+        self, signal_file: Path, background_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import rootfig as rf
+        from rootfig.histograms import build_histograms, prefetch
+        from rootfig.io import ReadCache
+
+        sample = rf.Sample(
+            signal_file,
+            tree="events",
+            weight="weight",
+            label="S",
+            systematics={
+                "w": ("weight * 1.1", "weight * 0.9"),
+                "scale": {"Muon_pt": ("Muon_eta", "Muon_phi")},
+                "norm": 0.05,
+                "alt": rf.Systematic.samples(background_file),
+            },
+        )
+        plain = build_histograms([sample], "Muon_pt")
+        reads = self._reads(monkeypatch)
+        cache = ReadCache()
+        prefetch(cache, [sample], [rf.Variable("Muon_pt"), rf.Variable("MET")])
+        # one read per file: the sample's own, with the weight variations' and the
+        # replacement branches, and the file the "alt" variation fills from
+        assert len(reads) == 2
+        assert set(reads[0]) == {"Muon_pt", "weight", "MET", "Muon_eta", "Muon_phi"}
+        assert set(reads[1]) == {"Muon_pt", "weight", "MET"}  # no systematics of its own
+        cached = build_histograms([sample], "Muon_pt", cache=cache)
+        build_histograms([sample], "MET", cache=cache)
+        assert len(reads) == 2  # both variables, nominal and variations, from those two reads
+        assert sorted(cached[0].variations) == ["alt", "norm", "scale", "w"]
+        self._assert_same(cached, plain)
+
+    def test_unusable_variations_are_left_to_build_histograms(
+        self, signal_file: Path, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import rootfig as rf
+        from rootfig.histograms import build_histograms, prefetch
+        from rootfig.io import ReadCache
+
+        # a variation whose data is not a dataset is not planned; the task raises for it
+        broken = rf.Systematic.samples(12345)
+        sample = rf.Sample(signal_file, tree="events", label="S", systematics={"alt": broken})
+        reads = self._reads(monkeypatch)
+        cache = ReadCache()
+        prefetch(cache, [sample], [rf.Variable("MET")])
+        assert reads == [["MET"]]  # the nominal file only
+        with pytest.raises(rf.SystematicError, match="cannot use 12345 as varied data"):
+            build_histograms([sample], "MET", cache=cache)
+        stored = rf.Sample(
+            stored_dir / "WW_sel0_histo.root",
+            label="WW",
+            systematics={"alt": rf.Systematic.samples({"mz": [1.0]}), "norm": 0.05},
+        )
+        prefetch(cache, [stored], [rf.Variable("mz")])  # the variation is not files: skipped
+        with pytest.raises(rf.SystematicError, match="takes its variations from other ROOT"):
+            build_histograms([stored], "mz", cache=cache)
+        # a sample that cannot provide the stored histogram at all stops there
+        weighted = rf.Sample(stored_dir / "WW_sel0_histo.root", label="W", weight="w")
+        prefetch(cache, [weighted], [rf.Variable("mz")])
+        with pytest.raises(rf.SelectionError, match="weight cannot be applied"):
+            build_histograms([weighted], "mz", cache=cache)
+
+    def test_stored_variation_files_join_the_plan(
+        self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import uproot
+
+        import rootfig as rf
+        from rootfig.histograms import build_histograms, prefetch
+        from rootfig.io import ReadCache
+
+        opens: list[str] = []
+        original = uproot.open
+
+        def counting(path: Any, *args: Any, **kwargs: Any) -> Any:
+            opens.append(Path(path).name)
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(uproot, "open", counting)
+        sample = rf.Sample(
+            stored_dir / "WW_sel0_histo.root",
+            label="WW",
+            systematics={"alt": rf.Systematic.samples(stored_dir / "ZZ_sel0_histo.root")},
+        )
+        variables = [rf.Variable("mz"), rf.Variable("mz_raw")]
+        plain = build_histograms([sample], "mz")
+        del opens[:]
+        cache = ReadCache()
+        prefetch(cache, [sample], variables)
+        # each file: opens to learn its objects, then one that reads both histograms
+        assert opens.count("ZZ_sel0_histo.root") <= 2
+        del opens[:]
+        cached = build_histograms([sample], "mz", cache=cache)
+        build_histograms([sample], "mz_raw", cache=cache)
+        assert opens == []  # both names of both files came from the batch read
+        assert sorted(cached[0].variations) == ["alt"]
+        self._assert_same(cached, plain)
+
+    def test_skips_what_build_histograms_refuses(
+        self, signal_file: Path, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import rootfig as rf
+        from rootfig.histograms import build_histograms, prefetch
+        from rootfig.io import ReadCache
+
+        samples = [rf.Sample(signal_file, tree="events", label="S")]
+        reads = self._reads(monkeypatch)
+        cache = ReadCache()
+        prefetch(
+            cache,
+            samples,
+            [rf.Variable("MET"), rf.Variable("nosuch")],
+            selections=[None, "bogus > 1"],
+        )
+        assert reads == [["MET"]]
+        with pytest.raises(rf.MissingBranchError, match="'nosuch'"):
+            build_histograms(samples, "nosuch", cache=cache)
+        # a stored name that not every sample provides is refused by stored_mode, so not planned
+        mixed = [rf.Sample(stored_dir / "WW_sel0_histo.root"), samples[0]]
+        prefetch(cache, mixed, [rf.Variable("mz")])
+        with pytest.raises(rf.SourceError, match="every sample of one plot"):
+            build_histograms(mixed, "mz", cache=cache)
+        # a sample whose own selection forbids reading a stored histogram is skipped, not read
+        selected = [rf.Sample(stored_dir / "WW_sel0_histo.root", selection="mz > 1")]
+        prefetch(cache, selected, [rf.Variable("mz")])
+        with pytest.raises(rf.SelectionError, match="sample's selection cannot be applied"):
+            build_histograms(selected, "mz", cache=cache)
+        prefetch(cache, samples, [rf.Variable("MET")], systematics={"bad": object()})  # type: ignore[dict-item]
+        assert len(reads) == 1
+
+    def test_stored_names_read_in_one_pass(
+        self, stored_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import uproot
+
+        import rootfig as rf
+        from rootfig.histograms import build_histograms, prefetch
+        from rootfig.io import ReadCache
+
+        opens: list[str] = []
+        original = uproot.open
+
+        def counting(path: Any, *args: Any, **kwargs: Any) -> Any:
+            opens.append(Path(path).name)
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(uproot, "open", counting)
+        samples = [
+            rf.Sample(stored_dir / "WW_sel0_histo.root", label="WW"),
+            rf.Sample(stored_dir / "ZZ_sel0_histo.root", label="ZZ"),
+        ]
+        cache = ReadCache()
+        prefetch(cache, samples, [rf.Variable("mz"), rf.Variable("mz_raw")])
+        # each file: one open to list its objects, one to read both histograms
+        assert sorted(opens) == [
+            "WW_sel0_histo.root",
+            "WW_sel0_histo.root",
+            "ZZ_sel0_histo.root",
+            "ZZ_sel0_histo.root",
+        ]
+        cached = build_histograms(samples, "mz_raw", cache=cache)
+        assert len(opens) == 4
+        self._assert_same(cached, build_histograms(samples, "mz_raw"))
+
+    def test_read_failure_is_left_to_build_histograms(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import rootfig as rf
+        from rootfig.histograms import build_histograms, prefetch
+        from rootfig.io import FileSource, ReadCache
+
+        original = FileSource.arrays
+        failed: list[list[str]] = []
+
+        def flaky(self: FileSource, branches: Any) -> Any:
+            if not failed:
+                failed.append(list(branches))
+                msg = "transient"
+                raise OSError(msg)
+            return original(self, branches)
+
+        monkeypatch.setattr(FileSource, "arrays", flaky)
+        samples = [rf.Sample(signal_file, tree="events")]
+        cache = ReadCache()
+        prefetch(cache, samples, [rf.Variable("MET")])  # the failure is left to the task
+        assert failed == [["MET"]]
+        self._assert_same(
+            build_histograms(samples, "MET", cache=cache), build_histograms(samples, "MET")
+        )
