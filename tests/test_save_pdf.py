@@ -189,6 +189,33 @@ class TestBasics:
             assert tuple(result.fig.get_size_inches()) == (8.0, 6.0)
             result.close()
 
+    def test_explicit_figsize_skips_resolving_the_task_styles(
+        self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # the cell size is what a task's style would give it, which an explicit page size
+        # makes irrelevant: resolving every style for a result nothing reads is wasted work
+        calls: list[int] = []
+        original = _pdf.cell_size
+
+        def recording(tasks: Any) -> Any:
+            calls.append(len(tasks))
+            return original(tasks)
+
+        monkeypatch.setattr(_pdf, "cell_size", recording)
+        rf.PlotBook(samples, [X, Y]).save_pdf(tmp_path / "auto.pdf", figsize=(9.0, 7.0))
+        assert calls == []
+        rf.PlotBook(samples, [X, Y]).save_pdf(tmp_path / "sized.pdf")
+        assert calls == [2]
+
+    def test_a_style_that_cannot_be_resolved_names_its_task(
+        self, samples: list[rf.Sample], tmp_path: Path
+    ) -> None:
+        book = rf.PlotBook(samples, [X], variants={"ok": {}, "bad": {"style": "no-such-style"}})
+        with pytest.raises(ValueError, match="unknown style") as info:
+            book.save_pdf(tmp_path / "plots.pdf")
+        assert any("variant='bad'" in note for note in info.value.__notes__)
+        assert sorted(tmp_path.iterdir()) == []
+
     def test_figsize_overridden_away_by_every_variant_is_accepted(
         self, samples: list[rf.Sample], tmp_path: Path
     ) -> None:

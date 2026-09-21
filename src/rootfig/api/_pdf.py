@@ -46,9 +46,27 @@ def cell_size(tasks: Sequence[PlotTask]) -> tuple[float, float]:
     """
     sizes = []
     for task in tasks:
-        with style_context(task.kwargs.get("style")) as st:
-            sizes.append(figure_size(st, ratio=bool(task.kwargs.get("ratio", False))))
+        try:
+            with style_context(task.kwargs.get("style")) as st:
+                sizes.append(figure_size(st, ratio=bool(task.kwargs.get("ratio", False))))
+        except Exception as exc:
+            exc.add_note(f"while sizing PlotBook task {task.describe()}")
+            raise
     return (max(width for width, _ in sizes), max(height for _, height in sizes))
+
+
+def page_sizes(
+    tasks: Sequence[PlotTask], pages: Sequence[Page], figsize: tuple[float, float] | None
+) -> list[tuple[float, float]]:
+    """Return the figure size of every page of the document, in order.
+
+    An explicit ``figsize`` is the size of each page, and the styles of the tasks
+    are left alone; otherwise a page is its grid of cells of :func:`cell_size`.
+    """
+    if figsize is not None:
+        return [figsize] * len(pages)
+    inches = cell_size(tasks)
+    return [page_size(page.grid, inches) for page in pages]
 
 
 def write_pdf(
@@ -64,9 +82,8 @@ def write_pdf(
 
     ``prepared`` yields the tasks in the order of ``tasks``, which ``pages`` split
     into consecutive runs; the tasks of a page are drawn in reading order into the
-    cells of one figure of ``figsize``, or of the size that gives every cell of
-    the document the largest of the tasks' own figure sizes (:func:`cell_size`),
-    created under the style of the page's first task. The document is written
+    cells of one figure of the size :func:`page_sizes` gives the page, created
+    under the style of the page's first task. The document is written
     through :func:`~rootfig.plotting.pages.multipage_pdf`: an existing ``target``
     is replaced only once every page is written. A ``metadata`` among
     ``savefig_kwargs`` describes the document, not a page, so it goes to the
@@ -76,15 +93,14 @@ def write_pdf(
     """
     kwargs = {"facecolor": "auto", "edgecolor": "auto", **savefig_kwargs}
     metadata = kwargs.pop("metadata", None)
-    inches = cell_size(tasks)
+    sizes = page_sizes(tasks, pages, figsize)
     position = 0
     with multipage_pdf(target, metadata=metadata) as pdf:
-        for number, page in enumerate(pages, start=1):
+        for number, (page, size) in enumerate(zip(pages, sizes, strict=True), start=1):
             first = tasks[position]
             position += page.count
             before = open_figure_ids()
             try:
-                size = figsize or page_size(page.grid, inches)
                 fig, cells = make_page(size, page.grid, style=first.kwargs.get("style"))
                 for cell in cells[: page.count]:
                     next(prepared).draw(cell=cell)
