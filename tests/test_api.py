@@ -16,6 +16,7 @@ import pytest
 import uproot
 from matplotlib.colors import to_rgba
 from matplotlib.font_manager import FontProperties
+from matplotlib.transforms import ScaledTranslation
 
 import rootfig as rf
 from rootfig.api import plots1d
@@ -1771,6 +1772,35 @@ class TestOffsetText:
         under = (edges[1:] > x0) & (edges[:-1] < x1)
         tallest = max(float(h.hist.values()[under].max()) for h in p.histograms)
         assert y0 >= 1.08 * tallest * (1 - 1e-6)
+        plt.close(p.fig)
+
+    def test_changes_made_after_plotting_are_kept(self) -> None:
+        # the axes stay the caller's: a pad or transform set later survives every draw
+        values = np.random.default_rng(0).normal(0, 1, 5_000)  # no offset text
+        p = rf.plot({"x": values}, "x", bins=20)
+        p.fig.canvas.draw()
+        label = p.ax.xaxis.label
+        lowered = label.get_transform() + ScaledTranslation(0, -0.1, p.fig.dpi_scale_trans)
+        label.set_transform(lowered)
+        p.ax.xaxis.labelpad = 25
+        for _ in range(2):
+            p.fig.canvas.draw()
+            assert p.ax.xaxis.labelpad == 25
+            assert label.get_transform() is lowered
+        plt.close(p.fig)
+
+    def test_a_pad_set_after_plotting_counts_against_the_offset_text(self) -> None:
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 30, figsize=(5, 4))
+        label, offset = self._boxes(p)
+        assert label.y1 <= offset.y0  # below, on rootfig's own pad
+        p.ax.xaxis.labelpad = 30  # clears the offset text on its own
+        label, offset = self._boxes(p)
+        assert p.ax.xaxis.labelpad == 30
+        assert label.y1 <= offset.y0
+        p.ax.xaxis.labelpad = 2  # back onto the offset text's line: rootfig moves it again
+        label, offset = self._boxes(p)
+        assert not label.overlaps(offset)
         plt.close(p.fig)
 
     def test_label_on_axes_the_caller_made_holds_when_resized(self) -> None:

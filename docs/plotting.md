@@ -314,7 +314,8 @@ range avoids range inference.
   but still shows the order of magnitude. On a figure rootfig makes the place is
   chosen each time the figure is drawn, so a resized figure keeps the label clear
   for its new size; on axes passed with `ax=` the label goes below the offset
-  text, which holds at any size.
+  text, which holds at any size. A `labelpad` or transform set on the label after
+  plotting is kept, and the label is kept clear starting from it.
 - Automatic y limits leave room for the legend, the experiment label, the
   statistics box and `text` lines: a small fixed margin is added above the
   tallest bin, and the upper limit is then raised until none of them covers a

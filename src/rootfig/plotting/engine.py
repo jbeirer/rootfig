@@ -8,7 +8,7 @@ or resized places its labels for the size it has then.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from matplotlib.axes import Axes
@@ -36,14 +36,26 @@ def renderer_of(fig: Any) -> Any:
 class _ClearXLabel:
     """The x label of ``ax`` kept clear of the axis' offset text.
 
-    ``transform`` and ``labelpad`` are the label's own, before any move, so every
-    placement starts from them and a label can move back as well as away.
+    rootfig owns only what it adds to the label: a shift to the left (``shift``,
+    points) or pad below the offset text. ``transform`` and ``labelpad`` are the
+    label's own without those, so a placement starts from them and a label can move
+    back as well as away; ``placed`` and ``pad`` are what the last placement set, so
+    a transform or pad found to differ from them was set by the caller after
+    plotting and becomes the label's own instead of being undone.
     """
 
     ax: Axes
-    transform: Transform
-    labelpad: float
+    transform: Transform = field(init=False)
+    labelpad: float = field(init=False)
+    placed: Transform = field(init=False)
+    pad: float = field(init=False)
+    shift: float | None = None
     below: bool = False
+
+    def __post_init__(self) -> None:
+        axis = self.ax.xaxis
+        self.transform = self.placed = axis.label.get_transform()
+        self.labelpad = self.pad = axis.labelpad
 
     def place(self, renderer: Any, *, beside: bool = True) -> bool:
         """Put the label beside or below the offset text; return whether it changed line.
@@ -63,27 +75,36 @@ class _ClearXLabel:
         axis = self.ax.xaxis
         label, offset = axis.label, axis.get_offset_text()
         fig = self.ax.get_figure(root=True)
-        label.set_transform(self.transform)
-        below, height = False, 0.0
+        if label.get_transform() is not self.placed:
+            self.transform = self.placed = label.get_transform()
+            self.shift = None
+        if axis.labelpad != self.pad:
+            self.labelpad = axis.labelpad
+        shift, below, height = None, False, 0.0
         shown = label.get_visible() and label.get_text()
         if fig is not None and shown and offset.get_visible() and offset.get_text():
             points = 72.0 / fig.dpi
             label_box = label.get_window_extent(renderer)
+            back = (self.shift or 0.0) / points  # measured where the label's own place is
+            x0, x1 = label_box.x0 + back, label_box.x1 + back
             offset_box = offset.get_window_extent(renderer)
             height = offset_box.height * points
             # both sit a pad below the tick labels; the label's own pad may clear it
             same_line = self.labelpad < axis.OFFSETTEXTPAD + height
-            if same_line and label_box.x1 > offset_box.x0 and offset_box.x1 > label_box.x0:
+            if same_line and x1 > offset_box.x0 and offset_box.x1 > x0:
                 gap = OFFSET_TEXT_GAP_EM * offset.get_fontproperties().get_size_in_points()
-                shift = (label_box.x1 - offset_box.x0) * points + gap
-                room = label_box.x0 - shift / points >= self.ax.get_window_extent(renderer).x0
-                if beside and room:
-                    left = ScaledTranslation(-shift / 72.0, 0.0, fig.dpi_scale_trans)
-                    label.set_transform(self.transform + left)
-                else:
-                    below = True
+                shift = (x1 - offset_box.x0) * points + gap
+                if not (beside and x0 - shift / points >= self.ax.get_window_extent(renderer).x0):
+                    shift, below = None, True
+        if shift != self.shift and fig is not None:
+            moved = self.transform
+            if shift is not None:
+                moved = moved + ScaledTranslation(-shift / 72.0, 0.0, fig.dpi_scale_trans)
+            label.set_transform(moved)
+            self.placed, self.shift = moved, shift
         # below: the label keeps its own pad under the offset text
-        axis.labelpad = self.labelpad + (axis.OFFSETTEXTPAD + height if below else 0.0)
+        self.pad = self.labelpad + (axis.OFFSETTEXTPAD + height if below else 0.0)
+        axis.labelpad = self.pad
         changed = below != self.below
         self.below = below
         return changed
@@ -97,8 +118,7 @@ def clear_offset_text(ax: Axes, renderer: Any) -> bool:
     the offset text depends on the width the figure is drawn at, below does not.
     Returns whether the label moved; one already clear stays where it is.
     """
-    axis = ax.xaxis
-    return _ClearXLabel(ax, axis.label.get_transform(), axis.labelpad).place(renderer, beside=False)
+    return _ClearXLabel(ax).place(renderer, beside=False)
 
 
 class PlotLayoutEngine(ConstrainedLayoutEngine):
@@ -118,8 +138,7 @@ class PlotLayoutEngine(ConstrainedLayoutEngine):
     def keep_clear(self, ax: Axes) -> None:
         """Keep the x label of ``ax`` clear of its offset text at every draw."""
         if all(entry.ax is not ax for entry in self._xlabels):
-            axis = ax.xaxis
-            self._xlabels.append(_ClearXLabel(ax, axis.label.get_transform(), axis.labelpad))
+            self._xlabels.append(_ClearXLabel(ax))
 
     def execute(self, fig: Figure) -> None:
         """Lay out ``fig``, then place its registered x labels for that layout."""
