@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import glob
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
@@ -26,10 +27,13 @@ from typing import Any, Protocol, runtime_checkable
 import awkward as ak
 import numpy as np
 import uproot
+from uproot.interpretation.identify import UnknownInterpretation
+from uproot.interpretation.objects import CannotBeAwkward
 
 from rootfig._typing import Hist
 from rootfig.errors import SourceError
 from rootfig.io import objects
+from rootfig.io.schema import record_fields, select_field
 
 __all__ = ["ArraySource", "FileSource", "FilesLike", "Source", "as_source", "resolve_files"]
 
@@ -60,7 +64,10 @@ class Source(Protocol):
         ...
 
     # Implementations should also provide ``num_entries() -> int`` (the number of
-    # events); rootfig falls back to reading one branch when it is absent.
+    # events); rootfig falls back to reading one branch when it is absent. They may
+    # provide ``branch_forms() -> dict[str, awkward.forms.Form]``, the type of every
+    # branch without its values, which lets ``PlotBook`` discover variables (``rf.ALL``);
+    # without it that discovery refuses the source rather than reading its arrays.
 
 
 # --------------------------------------------------------------------------------------
@@ -144,31 +151,84 @@ def resolve_files(files: FilesLike) -> tuple[tuple[str, ...], str | None]:
     return tuple(paths), (trees.pop() if trees else None)
 
 
-def _leaf_names(keys: Sequence[str]) -> list[str]:
-    """Branch names as users write them: sub-branches by their own (dotted) name, no parents.
+def _leaf_keys(keys: Sequence[str]) -> dict[str, str]:
+    """Map branch names as users write them to the keys uproot lists them under.
 
     uproot lists split object branches of a ``TTree`` as ``Parent/Parent.field``
     plus the parent itself, and the nested fields of an ``RNTuple`` as
-    ``Parent.field`` plus ``Parent``; only the leaves hold arrays that can be
-    histogrammed.
+    ``Parent.field`` plus ``Parent``; only the leaves, named by their own
+    (dotted) name without the parents, hold arrays that can be histogrammed.
     """
     parents = {key.rsplit("/", 1)[0] for key in keys if "/" in key}
-    leaves = [key.rsplit("/", 1)[-1] for key in keys if key not in parents]
-    records = {leaf for leaf in leaves if any(other.startswith(f"{leaf}.") for other in leaves)}
-    return [leaf for leaf in leaves if leaf not in records]
+    leaves = {key.rsplit("/", 1)[-1]: key for key in keys if key not in parents}
+    # a leaf that some other leaf continues with a dot is a record, not an array
+    records = {leaf[:i] for leaf in leaves for i, char in enumerate(leaf) if char == "."}
+    return {leaf: key for leaf, key in leaves.items() if leaf not in records}
 
 
-def _extract_nested(data: Mapping[str, Any], name: str) -> ak.Array | None:
-    """Return the field ``Parent.field.sub`` from a record array read as ``Parent``."""
-    parts = name.split(".")
-    if parts[0] not in data:
-        return None
-    array = data[parts[0]]
-    for part in parts[1:]:
-        if part not in getattr(array, "fields", ()):
-            return None
-        array = array[part]
-    return ak.Array(array)
+def _leaf_names(keys: Sequence[str]) -> list[str]:
+    """Branch names as users write them; see :func:`_leaf_keys`."""
+    return list(_leaf_keys(keys))
+
+
+def _dotted_spans(names: Iterable[str]) -> set[str]:
+    """Return every run of dot-separated parts of ``names``: what a level of them may be called."""
+    spans: set[str] = set()
+    for name in names:
+        parts = name.split(".")
+        spans.update(
+            ".".join(parts[start:stop])
+            for start in range(len(parts))
+            for stop in range(start + 1, len(parts) + 1)
+        )
+    return spans
+
+
+def _form_paths(form: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], Any]]:
+    """Yield each field's original path and form, including record parents, in schema order."""
+    for field_name in record_fields(form):
+        child = select_field(form, field_name)
+        child_path = (*path, field_name)
+        yield child_path, child
+        yield from _form_paths(child, child_path)
+
+
+def _leaf_forms(form: Any) -> dict[str, Any]:
+    """Map the leaf fields of an ``RNTuple`` schema form to their forms, by dotted path.
+
+    A record (also inside a collection or an option) contributes its fields,
+    named ``Parent.field``; anything else, a number, a list of numbers, a
+    string, is a leaf. The schema, not the spelling of the names, decides what
+    is nested, so a field whose own name holds a dot keeps it. When paths have
+    the same dotted spelling, prefer the longest field name at the first level
+    where they differ, as :func:`_extract_nested` does. Record parents take part
+    in this choice too: a literal record ``a.b`` shadows a numeric ``a -> b``.
+    """
+    resolved: dict[str, Any] = {}
+    precedence: dict[str, tuple[int, ...]] = {}
+    for path, field_form in _form_paths(form):
+        name = ".".join(path)
+        rank = tuple(len(part) for part in path)
+        if name not in precedence or rank > precedence[name]:
+            precedence[name] = rank
+            resolved[name] = field_form
+    return {
+        name: field_form for name, field_form in resolved.items() if not record_fields(field_form)
+    }
+
+
+def _extract_nested(data: Mapping[str, Any] | ak.Array, name: str) -> ak.Array | None:
+    """Resolve a dotted name, preferring the longest field that resolves the complete path."""
+    fields = data.keys() if isinstance(data, Mapping) else data.fields
+    matches = (field for field in fields if name == field or name.startswith(f"{field}."))
+    for field_name in sorted(matches, key=len, reverse=True):
+        array = ak.Array(data[field_name])
+        if name == field_name:
+            return array
+        nested = _extract_nested(array, name[len(field_name) + 1 :])
+        if nested is not None:
+            return nested
+    return None
 
 
 def _tree_names(classnames: Mapping[str, str]) -> list[str]:
@@ -240,25 +300,62 @@ class FileSource:
             self._cache["tree"] = _detect_tree(self.files[0], self.objects())
         return str(self._cache["tree"])
 
+    @contextmanager
+    def _tree_object(self) -> Iterator[Any]:
+        """Open the tree in the first file for reading its metadata."""
+        tree = self.resolved_tree()
+        with uproot.open(self.files[0]) as file:
+            try:
+                obj = file[tree]
+            except uproot.KeyInFileError as exc:
+                msg = f"tree {tree!r} not found in {self.files[0]!r}"
+                raise SourceError(msg) from exc
+            self._cache["rntuple"] = objects.RNTUPLE_MARKER in type(obj).__name__
+            yield obj
+
     def branches(self) -> list[str]:
         """Return the branch (or RNTuple field) names of the tree in the first file.
 
-        The result is cached on the instance; the file is opened only once.
+        The leaves only, a nested field by its dotted path (``Muon.pt``): the
+        branches a ``TTree`` lists, the fields of an ``RNTuple``'s schema. The
+        result is cached on the instance; the file is opened only once.
         """
-        if "branches" in self._cache:
-            return list(self._cache["branches"])
-        tree = self.resolved_tree()
-        try:
-            with uproot.open(self.files[0]) as file:
-                obj = file[tree]
-                keys = list(obj.keys())
-                self._cache["rntuple"] = objects.RNTUPLE_MARKER in type(obj).__name__
-        except uproot.KeyInFileError as exc:
-            msg = f"tree {tree!r} not found in {self.files[0]!r}"
-            raise SourceError(msg) from exc
-        names = _leaf_names(keys)
-        self._cache["branches"] = names
-        return list(names)
+        if "branches" not in self._cache:
+            with self._tree_object() as obj:
+                if self._cache["rntuple"]:
+                    self._cache["forms"] = _leaf_forms(obj.to_akform()[0])
+                    self._cache["branches"] = list(self._cache["forms"])
+                else:
+                    self._cache["branches"] = _leaf_names(list(obj.keys()))
+        return list(self._cache["branches"])
+
+    def branch_forms(self) -> dict[str, Any]:
+        """Return the Awkward form of every branch of :meth:`branches`, as :meth:`arrays` reads it.
+
+        The forms come from the tree's metadata alone (the interpretation of each
+        ``TTree`` branch, the field schema of an ``RNTuple``), so no entry is
+        read; they tell the type and structure of a branch, which
+        :mod:`rootfig.io.schema` classifies. A ``TTree`` branch uproot has no
+        interpretation for, or whose interpretation has no Awkward form, is left
+        out: :meth:`arrays` could not read it either. Cached on the instance like
+        :meth:`branches`.
+        """
+        if "forms" not in self._cache:
+            with self._tree_object() as obj:
+                forms: dict[str, Any] = {}
+                if self._cache["rntuple"]:
+                    forms = _leaf_forms(obj.to_akform()[0])
+                else:
+                    leaves = _leaf_keys(list(obj.keys()))
+                    for name, key in leaves.items():
+                        try:
+                            forms[name] = obj[key].interpretation.awkward_form(obj.file)
+                        except (UnknownInterpretation, CannotBeAwkward):
+                            continue
+                    self._cache.setdefault("branches", list(leaves))
+                self._cache.setdefault("branches", list(forms))
+                self._cache["forms"] = forms
+        return dict(self._cache["forms"])
 
     def _is_rntuple(self) -> bool:
         if "rntuple" not in self._cache:
@@ -324,9 +421,15 @@ class FileSource:
         """Return the names of the ``TTree``/``RNTuple`` objects in the first file."""
         return _tree_names(self.objects())
 
-    def histograms(self) -> list[str]:
-        """Return the names of the 1D and 2D histograms (``TH1*``, ``TH2*``) in the first file."""
-        return sorted(k for k, cls in self.objects().items() if objects.is_histogram_class(cls))
+    def histograms(self, ndim: int | None = None) -> list[str]:
+        """Return the names of the histograms (``TH1*``, ``TH2*``) in the first file, sorted.
+
+        ``ndim`` keeps the 1D or the 2D ones only; a histogram inside a directory
+        is listed as ``"dir/name"``.
+        """
+        return sorted(
+            k for k, cls in self.objects().items() if objects.is_histogram_class(cls, ndim)
+        )
 
     def read_histogram(self, name: str, *, assume_poisson: bool = False) -> Hist:
         """Read the histogram stored as ``name`` in every file and return their sum.
@@ -354,11 +457,9 @@ class FileSource:
         wanted = set(branches)
         # A TTree presents split object branches by their full dotted leaf name; an
         # RNTuple presents nested fields by their short name, one level at a time, and
-        # returns the parent as a record array. For RNTuples let every level through and
-        # pick the nested field out of the record afterwards.
-        parts = (
-            {part for name in wanted for part in name.split(".")} if self._is_rntuple() else set()
-        )
+        # returns the parent as a record array. For RNTuples let every level through (a
+        # level's name may itself hold dots) and pick the nested field out afterwards.
+        parts = _dotted_spans(wanted) if self._is_rntuple() else set()
         try:
             # Select by name rather than by expression so that dotted sub-branch names
             # (``Collection.field.x`` in EDM4hep/podio files) and odd characters work.
@@ -442,6 +543,10 @@ class ArraySource:
     def branches(self) -> list[str]:
         """Return the column names."""
         return list(self.data)
+
+    def branch_forms(self) -> dict[str, Any]:
+        """Return the Awkward form of every column: its type, read off the array, not its values."""
+        return {name: ak.to_layout(array).form for name, array in self.data.items()}
 
     def arrays(self, branches: Sequence[str]) -> dict[str, ak.Array]:
         """Return the requested columns."""

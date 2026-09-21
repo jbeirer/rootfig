@@ -29,6 +29,14 @@ The public entry points are :func:`parse`, :class:`Expression`, and
 """
 
 from rootfig.expressions.functions import CONSTANTS, FUNCTIONS
-from rootfig.expressions.parser import Expression, ExpressionLike, evaluate, parse
+from rootfig.expressions.parser import Expression, ExpressionLike, evaluate, parse, quote_name
 
-__all__ = ["CONSTANTS", "FUNCTIONS", "Expression", "ExpressionLike", "evaluate", "parse"]
+__all__ = [
+    "CONSTANTS",
+    "FUNCTIONS",
+    "Expression",
+    "ExpressionLike",
+    "evaluate",
+    "parse",
+    "quote_name",
+]

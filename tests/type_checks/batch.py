@@ -31,3 +31,33 @@ def plot_book(sample: rf.Sample, group: rf.Group) -> None:
         assert_type(result, rf.Plot)
     # A variant maps keywords to values; mypy reports an unused ignore if this loosens.
     rf.PlotBook(sample, "x", variants={"log": True})  # type: ignore[dict-item]
+
+
+def discovered_book(sample: rf.Sample, group: rf.Group) -> None:
+    assert_type(rf.PlotBook(sample, rf.ALL).variables, tuple[rf.Variable, ...])
+    assert_type(rf.PlotBook([sample, group], variables=rf.ALL).variables, tuple[rf.Variable, ...])
+    book = rf.PlotBook(
+        [sample, group],
+        rf.ALL,
+        include=["Muon_*", "MET*"],
+        exclude="*_cov",
+        selections={"sr": "x > 0"},
+        plot_kwargs={"observed": sample},
+    )
+    assert_type(book.select(variables="Muon_pt"), rf.PlotBook)
+    assert_type(
+        rf.discover_variables(
+            [sample, group],
+            include="Muon_*",
+            exclude=["*_cov"],
+            selections={"sr": "x > 0"},
+            variants={"log": {"logy": True}},
+            plot_kwargs={"observed": sample},
+        ),
+        tuple[rf.Variable, ...],
+    )
+    rf.discover_variables(sample, include=3)  # type: ignore[arg-type]
+    rf.PlotBook(sample, rf.ALL, include="Muon_*", exclude=("*_cov", "*Index"))
+    # Patterns are strings; mypy reports an unused ignore if this loosens.
+    rf.PlotBook(sample, rf.ALL, include=3)  # type: ignore[arg-type]
+    rf.PlotBook(sample, rf.ALL, exclude=[1, 2])  # type: ignore[list-item]

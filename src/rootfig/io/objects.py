@@ -17,6 +17,7 @@ from rootfig.errors import BinningError, SourceError
 
 __all__ = [
     "RNTUPLE_MARKER",
+    "histogram_dimension",
     "histogram_names",
     "is_histogram_class",
     "is_tree_class",
@@ -28,7 +29,8 @@ __all__ = [
 _TREE_CLASSNAMES = ("TTree", "TNtuple", "TNtupleD", "TChain")
 RNTUPLE_MARKER = "RNTuple"
 """Substring identifying uproot's ``RNTuple`` classes and models."""
-_HISTOGRAM_CLASSNAMES = ("TH1", "TH2")
+_HISTOGRAM_CLASSNAMES = {"TH1": 1, "TH2": 2}
+"""The ROOT histogram class prefixes rootfig draws and their dimensionality."""
 _UNSUPPORTED_HISTOGRAM_CLASSNAMES = ("TH3", "TProfile", "THn")
 
 
@@ -37,11 +39,28 @@ def is_tree_class(classname: str) -> bool:
     return classname.startswith(_TREE_CLASSNAMES) or RNTUPLE_MARKER in classname
 
 
-def is_histogram_class(classname: str) -> bool:
-    """Return True for the 1D and 2D ROOT histogram classes rootfig draws (``TH1*``, ``TH2*``)."""
-    return classname.startswith(_HISTOGRAM_CLASSNAMES) and not classname.startswith(
-        _UNSUPPORTED_HISTOGRAM_CLASSNAMES
+def histogram_dimension(classname: str) -> int | None:
+    """Return the dimensionality of a ROOT histogram class rootfig draws, else ``None``.
+
+    ``1`` for ``TH1*``, ``2`` for ``TH2*``; ``None`` for ``TH3``, ``TProfile``,
+    ``THn`` and every class that is not a histogram. Decided from the class name
+    alone, so a file can be surveyed without reading any object.
+    """
+    if classname.startswith(_UNSUPPORTED_HISTOGRAM_CLASSNAMES):
+        return None
+    return next(
+        (ndim for prefix, ndim in _HISTOGRAM_CLASSNAMES.items() if classname.startswith(prefix)),
+        None,
     )
+
+
+def is_histogram_class(classname: str, ndim: int | None = None) -> bool:
+    """Return True for the ROOT histogram classes rootfig draws (``TH1*``, ``TH2*``).
+
+    ``ndim`` restricts the answer to the 1D or the 2D classes.
+    """
+    found = histogram_dimension(classname)
+    return found is not None and (ndim is None or found == ndim)
 
 
 def strip_cycle(key: str) -> str:
@@ -59,9 +78,9 @@ def object_classes(path: str) -> dict[str, str]:
     return {strip_cycle(key): cls for key, cls in classnames.items()}
 
 
-def histogram_names(path: str) -> list[str]:
-    """Return the names of the 1D and 2D histograms in ``path``."""
-    return sorted(k for k, cls in object_classes(path).items() if is_histogram_class(cls))
+def histogram_names(path: str, ndim: int | None = None) -> list[str]:
+    """Return the names of the 1D and 2D histograms in ``path``, or of those with ``ndim`` axes."""
+    return sorted(k for k, cls in object_classes(path).items() if is_histogram_class(cls, ndim))
 
 
 def read_histogram(files: Sequence[str], name: str, *, assume_poisson: bool = False) -> Hist:

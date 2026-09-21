@@ -32,7 +32,7 @@ from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.variables import Variable
 from rootfig.selection import NonFinitePolicy
 
-__all__ = ["describe_axes", "read_stored", "stored_mode"]
+__all__ = ["describe_axes", "read_stored", "stored_mode", "stored_names"]
 
 _ROOT_DEFAULT_AXIS_TITLES = frozenset({"", "xaxis", "yaxis", "zaxis"})
 _UPROOT_DEFAULT_AXIS_TITLE = re.compile(r"Axis \d+")  # what uproot writes for a label-less axis
@@ -76,6 +76,38 @@ def stored_mode(samples: Sequence[Sample], variables: Sequence[Variable]) -> boo
     return bool(stored)
 
 
+def stored_names(sample: Sample) -> list[str]:
+    """Return the names ``sample`` reads as stored 1D histograms, sorted.
+
+    The ``TH1`` objects of the sample's first file, under the rule of
+    :func:`stored_mode` for one sample: none for in-memory data or for a source
+    with an explicit tree or entry range, which address a branch, and none for
+    a name that a branch of the file's one tree takes. A histogram inside a
+    directory is listed by its path (``"sel/mz"``), which an expression writes
+    in backticks. This is the stored half of what ``PlotBook(data, rf.ALL)``
+    discovers.
+
+    Raises
+    ------
+    SourceError
+        If the file holds several trees next to its histograms (pass ``tree=``
+        to read a branch).
+    """
+    source = sample.source
+    if not isinstance(source, FileSource) or _addresses_a_tree(source) is not None:
+        return []
+    names = source.histograms(ndim=1)
+    if not names:
+        return []
+    trees = source.trees()
+    if len(trees) > 1:
+        raise SourceError(_several_trees(source, f"{len(names)} stored histograms", trees))
+    if trees:
+        branches = set(source.branches())
+        names = [name for name in names if name not in branches]
+    return names
+
+
 def _stored_name(variables: Sequence[Variable]) -> str | None:
     """Return the bare name shared by ``variables``, or ``None`` when they are expressions."""
     names = set()
@@ -99,14 +131,18 @@ def _why_not_stored(sample: Sample, name: str) -> str | None:
         return _no_histogram(source, name)
     trees = source.trees()
     if len(trees) > 1:
-        msg = (
-            f"{source.files[0]!r} holds a histogram {name!r} and several trees {trees}; "
-            "pass tree=... to read a branch, or FileSource.read_histogram() for the histogram"
-        )
-        raise SourceError(msg)
+        raise SourceError(_several_trees(source, f"a histogram {name!r}", trees))
     if trees and name in source.branches():
         return f"tree {trees[0]!r} has a branch of that name, which wins"
     return None
+
+
+def _several_trees(source: FileSource, what: str, trees: Sequence[str]) -> str:
+    """Say that ``what`` (stored histograms) sits next to several trees, so a name is ambiguous."""
+    return (
+        f"{source.files[0]!r} holds {what} and several trees {list(trees)}; "
+        "pass tree=... to read a branch, or FileSource.read_histogram() for the histogram"
+    )
 
 
 def _no_histogram(source: FileSource, name: str) -> str:

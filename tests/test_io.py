@@ -291,6 +291,73 @@ class TestNestedRNTuple:
         with pytest.raises(SourceError, match="not found"):
             source.arrays(["Muon.phi"])
 
+    def test_fields_named_with_dots(self, tmp_path: Path) -> None:
+        import uproot
+
+        path = tmp_path / "dotted.root"
+        with uproot.recreate(path) as file:
+            file["events"] = {
+                "a.b": np.array([1.0, 2.0]),
+                "c.d": ak.zip({"e": [1.0, 2.0], "f.g": [1, 2]}),
+                "c": np.array([5.0, 6.0]),
+            }
+        source = FileSource(path, tree="events")
+        assert sorted(source.branches()) == ["a.b", "c", "c.d.e", "c.d.f.g"]
+        arrays = source.arrays(["a.b", "c.d.f.g", "c", "c.d.e"])
+        assert arrays["a.b"].tolist() == [1.0, 2.0]
+        assert arrays["c.d.f.g"].tolist() == [1, 2]
+        assert arrays["c"].tolist() == [5.0, 6.0]
+        assert arrays["c.d.e"].tolist() == [1.0, 2.0]
+        assert {n: str(f.type) for n, f in source.branch_forms().items()} == {
+            "a.b": "float64",
+            "c": "float64",
+            "c.d.e": "float64",
+            "c.d.f.g": "int64",
+        }
+        with pytest.raises(SourceError, match="not found"):
+            source.arrays(["c.d.h"])
+
+    @pytest.mark.parametrize("longer_field", [10.0, {"d": 10.0}])
+    def test_dotted_prefix_falls_back_to_a_complete_path(
+        self, tmp_path: Path, longer_field: Any
+    ) -> None:
+        path = tmp_path / "prefix.root"
+        with uproot.recreate(path) as file:
+            file["events"] = ak.Array([{"a": {"b": {"c": 1.0}}, "a.b": longer_field}])
+        source = FileSource(path)
+        assert "a.b.c" in source.branches()
+        assert source.arrays(["a.b.c"])["a.b.c"].tolist() == [1.0]
+        with pytest.raises(SourceError, match="not found"):
+            source.arrays(["a.b.missing"])
+
+    @pytest.mark.parametrize("literal_numeric", [True, False])
+    @pytest.mark.parametrize("literal_first", [True, False])
+    @pytest.mark.parametrize("collection", [True, False])
+    def test_colliding_paths_keep_the_type_of_the_field_that_is_read(
+        self, tmp_path: Path, literal_numeric: bool, literal_first: bool, collection: bool
+    ) -> None:
+        literal, nested = (1.0, "text") if literal_numeric else ("text", 1.0)
+        fields = [("a.b", literal), ("a", {"b": nested})]
+        row = dict(fields if literal_first else reversed(fields))
+        data = ak.Array([{"items": [row]}] if collection else [row])
+        path = tmp_path / "collision.root"
+        with uproot.recreate(path) as file:
+            file["events"] = data
+        source = FileSource(path)
+        name = "items.a.b" if collection else "a.b"
+        actual = source.arrays([name])[name]
+        assert actual.tolist() == ([[literal]] if collection else [literal])
+        assert source.branch_forms()[name].type == actual.layout.form.type
+
+    def test_literal_record_shadows_a_nested_numeric_field(self, tmp_path: Path) -> None:
+        path = tmp_path / "record.root"
+        with uproot.recreate(path) as file:
+            file["events"] = ak.Array([{"a.b": {"c": 2.0}, "a": {"b": 1.0}}])
+        source = FileSource(path)
+        assert source.branches() == ["a.b.c"]
+        assert list(source.branch_forms()) == ["a.b.c"]
+        assert source.arrays(["a.b.c"])["a.b.c"].tolist() == [2.0]
+
     def test_multiple_files(self, nested: Path) -> None:
         source = FileSource([nested, nested], tree="events")
         assert len(source.arrays(["Muon.pt"])["Muon.pt"]) == 4
@@ -581,3 +648,257 @@ class TestBatchReads:
         assert source.read_scalar("eventsProcessed") == 2000.0
         assert source.read_scalar("eventsProcessed") == 2000.0
         assert opens == ["WW_sel0_histo.root"]
+
+
+class TestBranchForms:
+    """Branch types from metadata: what ``PlotBook(data, rf.ALL)`` classifies."""
+
+    def test_ttree_forms_without_reading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import uproot
+
+        path = tmp_path / "types.root"
+        with uproot.recreate(path) as file:
+            tree = file.mktree(
+                "events",
+                {
+                    "f": "float64",
+                    "i": "int16",
+                    "u": "uint8",
+                    "b": "bool",
+                    "jag": "var * float32",
+                    "fixed": ("float64", (3,)),
+                    "s": "string",
+                    "odd-name": "float32",
+                },
+            )
+            tree.extend(
+                {
+                    "f": np.zeros(2),
+                    "i": np.zeros(2, dtype=np.int16),
+                    "u": np.zeros(2, dtype=np.uint8),
+                    "b": np.zeros(2, dtype=bool),
+                    "jag": ak.Array([[1.0], []]),
+                    "fixed": np.zeros((2, 3)),
+                    "s": ["a", "b"],
+                    "odd-name": np.zeros(2, dtype=np.float32),
+                },
+            )
+        source = FileSource(path, tree="events")
+        monkeypatch.setattr(FileSource, "arrays", lambda *a, **k: pytest.fail("read data"))
+        forms = source.branch_forms()
+        assert {name: str(form.type) for name, form in forms.items()} == {
+            "f": "float64",
+            "i": "int16",
+            "u": "uint8",
+            "b": "bool",
+            "njag": "int32",
+            "jag": "var * float32",
+            "fixed": "3 * float64",
+            "s": "string",
+            "odd-name": "float32",
+        }
+        assert list(forms) == source.branches()
+        assert source.branch_forms() is not forms  # a copy each time, the forms shared
+        assert source.branch_forms()["f"] is forms["f"]
+
+    def test_rntuple_forms_follow_nested_fields(self, data_dir: Path, tmp_path: Path) -> None:
+        import uproot
+
+        path = tmp_path / "nested.root"
+        with uproot.recreate(path) as file:
+            file["events"] = {
+                "Muon": ak.zip({"pt": [[1.0, 2.0], [3.0]], "q": [[1, -1], [1]]}),
+                "Vertex": ak.Array([{"x": 1.0}, {"x": 2.0}]),
+                "met": np.array([1.0, 2.0]),
+                "s": ak.Array(["a", "b"]),
+            }
+        forms = FileSource(path, tree="events").branch_forms()
+        assert {name: str(form.type) for name, form in forms.items()} == {
+            "Muon.pt": "var * float64",
+            "Muon.q": "var * int64",
+            "Vertex.x": "float64",
+            "met": "float64",
+            "s": "string",
+        }
+        # the physics fixture as TTree and as RNTuple describe the same branches
+        ttree = FileSource(data_dir / "signal.root", tree="events").branch_forms()
+        rntuple = FileSource(data_dir / "signal_rntuple.root", tree="events").branch_forms()
+        assert {n: str(f.type) for n, f in rntuple.items()} == {
+            n: str(f.type) for n, f in ttree.items() if not n.startswith("nMuon_")
+        }
+
+    def test_array_source_forms(self) -> None:
+        source = ArraySource(
+            {"x": np.arange(3.0), "jag": ak.Array([[1], [], [2, 3]]), "s": ["a", "b", "c"]}
+        )
+        assert {n: str(f.type) for n, f in source.branch_forms().items()} == {
+            "x": "float64",
+            "jag": "var * int64",
+            "s": "string",
+        }
+
+    def test_split_collection_forms(self) -> None:
+        forms = FileSource(DATA / "split_collection.root", tree="events").branch_forms()
+        assert str(forms["ReconstructedParticles.energy"].type) == "var * float32"
+        assert str(forms["ReconstructedParticles.charge"].type) == "var * int32"
+
+    def test_histograms_by_dimension(self, stored_dir: Path) -> None:
+        from rootfig.io.objects import histogram_dimension, histogram_names, is_histogram_class
+
+        source = FileSource(stored_dir / "ZH_sel0_histo.root")
+        assert source.histograms(ndim=1) == ["cutflow", "eventsProcessed", "mz", "mz_raw"]
+        assert source.histograms(ndim=2) == ["mz_recoil_2D"]
+        assert source.histograms() == source.histograms(1) + source.histograms(2)
+        assert histogram_names(str(stored_dir / "in_directory.root"), ndim=1) == ["sub/mz"]
+        assert [histogram_dimension(c) for c in ("TH1D", "TH1F", "TH2D", "TH3F", "TProfile")] == [
+            1,
+            1,
+            2,
+            None,
+            None,
+        ]
+        assert histogram_dimension("TTree") is None
+        assert histogram_dimension("THnSparseD") is None
+        assert is_histogram_class("TH2D")
+        assert is_histogram_class("TH2D", ndim=2)
+        assert not is_histogram_class("TH2D", ndim=1)
+
+
+class TestSchema:
+    """Classifying forms: numeric and boolean leaves under any list or option wrapper."""
+
+    @pytest.mark.parametrize(
+        ("array", "dtype"),
+        [
+            (ak.Array([1.0, 2.0]), "float64"),
+            (ak.Array([True]), "bool"),
+            (ak.Array(np.array([1], dtype=np.uint16)), "uint16"),
+            (ak.Array([[1, 2], []]), "int64"),
+            (ak.Array([[[1.5]], []]), "float64"),
+            (ak.to_regular(ak.Array([[1.0, 2.0]])), "float64"),
+            (ak.Array([1.0, None]), "float64"),
+            (ak.Array([[], []]), "float64"),
+            (ak.Array([1 + 1j]), "complex128"),
+        ],
+    )
+    def test_leaf_dtype(self, array: ak.Array, dtype: str) -> None:
+        from rootfig.io.schema import leaf_dtype
+
+        assert leaf_dtype(ak.to_layout(array).form) == np.dtype(dtype)
+
+    @pytest.mark.parametrize(
+        "array",
+        [
+            ak.Array(["a", "b"]),
+            ak.Array([b"a"]),
+            ak.Array([["a"], []]),
+            ak.Array([{"x": 1.0}]),
+            ak.Array([[{"x": 1.0}], []]),
+            ak.Array([1, "a"]),
+        ],
+    )
+    def test_text_records_and_unions_have_no_leaf(self, array: ak.Array) -> None:
+        from rootfig.io.schema import leaf_dtype, plottable
+
+        form = ak.to_layout(array).form
+        assert leaf_dtype(form) is None
+        assert not plottable(form)
+
+    def test_plottable_kinds(self) -> None:
+        from rootfig.io.schema import plottable, plottable_names
+
+        forms = {
+            n: ak.to_layout(a).form
+            for n, a in {
+                "f": ak.Array([1.0]),
+                "b": ak.Array([True]),
+                "i": ak.Array([1]),
+                "c": ak.Array([1j]),
+                "t": ak.Array([np.datetime64("2020-01-01")]),
+                "s": ak.Array(["x"]),
+            }.items()
+        }
+        assert plottable_names(forms) == ["f", "b", "i"]
+        assert not plottable(forms["t"])
+
+    def test_select_field(self) -> None:
+        from rootfig.io.schema import select_field
+
+        collection = ak.to_layout(ak.Array([[{"pt": 1.0, "q": 1}], []])).form
+        assert str(select_field(collection, "pt").type) == "var * float64"
+        record = ak.to_layout(ak.Array([{"x": 1.0}])).form
+        assert str(select_field(record, "x").type) == "float64"
+        optional = ak.to_layout(ak.Array([{"x": 1.0}, None])).form
+        assert str(select_field(optional, "x").type) == "?float64"
+        with pytest.raises(KeyError):
+            select_field(record, "y")
+        with pytest.raises(KeyError):
+            select_field(ak.to_layout(ak.Array([1.0])).form, "x")
+
+
+class TestBranchFormFailures:
+    """Only uproot's own "cannot read this branch" errors leave a branch out; the rest surface."""
+
+    @pytest.fixture
+    def path(self, tmp_path: Path) -> Path:
+        import uproot
+
+        path = tmp_path / "plain.root"
+        with uproot.recreate(path) as file:
+            file.mktree("events", {"x": "float64", "y": "float64"}).extend(
+                {"x": np.zeros(2), "y": np.zeros(2)}
+            )
+        return path
+
+    @staticmethod
+    def _failing_interpretation(
+        monkeypatch: pytest.MonkeyPatch, branch: str, error: Exception
+    ) -> None:
+        import uproot
+
+        original = uproot.behaviors.TBranch.TBranch.interpretation
+
+        def interpretation(self: Any) -> Any:
+            if self.name == branch:
+                raise error
+            return original.fget(self)
+
+        monkeypatch.setattr(
+            uproot.behaviors.TBranch.TBranch, "interpretation", property(interpretation)
+        )
+
+    def test_unknown_interpretation_is_left_out(
+        self, path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uproot.interpretation.identify import UnknownInterpretation
+
+        self._failing_interpretation(
+            monkeypatch, "y", UnknownInterpretation("no streamer", str(path), "events/y")
+        )
+        assert list(FileSource(path, tree="events").branch_forms()) == ["x"]
+
+    def test_interpretation_without_form_is_left_out(
+        self, path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uproot.interpretation.objects import CannotBeAwkward
+
+        class Formless:
+            def awkward_form(self, *args: Any, **kwargs: Any) -> Any:
+                raise CannotBeAwkward("Formless")
+
+        import uproot
+
+        original = uproot.behaviors.TBranch.TBranch.interpretation
+        monkeypatch.setattr(
+            uproot.behaviors.TBranch.TBranch,
+            "interpretation",
+            property(lambda self: Formless() if self.name == "x" else original.fget(self)),
+        )
+        assert list(FileSource(path, tree="events").branch_forms()) == ["y"]
+
+    def test_unexpected_errors_surface(self, path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._failing_interpretation(monkeypatch, "y", RuntimeError("broken streamer"))
+        with pytest.raises(RuntimeError, match="broken streamer"):
+            FileSource(path, tree="events").branch_forms()

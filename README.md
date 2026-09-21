@@ -145,6 +145,17 @@ book = rf.PlotBook(
 book.save("plots/", formats=["pdf", "png"])  # plots/Muon_pt__sr__log.pdf, ...
 ```
 
+`rf.ALL` discovers the variables instead, from the branch types and stored
+histograms of the files (metadata only), filtered by name:
+
+```python
+book = rf.PlotBook(
+    samples,
+    variables=rf.ALL,
+    exclude=["*_cov", "*Index"],
+)
+```
+
 ## What you can do
 
 - **Select events and objects with readable expressions.** Write cuts such as
@@ -165,7 +176,8 @@ book.save("plots/", formats=["pdf", "png"])  # plots/Muon_pt__sr__log.pdf, ...
   and broken axes, then refine the result with matplotlib.
 - **Produce whole sets of plots.** `rf.PlotBook` runs one `rf.plot` call over
   variables × selections × variants, lazily, and saves each under a
-  deterministic name; filter it down with `select()` while iterating on a plot.
+  deterministic name; `rf.ALL` discovers the variables from the files, and
+  `select()` filters the book down while iterating on a plot.
 - **Go beyond 1D plots.** Draw 2D histograms, correlations, efficiencies,
   profiles, resolutions and significance panels; produce cut flows and
   summary statistics from the same inputs.

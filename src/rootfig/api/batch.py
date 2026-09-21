@@ -7,7 +7,9 @@ warmed with the branches they, every selection and every preparation the batch
 uses need serves its reads (:func:`~rootfig.api.plots1d.prefetch_plots`), each ``(variable,
 selection)`` is prepared once for the variants that only change the drawing
 (:func:`~rootfig.api.plots1d.prepare_plot`) and every variant is drawn from that
-(:func:`~rootfig.api.plots1d.draw_plot`).
+(:func:`~rootfig.api.plots1d.draw_plot`). The variables are listed by the caller
+or, with :data:`ALL`, discovered from the metadata of the inputs when the book is
+built (:mod:`rootfig.api._discover`); the book runs either the same way.
 """
 
 from __future__ import annotations
@@ -20,9 +22,10 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from difflib import get_close_matches
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from rootfig._mapping import FrozenMapping
+from rootfig.api._discover import discover
 from rootfig.api.plots1d import PreparedPlot, draw_plot, plot, prefetch_plots, prepare_plot
 from rootfig.io import ReadCache
 from rootfig.model import Cut, CutLike, Variable, as_cut, as_variable, check_file_stem
@@ -30,7 +33,34 @@ from rootfig.plotting import Plot
 from rootfig.plotting.figure import close_figures_since, open_figure_ids
 from rootfig.plotting.result import normalize_formats
 
-__all__ = ["PlotBook", "PlotTask"]
+__all__ = ["ALL", "PlotBook", "PlotTask", "discover_variables"]
+
+
+class _AllVariables:
+    """The type of :data:`ALL`; nothing else is an instance of it."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "ALL"
+
+
+ALL: Final = _AllVariables()
+"""Discover the variables of a :class:`PlotBook` from its inputs: ``PlotBook(data, rf.ALL)``.
+
+Every branch of the trees (``TTree`` or ``RNTuple``) holding numbers or booleans,
+lists and fixed-size arrays of them included, and every 1D histogram stored in
+files read without a tree, when every sample provides it under every variant;
+``include=`` and ``exclude=`` narrow the set with shell patterns. Only metadata
+is read. A distinct object rather than a string, so that a branch or histogram
+named ``"all"`` stays an ordinary variable name.
+"""
+
+_DISCOVERED_REMEDY = (
+    "with variables=rf.ALL, exclude= one of them or list the variables explicitly with "
+    "distinct name= values"
+)
+"""How to resolve two discovered variables whose output files would collide."""
 
 _RESERVED_PLOT_KWARGS = frozenset({"data", "variable", "selection", "save", "ax"})
 """Keywords of :func:`~rootfig.plot` that :class:`PlotBook` fills in itself."""
@@ -90,6 +120,63 @@ def _file_key(stem: str) -> str:
     is deliberately conservative: a false clash costs a rename, a missed one a plot.
     """
     return unicodedata.normalize("NFKC", stem).casefold()
+
+
+def _task_options(
+    plot_kwargs: Mapping[str, Any], variants: Mapping[str, Mapping[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """Return the effective ``plot()`` keywords of a book's tasks, one set per variant.
+
+    The common keywords with a variant's overrides on top, or the common ones
+    alone without variants. Every variable runs under each of them, so what is
+    discovered (:data:`ALL`) has to hold for all.
+    """
+    overrides = variants.values() if variants is not None else [{}]
+    return [{**plot_kwargs, **own} for own in overrides]
+
+
+def discover_variables(
+    data: Any,
+    *,
+    selections: Mapping[str, CutLike | None] | None = None,
+    variants: Mapping[str, Mapping[str, Any]] | None = None,
+    plot_kwargs: Mapping[str, Any] | None = None,
+    include: str | Sequence[str] | None = None,
+    exclude: str | Sequence[str] | None = None,
+) -> tuple[Variable, ...]:
+    """Return the variables ``PlotBook(data, rf.ALL, ...)`` would plot, without building the book.
+
+    The same discovery from metadata alone, under the same keywords (see
+    :class:`PlotBook`): every branch or stored ``TH1`` that every sample,
+    ``observed=`` included, provides the same way under every variant and that
+    nothing in the configuration is bound to refuse, filtered by ``include`` and
+    ``exclude`` and sorted by source name. Unlike the book it does not check that
+    the output file names are distinct: two variables that sanitise to one name
+    (``a-b`` and ``a_b``) are both returned, to be told apart with
+    :meth:`~rootfig.model.Variable.replace` before they are given to a book.
+
+    Raises
+    ------
+    SourceError, TypeError, ValueError
+        As :class:`PlotBook` with ``variables=rf.ALL``.
+
+    Examples
+    --------
+    >>> variables = rf.discover_variables(samples, include="jet*")  # doctest: +SKIP
+    >>> renamed = [  # doctest: +SKIP
+    ...     v.replace(name="jet1_btag") if v.expression == "`jet1_b-tag`" else v for v in variables
+    ... ]
+    >>> book = rf.PlotBook(samples, renamed)  # doctest: +SKIP
+    """
+    book_selections = _selections(selections)
+    kwargs = _plot_kwargs({} if plot_kwargs is None else plot_kwargs, where="plot_kwargs")
+    return discover(
+        data,
+        selections=list(book_selections.values()) if book_selections is not None else [None],
+        options=_task_options(kwargs, _variants(variants)),
+        include=_patterns(include, what="include="),
+        exclude=_patterns(exclude, what="exclude="),
+    )
 
 
 @dataclass(frozen=True, eq=False)
@@ -177,8 +264,13 @@ def _as_mapping(values: object, *, what: str, holds: str) -> Mapping[Any, Any]:
     return values
 
 
-def _variables(values: str | Variable | Sequence[str | Variable]) -> tuple[Variable, ...]:
-    """Coerce the variables and reject an empty list or two variables with one identifier."""
+def _variables(
+    values: str | Variable | Sequence[str | Variable], *, remedy: str = "give one a distinct name="
+) -> tuple[Variable, ...]:
+    """Coerce the variables and reject an empty list or two variables with one identifier.
+
+    ``remedy`` ends the message for the latter: what to do about it.
+    """
     items = (values,) if isinstance(values, str | Variable) else tuple(values)
     if not items:
         msg = "PlotBook needs at least one variable"
@@ -190,12 +282,53 @@ def _variables(values: str | Variable | Sequence[str | Variable]) -> tuple[Varia
         if key in seen:
             msg = (
                 f"variables {seen[key].expression!r} and {variable.expression!r} share the "
-                f"identifier {key!r}, so their output files would collide; "
-                "give one a distinct name="
+                f"identifier {key!r}, so their output files would collide; {remedy}"
             )
             raise ValueError(msg)
         seen[key] = variable
     return variables
+
+
+def _patterns(value: object, *, what: str) -> tuple[str, ...] | None:
+    """Coerce ``include=`` or ``exclude=`` to shell patterns; ``None`` means no filter."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, Sequence) or not all(isinstance(item, str) for item in value):
+        msg = f"{what} must be a shell pattern or a sequence of them, got {value!r}"
+        raise TypeError(msg)
+    if not value:
+        msg = f"{what} must hold at least one pattern; omit it to keep every variable"
+        raise ValueError(msg)
+    return tuple(value)
+
+
+def _check_output_names(
+    variables: Sequence[Variable],
+    selections: Mapping[str, Any] | None,
+    variants: Mapping[str, Any] | None,
+    *,
+    remedy: str | None = None,
+) -> None:
+    """Reject two tasks whose output files would be one on a case-insensitive file system."""
+    by_file: dict[str, list[str]] = {}
+    for variable in variables:
+        for selection in selections if selections is not None else [None]:
+            for variant in variants if variants is not None else [None]:
+                stem = _stem(variable.safe_name, selection, variant)
+                by_file.setdefault(_file_key(stem), []).append(stem)
+    clashes = [dict.fromkeys(stems) for stems in by_file.values() if len(stems) > 1]
+    if clashes:
+        shown = "; ".join(" and ".join(repr(stem) for stem in group) for group in clashes)
+        msg = (
+            f"output names collide: {shown} (compared ignoring case, as case-insensitive "
+            "file systems do); rename a variable, selection or variant so that no two tasks "
+            f"share <variable>{_SEPARATOR}<selection>{_SEPARATOR}<variant>"
+        )
+        if remedy is not None:
+            msg = f"{msg} ({remedy})"
+        raise ValueError(msg)
 
 
 def _plot_kwargs(values: Mapping[str, Any], *, where: str) -> FrozenMapping[str, Any]:
@@ -308,14 +441,19 @@ class PlotBook:
     task under deterministic names. Each plot is what the corresponding
     :func:`~rootfig.plot` call returns, so samples, groups, stored histograms,
     arrays and histogram objects behave exactly as they do there; ``data`` is
-    passed on as given, never copied or inspected. The book only reads the files
-    less often: once per batch of variables, for every selection and variant
-    (see :meth:`plots`). The configuration mappings are copied, the
-    values inside them (a ``systematics=`` mapping, a ``Style``) are shared. Names
-    of selections and variants are file name components and must be usable on
-    every platform (:func:`~rootfig.model.check_file_stem`). Two tasks whose file
-    names differ only in case or Unicode normalisation are one file on many file
-    systems and are rejected as a collision.
+    passed on as given, never copied. The book only reads the files less often:
+    once per batch of variables, for every selection and variant (see
+    :meth:`plots`). The configuration mappings are copied, the values inside them
+    (a ``systematics=`` mapping, a ``Style``) are shared. Names of selections and
+    variants are file name components and must be usable on every platform
+    (:func:`~rootfig.model.check_file_stem`). Two tasks whose file names differ
+    only in case or Unicode normalisation are one file on many file systems and
+    are rejected as a collision.
+
+    The variables are listed explicitly, in which case nothing is inspected when
+    the book is built, or discovered with ``variables=rf.ALL``, which inspects
+    the metadata of the inputs (branch types, object classes, array types) and
+    never their contents; the result is an ordinary :attr:`variables` tuple.
 
     Parameters
     ----------
@@ -325,6 +463,16 @@ class PlotBook:
         Variables (names, expressions or :class:`~rootfig.model.Variable`
         objects); one may be given bare. :attr:`~rootfig.model.Variable.safe_name`
         identifies each and names its files, so two variables must not share one.
+        :data:`ALL` (``rf.ALL``) discovers them instead: every branch of the trees
+        whose values are numbers or booleans (lists and fixed-size arrays of them
+        included, strings and records left out) and every ``TH1`` stored in files
+        read without a tree, kept when every sample, ``observed=`` included,
+        provides it the same way under every variant, sorted by name. Stored
+        histograms are left out when a selection, a ``weight``,
+        ``nonfinite="error"`` or a systematic varying event data rules them out.
+        A name that is not an identifier is addressed in backticks. Histogram
+        objects as ``data`` carry no names to discover and need an explicit
+        variable.
     selections
         Named selections, ``{name: cut}`` with ``cut`` a string, a
         :class:`~rootfig.model.Cut` or ``None``. ``None`` (the default) plots without
@@ -337,17 +485,28 @@ class PlotBook:
         Keywords passed to every :func:`~rootfig.plot` call (``stack=``,
         ``observed=``, ``style=``, ...). ``data``, ``variable``, ``selection``,
         ``save`` and ``ax`` belong to the book and are rejected here and in variants.
+    include, exclude
+        With ``variables=rf.ALL`` only: shell patterns (one, or a sequence;
+        ``"Muon_*"``, ``["*_cov", "*Index"]``), matched case-sensitively against the
+        source name (``jet1_b-tag``, ``sel/mz``, not the file name component). A
+        variable is kept when it matches one ``include`` pattern (all do when
+        ``include`` is not given) and no ``exclude`` pattern.
 
     Raises
     ------
     ValueError
         No variable, an empty ``selections=`` or ``variants=``, a reserved plot
-        keyword, a name that cannot be a file name component, or two tasks whose
-        output files would collide.
+        keyword, a name that cannot be a file name component, two tasks whose
+        output files would collide, ``include=``/``exclude=`` with an explicit
+        variable list, or patterns that leave no variable.
     TypeError
         ``selections=``, ``variants=``, ``plot_kwargs=`` or one variant's overrides
-        is not a mapping, a name is not a string, or a keyword is not one
-        :func:`~rootfig.plot` takes (the message names the closest one).
+        is not a mapping, a name is not a string, a keyword is not one
+        :func:`~rootfig.plot` takes (the message names the closest one), a
+        pattern is not a string, or ``rf.ALL`` meets histogram objects.
+    SourceError
+        With ``rf.ALL``, when the inputs offer nothing every task can plot, or
+        a file cannot be surveyed (several trees and no ``tree=``, a missing tree).
 
     Examples
     --------
@@ -359,6 +518,10 @@ class PlotBook:
     ...     plot_kwargs={"stack": True, "style": style},
     ... )
     >>> book.save("plots", formats=["pdf", "png"])  # doctest: +SKIP
+    >>> rf.PlotBook(  # doctest: +SKIP
+    ...     [background, signal], rf.ALL, include=["Muon_*", "MET*"], exclude="*Index"
+    ... ).variables
+    (Variable('MET'), Variable('Muon_eta'), Variable('Muon_pt'), ...)
     """
 
     data: Any
@@ -370,14 +533,15 @@ class PlotBook:
     def __init__(
         self,
         data: Any,
-        variables: str | Variable | Sequence[str | Variable],
+        variables: str | Variable | Sequence[str | Variable] | _AllVariables,
         *,
         selections: Mapping[str, CutLike | None] | None = None,
         variants: Mapping[str, Mapping[str, Any]] | None = None,
         plot_kwargs: Mapping[str, Any] | None = None,
+        include: str | Sequence[str] | None = None,
+        exclude: str | Sequence[str] | None = None,
     ) -> None:
         object.__setattr__(self, "data", data)
-        object.__setattr__(self, "variables", _variables(variables))
         object.__setattr__(self, "selections", _selections(selections))
         object.__setattr__(self, "variants", _variants(variants))
         object.__setattr__(
@@ -385,21 +549,27 @@ class PlotBook:
             "plot_kwargs",
             _plot_kwargs({} if plot_kwargs is None else plot_kwargs, where="plot_kwargs"),
         )
-        by_file: dict[str, list[str]] = {}
-        for variable in self.variables:
-            for selection in self.selections if self.selections is not None else [None]:
-                for variant in self.variants if self.variants is not None else [None]:
-                    stem = _stem(variable.safe_name, selection, variant)
-                    by_file.setdefault(_file_key(stem), []).append(stem)
-        clashes = [dict.fromkeys(stems) for stems in by_file.values() if len(stems) > 1]
-        if clashes:
-            shown = "; ".join(" and ".join(repr(stem) for stem in group) for group in clashes)
-            msg = (
-                f"output names collide: {shown} (compared ignoring case, as case-insensitive "
-                "file systems do); rename a variable, selection or variant so that no two tasks "
-                f"share <variable>{_SEPARATOR}<selection>{_SEPARATOR}<variant>"
+        if isinstance(variables, _AllVariables):
+            found = discover_variables(
+                data,
+                selections=self.selections,
+                variants=self.variants,
+                plot_kwargs=self.plot_kwargs,
+                include=include,
+                exclude=exclude,
             )
-            raise ValueError(msg)
+            object.__setattr__(self, "variables", _variables(found, remedy=_DISCOVERED_REMEDY))
+            remedy: str | None = _DISCOVERED_REMEDY
+        else:
+            if include is not None or exclude is not None:
+                msg = (
+                    "include= and exclude= are only valid with variables=rf.ALL; an explicit "
+                    "list of variables is used as it is"
+                )
+                raise ValueError(msg)
+            object.__setattr__(self, "variables", _variables(variables))
+            remedy = None
+        _check_output_names(self.variables, self.selections, self.variants, remedy=remedy)
 
     def _iter_tasks(self) -> Iterator[PlotTask]:
         """Yield the Cartesian product one task at a time, in the documented order."""

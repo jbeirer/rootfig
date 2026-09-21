@@ -406,7 +406,7 @@ def prepare_plot(
         if variable is None:
             msg = "plot() needs a variable (a branch, expression or stored histogram name)"
             raise TypeError(msg)
-        items = _items(data, tree=tree, label=label, observed=observed)
+        items = plot_items(data, tree=tree, label=label, observed=observed)
         var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
         hists = build_histograms(
             items,
@@ -422,7 +422,7 @@ def prepare_plot(
     return PreparedPlot(hists, var, xlabel=xlabel, unit=unit, lumi=lumi)
 
 
-def _items(
+def plot_items(
     data: Any, *, tree: str | None, label: str | Sequence[str] | None, observed: Any
 ) -> list[PlotItem]:
     """Return the samples and groups :func:`plot` fills from: ``data``, then ``observed``."""
@@ -460,7 +460,7 @@ def prefetch_plots(
         # Every exception, not only rootfig's: a bad option of one task must not surface
         # while the histograms of another are read ahead, nor stop them being read.
         with suppress(Exception):
-            items = _items(
+            items = plot_items(
                 data,
                 tree=option_set.get("tree"),
                 label=option_set.get("label"),
