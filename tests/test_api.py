@@ -1721,6 +1721,28 @@ class TestOffsetText:
         label, offset = self._boxes(p)
         assert label.x1 <= offset.x0
 
+    @pytest.mark.parametrize("xlabel", ["x", "x" * 30], ids=["beside", "below"])
+    def test_clearance_holds_when_the_figure_is_resized(self, xlabel: str) -> None:
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel=xlabel, figsize=(5, 4))
+        for size, dpi in [((3.5, 3.0), 100.0), ((12.0, 8.0), 100.0), ((5.0, 4.0), 200.0)]:
+            p.fig.set_size_inches(size)
+            p.fig.set_dpi(dpi)
+            label, offset = self._boxes(p)
+            assert not label.overlaps(offset), (size, dpi)
+        plt.close(p.fig)
+
+    def test_label_without_room_beside_goes_below(self) -> None:
+        # constrained layout reserves an x label's height, never its width, so a label
+        # moved past the left end of the axes could leave the canvas
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 30, figsize=(5, 4))
+        label, offset = self._boxes(p)
+        assert label.y1 <= offset.y0
+        assert label.x0 >= p.ax.get_window_extent().x0
+        assert label.y0 >= 0
+        plt.close(p.fig)
+
 
 class TestWeightedRangeInference:
     def test_high_weight_entries_stay_on_the_axis(self) -> None:
