@@ -16,7 +16,7 @@ import numpy as np
 from rootfig.errors import ExpressionError, MissingBranchError
 from rootfig.expressions.functions import CONSTANTS, FUNCTIONS
 
-__all__ = ["Expression", "ExpressionLike", "evaluate", "parse"]
+__all__ = ["Expression", "ExpressionLike", "evaluate", "parse", "quote_name"]
 
 
 # --------------------------------------------------------------------------------------
@@ -380,6 +380,30 @@ def parse(expression: ExpressionLike) -> Expression:
         _code=code,
         _backticks=backticks,
     )
+
+
+def quote_name(name: str) -> str | None:
+    """Return the expression that addresses exactly the branch or object ``name``, or ``None``.
+
+    The name itself when it parses as one (an identifier such as ``Muon_pt``, a
+    dotted path such as ``ReconstructedParticles.energy``), otherwise the name in
+    backticks (``"`jet1_b-tag`"``, ``"`sel/mz`"`` for a histogram inside a
+    directory). ``None`` when no expression can address it: an empty name, or
+    one that itself holds a backtick.
+
+    Examples
+    --------
+    >>> quote_name("Muon_pt"), quote_name("jet1_b-tag"), quote_name("a`b")
+    ('Muon_pt', '`jet1_b-tag`', None)
+    """
+    for candidate in (name, f"`{name}`"):
+        try:
+            parsed = parse(candidate)
+        except ExpressionError:
+            continue
+        if parsed.is_trivial and parsed.names[0] == name:
+            return candidate
+    return None
 
 
 def evaluate(

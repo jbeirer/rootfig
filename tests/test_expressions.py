@@ -308,3 +308,42 @@ class TestReviewRegressions:
         assert parse("2").evaluate({}, length=4).tolist() == [2, 2, 2, 2]
         with pytest.raises(ExpressionError, match="constant"):
             evaluate("1", {})
+
+
+class TestQuoteName:
+    @pytest.mark.parametrize(
+        ("name", "expression"),
+        [
+            ("Muon_pt", "Muon_pt"),
+            ("ReconstructedParticles.momentum.x", "ReconstructedParticles.momentum.x"),
+            ("pi", "pi"),  # a branch of a constant's name is read as the branch
+            ("count", "count"),  # functions live in their own namespace
+            ("jet1_b-tag", "`jet1_b-tag`"),
+            ("sel/mz", "`sel/mz`"),
+            ("1abc", "`1abc`"),
+            ("if", "`if`"),
+            ("True", "`True`"),
+            ("with space", "`with space`"),
+            ("x ", "`x `"),
+        ],
+    )
+    def test_addresses_exactly_the_name(self, name: str, expression: str) -> None:
+        from rootfig.expressions import quote_name
+
+        assert quote_name(name) == expression
+        parsed = parse(expression)
+        assert parsed.is_trivial
+        assert parsed.names == (name,)
+
+    @pytest.mark.parametrize("name", ["", "a`b", "`x`"])
+    def test_unaddressable_names(self, name: str) -> None:
+        from rootfig.expressions import quote_name
+
+        assert quote_name(name) is None
+
+    def test_quoted_name_evaluates_the_branch(self) -> None:
+        from rootfig.expressions import quote_name
+
+        arrays = {"jet1_b-tag": ak.Array([0.1, 0.9]), "pi": ak.Array([1.0, 2.0])}
+        assert evaluate(quote_name("jet1_b-tag") or "", arrays).tolist() == [0.1, 0.9]
+        assert evaluate(quote_name("pi") or "", arrays).tolist() == [1.0, 2.0]

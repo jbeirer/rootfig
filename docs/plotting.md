@@ -507,6 +507,10 @@ branch, or read the histogram with `FileSource.read_histogram`), and samples
 that disagree raise with the reason per sample. A histogram inside a directory
 is named by its path in backticks, like a branch with odd characters:
 `` rf.plot("histo.root", "`selection/mz`") ``.
+`rf.PlotBook(file, rf.ALL)` discovers every stored `TH1` of a file, and every
+branch of a tree whose values are numbers or booleans (lists and fixed-size
+arrays of them included; strings and records are not), from the same metadata;
+see [Automatic variable discovery](batch.md#automatic-variable-discovery).
 
 What a stored histogram supports:
 

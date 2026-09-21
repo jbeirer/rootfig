@@ -8,17 +8,20 @@ The quick path::
 
 The composable path uses :class:`Sample`, :class:`Variable`, :class:`Cut` and
 :class:`Style` objects with the same :func:`plot` function; :class:`PlotBook`
-runs it over many variables, selections and variants. Lower layers are
+runs it over many variables, selections and variants, the variables listed or
+discovered from the inputs (:data:`ALL`). Lower layers are
 exposed as sub-packages: :mod:`rootfig.io`, :mod:`rootfig.expressions`,
 :mod:`rootfig.selection`, :mod:`rootfig.histograms`, :mod:`rootfig.plotting`.
 """
 
 from rootfig.api import (
+    ALL,
     PlotBook,
     PlotTask,
     SummaryTable,
     correlation,
     cutflow,
+    discover_variables,
     efficiency,
     histogram,
     histograms,
@@ -59,6 +62,7 @@ from rootfig.plotting import Plot, dark_theme, use_style
 __version__ = "0.6.0"
 
 __all__ = [
+    "ALL",
     "BinningError",
     "Cut",
     "Cutflow",
@@ -91,6 +95,7 @@ __all__ = [
     "correlation",
     "cutflow",
     "dark_theme",
+    "discover_variables",
     "efficiency",
     "evaluate",
     "histogram",

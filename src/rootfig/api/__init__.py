@@ -6,7 +6,7 @@ Everything here is a thin orchestration of the lower layers
 their own.
 """
 
-from rootfig.api.batch import PlotBook, PlotTask
+from rootfig.api.batch import ALL, PlotBook, PlotTask, discover_variables
 from rootfig.api.data import histogram, histograms, load
 from rootfig.api.measures import efficiency, profile
 from rootfig.api.plots1d import plot
@@ -14,11 +14,13 @@ from rootfig.api.plots2d import correlation, plot2d
 from rootfig.api.tables import SummaryTable, cutflow, summarize
 
 __all__ = [
+    "ALL",
     "PlotBook",
     "PlotTask",
     "SummaryTable",
     "correlation",
     "cutflow",
+    "discover_variables",
     "efficiency",
     "histogram",
     "histograms",

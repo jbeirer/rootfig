@@ -2048,6 +2048,45 @@ class TestStoredHistograms:
         assert [a.label for a in h.hist.axes] == ["Mass", "Recoil [GeV]"]
 
 
+class TestStoredNames:
+    """``stored_names``: the stored half of ``rf.ALL``, one rule with ``stored_mode``."""
+
+    def test_agrees_with_stored_mode_for_every_th1(self, stored_dir: Path) -> None:
+        from rootfig.expressions import quote_name
+        from rootfig.histograms import stored_mode, stored_names
+
+        for path in sorted(stored_dir.glob("*.root")):
+            if path.name == "two_trees.root":
+                continue
+            sample = Sample(path)
+            by_rule = stored_names(sample)
+            assert by_rule == sorted(by_rule)
+            for name in sample.source.histograms(ndim=1):
+                expression = quote_name(name)
+                assert expression is not None
+                assert stored_mode([sample], [Variable(expression)]) == (name in by_rule), name
+
+    def test_cases(self, stored_dir: Path) -> None:
+        from rootfig.histograms import stored_names
+
+        assert stored_names(Sample(stored_dir / "ZH_sel0_histo.root")) == [
+            "cutflow",
+            "eventsProcessed",
+            "mz",
+            "mz_raw",
+        ]
+        assert stored_names(Sample(stored_dir / "in_directory.root")) == ["sub/mz"]
+        assert stored_names(Sample(stored_dir / "tree_without_branch.root")) == ["mz"]
+        assert stored_names(Sample(stored_dir / "branch_and_histogram.root")) == []  # branch wins
+        assert stored_names(Sample(stored_dir / "unsupported.root")) == []
+        # explicit intent addresses a tree; in-memory data holds no stored histograms
+        assert stored_names(Sample(stored_dir / "ZH_sel0_histo.root", tree="events")) == []
+        assert stored_names(Sample(stored_dir / "ZH_sel0_histo.root", entry_stop=3)) == []
+        assert stored_names(Sample({"mz": [1.0]})) == []
+        with pytest.raises(SourceError, match=r"holds 1 stored histograms and several trees"):
+            stored_names(Sample(stored_dir / "two_trees.root"))
+
+
 class TestGroupedHistograms:
     @staticmethod
     def _sample(values: list[float], label: str, **kwargs: Any) -> Sample:

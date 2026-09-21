@@ -95,16 +95,104 @@ device name (`CON`, `NUL`, `COM1`, ...). The check is
 [`check_file_stem`][rootfig.model.check_file_stem]; its message offers a
 spelling that works.
 
+## Automatic variable discovery
+
+`rf.ALL` in place of the variable list asks the book to find the variables
+itself:
+
+```python
+book = rf.PlotBook(
+    samples,
+    variables=rf.ALL,
+)
+```
+
+Discovery reads metadata only. For a `TTree` or `RNTuple` it is the schema:
+every branch (or nested field, `Muon.pt`) whose values are numbers or booleans,
+lists and fixed-size arrays of them included, becomes a variable; strings,
+records and other objects are left out. For a ROOT file read without a tree it
+is the object list: every stored `TH1` becomes a variable; `TH2`, `TProfile`,
+`TParameter` and the like do not, and a histogram inside a directory is named by
+its path (`sel/mz`). A file holding both is treated as `rf.plot` treats it: the
+branches of its one tree plus the stored `TH1`s no branch shadows; an explicit
+`tree=` means branches only, and several trees without `tree=` raise, as they
+do for any plot. In-memory arrays contribute their numeric and boolean columns.
+No event array and no bin content is read, and the first file of a sample
+stands for all of them, as everywhere in rootfig.
+
+With several samples, groups (through their leaf samples) and `observed=`, a
+variable must be present in every one of them, the same way: a name that is a
+branch in one sample and a stored histogram in another is not a common
+variable. Variants that change how the histograms are prepared (`tree`,
+`observed`, `weight`, ...) must all be able to plot it too, so the discovered
+set is the intersection over the effective configurations. The files or arrays
+a `Systematic.samples` variation fills or reads from are surveyed like a sample
+of their own and take part in the intersection, in the mode of the sample they
+vary; a variation that cannot be built or surveyed is left to the task, which
+reports it whatever the variable. A branch that a branch-replacement systematic
+replaces is kept only when its replacement is a plottable branch of the sample,
+since the replacement is read whenever the branch is. Stored histograms
+are left out whenever the book is bound to refuse them: a selection, a
+`weight`, `nonfinite="error"`, a `stats` box, a `range` without `bins`, or a
+systematic varying the weight or branches that applies to a sample (the plot's
+unless the sample's own source of that name replaces it, none for observed
+data), in the book's keywords or in any variant's. A file of stored histograms
+only then fails when the book is built, saying why, rather than at its first
+task; the message lists what each sample holds, what was left out and why, and
+which names the samples do not share.
+
+`include=` and `exclude=` narrow the set with case-sensitive shell patterns
+(`*`, `?`, `[...]`, as `fnmatch` reads them), one or a sequence:
+
+```python
+book = rf.PlotBook(
+    samples,
+    variables=rf.ALL,
+    include=["Muon_*", "Electron_*", "MET*"],
+    exclude=["*_cov", "*Index"],
+)
+```
+
+A variable is kept when it matches one `include` pattern (all do when `include`
+is not given) and no `exclude` pattern. Patterns match the source name, `sel/mz`
+or `jet1_b-tag`, not the file name component `sel_mz` made from it. They are
+only valid with `rf.ALL`: an explicit list is used as it is, and `include=` or
+`exclude=` next to one raises. So does a filter that leaves nothing; a pattern
+that matches nothing is fine as long as others do.
+
+The result is an ordinary tuple of `Variable` objects, sorted by source name,
+each addressing exactly its branch or histogram (`` `jet1_b-tag` `` and
+`` `sel/mz` `` in backticks). `book.variables` shows exactly what was
+discovered, and from there on nothing distinguishes the book from one built
+with that list: the same file names (two names that sanitise to one component,
+`a-b` and `a_b`, are rejected as for an explicit list; exclude one or name
+them), the same `tasks()`, `select()` (which keeps the discovered variables
+rather than discovering again) and the same batched execution described below.
+
+`rf.discover_variables(data, ...)` runs the same discovery without building a
+book, under the same `selections=`, `variants=`, `plot_kwargs=`, `include=` and
+`exclude=` keywords, and returns the variables. It does not check output file
+names, so two names that sanitise to one component are both returned; tell them
+apart with `Variable.replace(name=...)` and pass the list to `PlotBook`:
+
+```python
+variables = rf.discover_variables(samples, include="jet*")
+renamed = [v.replace(name="jet1_btag") if v.expression == "`jet1_b-tag`" else v for v in variables]
+book = rf.PlotBook(samples, renamed)
+```
+
 ## Data passes through unchanged
 
-`data` is stored as given and handed to `rf.plot` as is, never copied,
-flattened or inspected. Every form of `data` that `rf.plot` accepts can therefore
-be used in a book: file paths and globs, `Sample` objects, `Group` objects (drawn
-as one histogram), a `Group` as `observed=`, variables that name a `TH1` stored
-in the files, in-memory arrays and `hist.Hist` or `Histogram` objects. The rules
-of `rf.plot` apply unchanged: a book always names at least one variable, and a
-`selection` or `weight` raises for a ready-made histogram, which is drawn as it
-is.
+`data` is stored as given and handed to `rf.plot` as is, never copied or
+flattened; with an explicit variable list it is not inspected either, and
+`rf.ALL` reads its metadata only. Every form of `data` that `rf.plot` accepts
+can therefore be used in a book: file paths and globs, `Sample` objects,
+`Group` objects (drawn as one histogram), a `Group` as `observed=`, variables
+that name a `TH1` stored in the files, in-memory arrays and `hist.Hist` or
+`Histogram` objects. The rules of `rf.plot` apply unchanged: a book always
+names at least one variable (`rf.ALL` needs inputs with names to discover, so
+histogram objects take an explicit one), and a `selection` or `weight` raises
+for a ready-made histogram, which is drawn as it is.
 
 The book copies the mappings it is configured with (the variable list,
 `selections`, `variants` and each keyword mapping) into read-only copies, so
@@ -181,9 +269,11 @@ one set of prepared histograms, each figure from its own copy. A variant that
 changes how the histograms are prepared (`bins`, `weight`, `observed`,
 `systematics`, ...) is prepared on its own, still from the batch's read.
 Variables that name histograms stored in the files are read with one pass over
-each file per batch. Nothing is read when the book is built or when `tasks()`
-is called; the first batch is read when the first plot is requested and the
-next one when the iteration reaches it.
+each file per batch. A book with an explicit variable list inspects no input
+when it is built; one built with `rf.ALL` inspects the metadata of its inputs
+then, but never reads event arrays or histogram contents. Neither reads
+anything for `tasks()`; the first batch is read when the first plot is
+requested and the next one when the iteration reaches it.
 
 Errors stop the book at the failing task. They keep their type and gain a note
 naming the task, so a traceback for a typo in one expression reads

@@ -32,7 +32,7 @@ from rootfig.histograms.ratio import (
     significance,
 )
 from rootfig.histograms.stats import Summary, correlation_matrix, describe_table, summarize
-from rootfig.histograms.stored import describe_axes, read_stored, stored_mode
+from rootfig.histograms.stored import describe_axes, read_stored, stored_mode, stored_names
 from rootfig.histograms.systematics import Uncertainty, sum_histograms, uncertainty
 
 __all__ = [
@@ -80,6 +80,7 @@ __all__ = [
     "significance",
     "source_length",
     "stored_mode",
+    "stored_names",
     "sum_histograms",
     "summarize",
     "uncertainty",
