@@ -20,6 +20,14 @@ def plot_book(sample: rf.Sample, group: rf.Group) -> None:
     assert_type(book.tasks(), tuple[rf.PlotTask, ...])
     assert_type(book.plots(), Iterator[tuple[rf.PlotTask, rf.Plot]])
     assert_type(book.save("plots", formats=["pdf", "png"], dpi=200), list[Path])
+    assert_type(rf.PlotBook(sample, ["x"]).save_pdf("plots.pdf"), Path)
+    assert_type(book.save_pdf(Path("plots"), layout="auto", dpi=200), Path)
+    assert_type(book.save_pdf("plots.pdf", layout=(2, 3), figsize=(14.0, 10.0)), Path)
+    assert_type(book.select(variables="x").save_pdf("muons.pdf", metadata={"Title": "x"}), Path)
+    # layout is "auto" or a (rows, columns) pair; mypy reports an unused ignore if this loosens.
+    book.save_pdf("plots.pdf", layout="dense")  # type: ignore[arg-type]
+    book.save_pdf("plots.pdf", layout=(2, 3, 4))  # type: ignore[arg-type]
+    book.save_pdf("plots.pdf", figsize=(14.0,))  # type: ignore[arg-type]
     assert_type(book.select(variables="x", selections=["sr"], variants=None), rf.PlotBook)
     task = book.tasks()[0]
     assert_type(task.variable, rf.Variable)

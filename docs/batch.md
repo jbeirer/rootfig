@@ -233,6 +233,82 @@ file systems of macOS and Windows; the message lists the spellings that clash.
 every figure after writing it, also when writing fails, so memory stays bounded
 however large the book is.
 
+## One multipage PDF
+
+`book.save_pdf(path)` writes every task into a single PDF, several plots per
+page, arranged automatically:
+
+```python
+book.save_pdf("overview.pdf")
+```
+
+The two output modes differ only in where the plots land:
+
+```text
+book.save("plots/")          -> one file per task
+book.save_pdf("plots.pdf")   -> one multipage PDF
+```
+
+The plots follow `book.tasks()` order and fill each page row by row, and each
+is drawn as `rf.plot` would draw it on a figure of its own: the same panels,
+broken axis, style, labels and legend, inside one cell of the page. Nothing is
+added to a cell; a `title=` in `plot_kwargs` or a variant appears as it would on
+a standalone figure.
+
+By default the grid of a page follows the plots it holds. Plots without a lower
+panel or broken axis go up to `2 × 3` on a page; when one of the plots that
+would land on a page has a `ratio=` panel or an `xbreak=`, which need the room,
+the page stops at `2 × 2`. The last page adapts to what is left rather than
+leaving a lone plot in the corner of a full grid: seven plain plots are a
+`2 × 3` page followed by a `1 × 1` one, eight a `2 × 3` page and a `1 × 2` one.
+`layout=(rows, columns)` fixes the grid of every page instead, the last one
+included; its unused cells stay empty:
+
+```python
+book.save_pdf("overview.pdf", layout=(2, 3))
+```
+
+A page is as large as the grid of figures the plots would have on their own, so
+a plot in a cell keeps its usual size: every cell of the document is as large as
+the largest figure any plot of the book would draw alone (a ratio panel makes it
+taller, a `Style` with a `figsize` sets its own). `figsize=` on `save_pdf()`
+sets the size of the whole page instead:
+
+```python
+book.save_pdf("overview.pdf", figsize=(16, 10))
+```
+
+A `figsize` in `plot_kwargs` or a variant has no meaning inside a shared page and
+is rejected before anything is read; pass it to `save_pdf()`.
+
+`.pdf` is appended to a path without a suffix (`"overview"` writes
+`overview.pdf`), parent directories are created, another suffix raises
+`ValueError` and an existing directory `IsADirectoryError`. The remaining
+keywords go to `PdfPages.savefig` for every page (`dpi=` for rasterised parts,
+`metadata=`); `format`, `fname` and `figure` are refused. The document is written
+to a temporary file next to its final name and renamed onto it once every page
+is done, so a failure part way leaves an existing file as it was and no
+half-written PDF behind. Pages are written one after another and each page's
+figure is closed before the next begins, so memory stays bounded however many
+plots the book holds.
+
+The histograms are prepared exactly as for `plots()` and `save()`, with the same
+batched reads and the same reuse of one preparation for the variants that only
+change the drawing (see below), so `rf.ALL` composes naturally:
+
+```python
+rf.PlotBook(
+    "analysis.root",
+    rf.ALL,
+    exclude=["*_cov", "*Index"],
+).save_pdf("overview.pdf")
+```
+
+writes an overview of every plottable branch of the file, and
+`book.select(variables=["Muon_pt", "Muon_eta"]).save_pdf("muons.pdf")` one of
+a subset. Errors keep their type and gain the task's note as for `plots()`; a
+failure while writing a page adds one naming the page and the file.
+
 ## Running plots yourself
 
 `book.plots()` is a lazy iterator of `(task, plot)` pairs: one figure per
@@ -310,7 +386,9 @@ or `"default"` (variants); selecting it is a no-op and the axis stays implicit.
 ## What a book does not do
 
 A book runs its tasks one after another in the calling process and keeps the
-arrays of one batch of variables at a time. It has no filename template,
-pattern matching, parallel execution or report generation, and it drives the
+arrays of one batch of variables at a time. Its outputs are the individual files
+of `save()` and the compact overview of `save_pdf()`: it has no filename
+template, no parallel execution, and no report generation beyond that grid of
+plots (no captions, tables of contents, headers, HTML or slides). It drives the
 1D `rf.plot` only: for `plot2d`, `efficiency` and `profile` you write the loop
 yourself.

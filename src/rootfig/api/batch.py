@@ -19,6 +19,7 @@ import itertools
 import os
 import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from difflib import get_close_matches
 from pathlib import Path
@@ -26,11 +27,19 @@ from typing import Any, Final
 
 from rootfig._mapping import FrozenMapping
 from rootfig.api._discover import discover
+from rootfig.api._pdf import is_complex, write_pdf
 from rootfig.api.plots1d import PreparedPlot, draw_plot, plot, prefetch_plots, prepare_plot
 from rootfig.io import ReadCache
 from rootfig.model import Cut, CutLike, Variable, as_cut, as_variable, check_file_stem
 from rootfig.plotting import Plot
 from rootfig.plotting.figure import close_figures_since, open_figure_ids
+from rootfig.plotting.pages import (
+    LayoutSpec,
+    check_figsize,
+    check_layout,
+    pdf_target,
+    plan_pages,
+)
 from rootfig.plotting.result import normalize_formats
 
 __all__ = ["ALL", "PlotBook", "PlotTask", "discover_variables"]
@@ -83,8 +92,11 @@ A variant that overrides none of them draws the histograms prepared for the
 book's own keywords; one that does is prepared on its own.
 """
 
-_DRAW_KEYWORDS = frozenset(inspect.signature(draw_plot).parameters) - {"prepared"}
-"""Keywords of :func:`~rootfig.plot` that only change the drawing."""
+_DRAW_KEYWORDS = frozenset(inspect.signature(draw_plot).parameters) - {"prepared", "cell"}
+"""Keywords of :func:`~rootfig.plot` that only change the drawing.
+
+``cell``, where :meth:`PlotBook.save_pdf` draws, is the page's, not the task's.
+"""
 
 _VARIABLE_BATCH_SIZE = 32
 """Variables whose branches are read together.
@@ -95,6 +107,9 @@ those of the selections and weights, for every sample of the book.
 
 _RESERVED_SAVEFIG_KWARGS = frozenset({"format", "fname"})
 """Keywords of ``savefig`` that would fight the file names :meth:`PlotBook.save` builds."""
+
+_RESERVED_PDF_KWARGS = frozenset({"format", "fname", "figure"})
+"""Keywords of ``savefig`` that :meth:`PlotBook.save_pdf` fills in for every page."""
 
 _SEPARATOR = "__"
 """Joins the variable, selection and variant components of an output file name."""
@@ -342,8 +357,8 @@ def _plot_kwargs(values: Mapping[str, Any], *, where: str) -> FrozenMapping[str,
     if reserved:
         msg = (
             f"{where} must not set {', '.join(repr(k) for k in reserved)}: PlotBook passes data, "
-            "variable and selection itself, save() owns the output files and every task draws "
-            "its own figure (no ax=)"
+            "variable and selection itself, save() and save_pdf() own the output files and "
+            "every task draws its own figure or page cell (no ax=)"
         )
         raise ValueError(msg)
     unknown = [key for key in mapping if key not in _PLOT_KEYWORDS]
@@ -430,6 +445,30 @@ def _copied(prepared: PreparedPlot) -> PreparedPlot:
     return replace(prepared, histograms=copies)
 
 
+@contextmanager
+def _task_note(task: PlotTask) -> Iterator[None]:
+    """Add the note naming ``task`` to any error raised in the block; the type is kept."""
+    try:
+        yield
+    except Exception as exc:
+        exc.add_note(f"while running PlotBook task {task.describe()}")
+        raise
+
+
+@dataclass(frozen=True)
+class _PreparedTask:
+    """A task with its histograms prepared, ready to be drawn wherever the output wants it."""
+
+    task: PlotTask
+    prepared: PreparedPlot
+    draw_options: Mapping[str, Any]
+
+    def draw(self, **extra: Any) -> Plot:
+        """Draw the task with its drawing keywords plus ``extra`` (``cell=`` for a page)."""
+        with _task_note(self.task):
+            return draw_plot(self.prepared, **self.draw_options, **extra)
+
+
 @dataclass(frozen=True, init=False, eq=False, repr=False)
 class PlotBook:
     """Many :func:`~rootfig.plot` calls described once: variables, selections and variants.
@@ -437,8 +476,9 @@ class PlotBook:
     A book holds what every plot shares (``data`` and ``plot_kwargs``) and the
     three axes that vary. :meth:`tasks` lists the Cartesian product in a fixed
     order (variables, then selections, then variants, each in insertion order),
-    :meth:`plots` runs it one plot at a time and :meth:`save` writes one file per
-    task under deterministic names. Each plot is what the corresponding
+    :meth:`plots` runs it one plot at a time, :meth:`save` writes one file per
+    task under deterministic names and :meth:`save_pdf` one multipage PDF with
+    several plots per page. Each plot is what the corresponding
     :func:`~rootfig.plot` call returns, so samples, groups, stored histograms,
     arrays and histogram objects behave exactly as they do there; ``data`` is
     passed on as given, never copied. The book only reads the files less often:
@@ -616,6 +656,28 @@ class PlotBook:
         (``variable=..., selection=..., variant=...``); one raised while reading
         a batch names the batch's first task.
         """
+        for item in self._prepared_tasks():
+            before = open_figure_ids()
+            drawn = False
+            try:
+                result = item.draw()
+                drawn = True
+            finally:
+                if not drawn:
+                    close_figures_since(before)
+            yield item.task, result
+
+    def _prepared_tasks(self) -> Iterator[_PreparedTask]:
+        """Prepare the tasks lazily, in :meth:`tasks` order, each ready to be drawn.
+
+        The one execution path of the book, whatever draws the results: the
+        variables are taken :data:`_VARIABLE_BATCH_SIZE` at a time, a
+        :class:`~rootfig.io.ReadCache` is warmed with what the batch reads at its
+        first task, each ``(variable, selection)`` is prepared once for the variants
+        that only change the drawing (every such variant gets its own copy of the
+        histograms when there are several) and on its own for a variant that
+        changes the preparation. An error keeps its type and gains the task's note.
+        """
         selections: Sequence[tuple[str | None, Cut | None]] = (
             list(self.selections.items()) if self.selections is not None else [(None, None)]
         )
@@ -638,9 +700,7 @@ class PlotBook:
                             variant_name,
                             FrozenMapping({**self.plot_kwargs, **overrides}),
                         )
-                        before = open_figure_ids()
-                        drawn = False
-                        try:
+                        with _task_note(task):
                             if cache is None:
                                 cache = ReadCache()
                                 # one read per source for every preparation of the batch
@@ -666,15 +726,7 @@ class PlotBook:
                                         **prepare_options,
                                     )
                                 prepared = _copied(shared) if len(drawing_only) > 1 else shared
-                            result = draw_plot(prepared, **draw_options)
-                            drawn = True
-                        except Exception as exc:
-                            exc.add_note(f"while running PlotBook task {task.describe()}")
-                            raise
-                        finally:
-                            if not drawn:
-                                close_figures_since(before)
-                        yield task, result
+                        yield _PreparedTask(task, prepared, draw_options)
 
     def _preparation_options(self) -> list[dict[str, Any]]:
         """Return the distinct preparation keyword sets the tasks use.
@@ -753,6 +805,112 @@ class PlotBook:
             finally:
                 result.close()
         return written
+
+    def save_pdf(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        layout: LayoutSpec = "auto",
+        figsize: tuple[float, float] | None = None,
+        **savefig_kwargs: Any,
+    ) -> Path:
+        """Draw every task into one multipage PDF, several plots per page.
+
+        The plots follow :meth:`tasks` order, filling each page row by row, and
+        each is drawn as :func:`~rootfig.plot` would draw it on a figure of its
+        own (its panels, broken axis, style and labels), inside a cell of the page.
+        Pages are written one after another and each figure is closed before the
+        next page begins; the histograms are prepared as for :meth:`plots`, with
+        the same batched reads. The file is written next to its final name and
+        renamed onto it once complete, so an existing file survives a failure.
+
+        Parameters
+        ----------
+        path
+            The PDF to write. ``.pdf`` is appended to a name without a suffix
+            (``"overview"`` writes ``overview.pdf``); another suffix raises
+            :class:`ValueError`. Parent directories are created. An existing
+            directory raises :class:`IsADirectoryError`: the method writes one
+            file and does not invent its name.
+        layout
+            ``"auto"`` (the default) chooses the grid of each page from the plots
+            it holds: up to ``2 x 3`` plots without a lower panel or broken axis,
+            up to ``2 x 2`` when one of them has one, fewer on the last page so
+            that the remaining plots are not crammed into a corner (seven plain
+            plots make a ``2 x 3`` page and a ``1 x 1`` one). A ``(rows,
+            columns)`` pair is the grid of every page, the last included, whose
+            unused cells stay empty.
+        figsize
+            Size of a whole page in inches. By default a page is as large as the
+            grid of figures the plots would have on their own, so a cell shows its
+            plot at the usual size (a ratio panel makes the cells of its page
+            taller, a :class:`~rootfig.model.Style` with a ``figsize`` sets theirs).
+            A task's own ``figsize`` cannot apply inside a shared page and raises.
+        **savefig_kwargs
+            Forwarded to :meth:`matplotlib.backends.backend_pdf.PdfPages.savefig`
+            for every page (``dpi=`` for rasterised parts, ``metadata=``, ...).
+            The background is the page's own unless ``facecolor`` is given, as for
+            :meth:`Plot.save`. ``format``, ``fname`` and ``figure`` are rejected,
+            since the method writes PDF pages of its own figures.
+
+        Returns
+        -------
+        pathlib.Path
+            The written file.
+
+        Raises
+        ------
+        ValueError
+            A ``layout`` that is not ``"auto"`` or a pair of positive integers, a
+            ``figsize`` that is not a pair of positive finite numbers, a path with
+            a suffix other than ``.pdf``, a reserved ``savefig`` keyword, or a
+            ``figsize`` in ``plot_kwargs`` or a variant; all before anything is
+            read or drawn.
+        IsADirectoryError
+            ``path`` is an existing directory.
+
+        Examples
+        --------
+        >>> book.save_pdf("overview.pdf")  # doctest: +SKIP
+        PosixPath('overview.pdf')
+        >>> book.save_pdf("overview", layout=(2, 3), figsize=(16, 10))  # doctest: +SKIP
+        PosixPath('overview.pdf')
+        """
+        reserved = sorted(_RESERVED_PDF_KWARGS.intersection(savefig_kwargs))
+        if reserved:
+            msg = (
+                f"PlotBook.save_pdf() writes the pages it draws as PDF, so it does not take "
+                f"{', '.join(repr(k) for k in reserved)}"
+            )
+            raise ValueError(msg)
+        grid = check_layout(layout)
+        size = check_figsize(figsize)
+        target = pdf_target(path)
+        self._reject_task_figsize()
+        tasks = self.tasks()
+        pages = plan_pages([is_complex(task.kwargs) for task in tasks], grid)
+        write_pdf(
+            self._prepared_tasks(),
+            tasks,
+            pages,
+            target=target,
+            figsize=size,
+            savefig_kwargs=savefig_kwargs,
+        )
+        return target
+
+    def _reject_task_figsize(self) -> None:
+        """Raise if a task sets ``figsize``: on a shared page the page has the size."""
+        where = [("plot_kwargs", self.plot_kwargs)]
+        if self.variants is not None:
+            where.extend((f"variant {name!r}", own) for name, own in self.variants.items())
+        for place, kwargs in where:
+            if kwargs.get("figsize") is not None:
+                msg = (
+                    f"PlotBook.save_pdf() controls the page size; remove figsize= from {place} "
+                    "and pass figsize= to save_pdf() instead"
+                )
+                raise ValueError(msg)
 
     def select(
         self,

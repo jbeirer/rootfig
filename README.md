@@ -143,6 +143,7 @@ book = rf.PlotBook(
     plot_kwargs={"observed": data, "stack": True, "ratio": True, "style": style},
 )
 book.save("plots/", formats=["pdf", "png"])  # plots/Muon_pt__sr__log.pdf, ...
+book.save_pdf("overview.pdf")  # one automatically arranged multipage PDF
 ```
 
 `rf.ALL` discovers the variables instead, from the branch types and stored
@@ -176,8 +177,9 @@ book = rf.PlotBook(
   and broken axes, then refine the result with matplotlib.
 - **Produce whole sets of plots.** `rf.PlotBook` runs one `rf.plot` call over
   variables × selections × variants, lazily, and saves each under a
-  deterministic name; `rf.ALL` discovers the variables from the files, and
-  `select()` filters the book down while iterating on a plot.
+  deterministic name or all of them as one multipage PDF; `rf.ALL` discovers
+  the variables from the files, and `select()` filters the book down while
+  iterating on a plot.
 - **Go beyond 1D plots.** Draw 2D histograms, correlations, efficiencies,
   profiles, resolutions and significance panels; produce cut flows and
   summary statistics from the same inputs.

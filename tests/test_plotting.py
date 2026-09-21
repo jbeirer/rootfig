@@ -14,6 +14,7 @@ from matplotlib.axes import Axes
 from matplotlib.collections import PolyCollection
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties, findfont
+from matplotlib.gridspec import GridSpec
 from matplotlib.text import Text
 
 from rootfig.errors import BinningError, RootfigWarning
@@ -52,9 +53,11 @@ from rootfig.plotting import (
     ylabel_for,
 )
 from rootfig.plotting.figure import (
+    RATIO_HEIGHT_FRACTION,
     RATIO_LABEL_MIN_SCALE,
     _balanced_wrap,
     _renderer,
+    figure_size,
     fit_ylabel,
 )
 from rootfig.plotting.style import pin_fonts
@@ -324,6 +327,77 @@ class TestFigure:
             make_figure(Style(), ratio=True, ax=(axes[0],))
         with pytest.raises(ValueError, match="existing axes"):
             make_figure(Style(), ratio=False, ax=axes[0], break_widths=(0.5, 0.5))
+
+    def test_figure_size(self) -> None:
+        with style_context():
+            width, height = ROOTFIG_STYLE["figure.figsize"]
+            assert figure_size(Style(), ratio=False) == pytest.approx((width, height))
+            assert figure_size(Style(), ratio=True) == pytest.approx(
+                (width, height * (1 + RATIO_HEIGHT_FRACTION * 0.85))
+            )
+            assert figure_size(Style(figsize=(5, 4)), ratio=True) == (5, 4)  # the style's, as is
+            assert figure_size(Style(figsize=(5, 4)), ratio=False, figsize=(3, 2)) == (3, 2)
+
+    def test_layout_axes_in_reading_order(self) -> None:
+        with style_context():
+            layout = make_figure(Style(), ratio=True, break_widths=(0.7, 0.3))
+            single = make_figure(Style(), ratio=False)
+        assert layout.axes == (layout.main, layout.main_right, layout.ratio, layout.ratio_right)
+        assert single.axes == (single.main,)
+        plt.close(layout.fig)
+        plt.close(single.fig)
+
+    @pytest.mark.parametrize("ratio", [False, True])
+    @pytest.mark.parametrize("break_widths", [None, (0.7, 0.3)])
+    def test_make_figure_in_a_cell(
+        self, ratio: bool, break_widths: tuple[float, float] | None
+    ) -> None:
+        page = plt.figure(figsize=(12, 8), layout="constrained")
+        outer = page.add_gridspec(1, 2)
+        with style_context():
+            left = make_figure(Style(), ratio=ratio, break_widths=break_widths, cell=outer[0, 0])
+            right = make_figure(Style(), ratio=ratio, break_widths=break_widths, cell=outer[0, 1])
+        assert left.fig is page
+        assert right.fig is page
+        assert page.get_size_inches().tolist() == [12, 8]  # the page keeps its size
+        expected = (1 + ratio) * (2 if break_widths else 1)
+        assert len(left.axes) == len(right.axes) == expected
+        assert len(page.axes) == 2 * expected
+        for layout, spec in ((left, outer[0, 0]), (right, outer[0, 1])):
+            assert layout.is_broken is (break_widths is not None)
+            assert (layout.ratio is not None) is ratio
+            for ax in layout.axes:
+                subplotspec = ax.get_subplotspec()
+                assert subplotspec is not None
+                assert subplotspec.get_topmost_subplotspec() == spec
+        if ratio:
+            assert left.ratio is not None
+            assert left.ratio.get_shared_x_axes().joined(left.main, left.ratio)
+        page.canvas.draw()
+        # the same relative geometry as on a figure of its own, inside the cell
+        if break_widths:
+            assert left.main_right is not None
+            ratio_of_widths = left.main.get_position().width / left.main_right.get_position().width
+            assert ratio_of_widths == pytest.approx(0.7 / 0.3, rel=0.05)
+        if ratio:
+            assert left.ratio is not None
+            heights = left.ratio.get_position().height / left.main.get_position().height
+            assert heights == pytest.approx(RATIO_HEIGHT_FRACTION, rel=0.05)
+        assert max(ax.get_position().x1 for ax in left.axes) < min(
+            ax.get_position().x0 for ax in right.axes
+        )
+        plt.close(page)
+
+    def test_make_figure_cell_rejects_figsize_and_axes(self) -> None:
+        page = plt.figure()
+        cell = page.add_gridspec(1, 1)[0, 0]
+        with pytest.raises(ValueError, match="page"):
+            make_figure(Style(), ratio=False, cell=cell, figsize=(3, 3))
+        with pytest.raises(ValueError, match="one of them"):
+            make_figure(Style(), ratio=False, cell=cell, ax=page.add_subplot(cell))
+        plt.close(page)
+        with pytest.raises(TypeError, match="grid on a figure"):
+            make_figure(Style(), ratio=False, cell=GridSpec(1, 1)[0, 0])
 
     def test_break_segments(self) -> None:
         left, right, widths = break_segments((0.0, 100.0), (20.0, 80.0))
