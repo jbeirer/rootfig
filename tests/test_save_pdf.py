@@ -474,10 +474,32 @@ class TestCells:
         assert "variant='r'" in message
         assert "variant='d'" in message
         assert "select(variants='d')" in message
+        assert "layout=(1, 1)" in message
         assert sorted(tmp_path.iterdir()) == []
         assert plt.get_fignums() == []
         # one per page is fine: each page takes the background of the plots on it
         assert book.save_pdf(tmp_path / "split.pdf", layout=(1, 1)).is_file()
+
+    def test_the_first_clash_is_reported_before_a_later_style_is_resolved(
+        self, samples: list[rf.Sample], tmp_path: Path
+    ) -> None:
+        # backgrounds are resolved only as far as the first disagreement, so a broken style
+        # further along the page cannot mask a clash the earlier plots already have
+        book = rf.PlotBook(
+            samples,
+            X,
+            variants={
+                "red": {"style": rf.Style(rc={"figure.facecolor": "red"})},
+                "blue": {"style": rf.Style(rc={"figure.facecolor": "blue"})},
+                "broken": {"style": "no-such-style"},
+            },
+        )
+        with pytest.raises(ValueError, match="different page backgrounds") as info:
+            book.save_pdf(tmp_path / "plots.pdf")
+        message = str(info.value)
+        assert "variant='red'" in message
+        assert "variant='blue'" in message
+        assert "broken" not in message
 
     def test_one_background_spelt_two_ways_is_not_a_clash(
         self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -283,10 +283,12 @@ sit side by side. The one thing a cell cannot have of its own is the *page*
 background, which belongs to the figure the whole page is drawn on: plots sharing
 a page whose styles ask for different backgrounds are refused before anything is
 drawn, since the labels and legend of a cell are drawn outside its axes and would
-land on the wrong background. Write one document per style instead:
+land on the wrong background. Give them pages of their own to keep one document,
+or write a document per style:
 
 ```python
-for name in ("light", "dark"):
+book.save_pdf("overview.pdf", layout=(1, 1))  # one plot per page
+for name in ("light", "dark"):  # or one file per style
     book.select(variants=name).save_pdf(f"overview-{name}.pdf")
 ```
 

@@ -96,9 +96,10 @@ def check_page_backgrounds(tasks: Sequence[PlotTask], pages: Sequence[Page]) -> 
     drawn outside their axes, on that background rather than their own, so a dark
     plot beside a light one loses its white labels against the light page. There
     is no per-cell figure to fix this with, so such a book is refused before
-    anything is drawn and pointed at one document per style. Styles that compare
-    equal are not resolved at all: a book with one style throughout, which is the
-    usual one, costs nothing here.
+    anything is drawn and pointed at a page per plot or a document per style.
+    Backgrounds are resolved only as far as the first disagreement, and styles
+    that compare equal are not resolved at all, so a book with one style
+    throughout, which is the usual one, costs nothing here.
 
     Raises
     ------
@@ -109,21 +110,23 @@ def check_page_backgrounds(tasks: Sequence[PlotTask], pages: Sequence[Page]) -> 
     for number, page in enumerate(pages, start=1):
         own = tasks[position : position + page.count]
         position += page.count
-        style = own[0].kwargs.get("style")
-        if all(task.kwargs.get("style") == style for task in own[1:]):
+        first = own[0]
+        if all(task.kwargs.get("style") == first.kwargs.get("style") for task in own[1:]):
             continue
-        first, *rest = ((task, _page_background(task)) for task in own)
-        clash = next(((task, colour) for task, colour in rest if colour != first[1]), None)
-        if clash is None:
-            continue
-        msg = (
-            f"the plots of PDF page {number} ask for different page backgrounds: "
-            f"{first[0].describe()} wants {to_hex(first[1], keep_alpha=True)} and "
-            f"{clash[0].describe()} wants {to_hex(clash[1], keep_alpha=True)}; one page is one "
-            f"figure and has one background, so write a document per style, e.g. "
-            f"book.select(variants={clash[0].variant_id!r}).save_pdf(...)"
-        )
-        raise ValueError(msg)
+        background = _page_background(first)
+        for task in own[1:]:
+            colour = _page_background(task)
+            if colour == background:
+                continue
+            msg = (
+                f"the plots of PDF page {number} ask for different page backgrounds: "
+                f"{first.describe()} wants {to_hex(background, keep_alpha=True)} and "
+                f"{task.describe()} wants {to_hex(colour, keep_alpha=True)}; one page is one "
+                f"figure and has one background, so give the plots pages of their own with "
+                f"layout=(1, 1), or write a document per style with "
+                f"book.select(variants={task.variant_id!r}).save_pdf(...)"
+            )
+            raise ValueError(msg)
 
 
 def _page_background(task: PlotTask) -> tuple[float, float, float, float]:
