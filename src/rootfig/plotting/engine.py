@@ -45,7 +45,7 @@ class _ClearXLabel:
     labelpad: float
     below: bool = False
 
-    def place(self, renderer: Any) -> bool:
+    def place(self, renderer: Any, *, beside: bool = True) -> bool:
         """Put the label beside or below the offset text; return whether it changed line.
 
         Matplotlib puts both at the right end of the axis, a label with
@@ -57,7 +57,8 @@ class _ClearXLabel:
         past the axes could leave the canvas. Both moves are in points, so they
         hold at any dpi. mplhep's ``xlabel_sci_adjust`` moves the label only when
         the formatter uses an additive offset, but the order of magnitude is shown
-        without one too (``axes.formatter.useoffset: False``).
+        without one too (``axes.formatter.useoffset: False``). ``beside=False``
+        always puts an overlapping label below, which holds at any width.
         """
         axis = self.ax.xaxis
         label, offset = axis.label, axis.get_offset_text()
@@ -75,9 +76,10 @@ class _ClearXLabel:
             if same_line and label_box.x1 > offset_box.x0 and offset_box.x1 > label_box.x0:
                 gap = OFFSET_TEXT_GAP_EM * offset.get_fontproperties().get_size_in_points()
                 shift = (label_box.x1 - offset_box.x0) * points + gap
-                if label_box.x0 - shift / points >= self.ax.get_window_extent(renderer).x0:
-                    beside = ScaledTranslation(-shift / 72.0, 0.0, fig.dpi_scale_trans)
-                    label.set_transform(self.transform + beside)
+                room = label_box.x0 - shift / points >= self.ax.get_window_extent(renderer).x0
+                if beside and room:
+                    left = ScaledTranslation(-shift / 72.0, 0.0, fig.dpi_scale_trans)
+                    label.set_transform(self.transform + left)
                 else:
                     below = True
         # below: the label keeps its own pad under the offset text
@@ -87,15 +89,16 @@ class _ClearXLabel:
         return changed
 
 
-def clear_offset_text(ax: Axes, renderer: Any) -> None:
-    """Keep the x label of ``ax`` clear of the axis' offset text, once, as laid out now.
+def clear_offset_text(ax: Axes, renderer: Any) -> bool:
+    """Put the x label of ``ax`` below the axis' offset text if they overlap.
 
-    For a figure without a :class:`PlotLayoutEngine` (axes the caller made), which
-    places its x labels at every draw instead. A label already clear stays where
-    it is.
+    For axes on a figure without a :class:`PlotLayoutEngine` (axes the caller
+    made), whose draws rootfig does not take part in: whether a label fits beside
+    the offset text depends on the width the figure is drawn at, below does not.
+    Returns whether the label moved; one already clear stays where it is.
     """
     axis = ax.xaxis
-    _ClearXLabel(ax, axis.label.get_transform(), axis.labelpad).place(renderer)
+    return _ClearXLabel(ax, axis.label.get_transform(), axis.labelpad).place(renderer, beside=False)
 
 
 class PlotLayoutEngine(ConstrainedLayoutEngine):

@@ -311,8 +311,10 @@ range avoids range inference.
   axis' offset text (`×10⁻⁶` for small values); when both are shown the label
   moves left of it, or below it where the axis is too short for both side by
   side, also with `axes.formatter.useoffset` off, which drops an additive offset
-  but still shows the order of magnitude. The place is chosen each time the
-  figure is drawn, so a resized figure keeps the label clear for its new size.
+  but still shows the order of magnitude. On a figure rootfig makes the place is
+  chosen each time the figure is drawn, so a resized figure keeps the label clear
+  for its new size; on axes passed with `ax=` the label goes below the offset
+  text, which holds at any size.
 - Automatic y limits leave room for the legend, the experiment label, the
   statistics box and `text` lines: a small fixed margin is added above the
   tallest bin, and the upper limit is then raised until none of them covers a

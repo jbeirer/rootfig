@@ -53,26 +53,38 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
     """Finish ``plots``, all drawn on ``fig``, against the figure's layout.
 
     Call once drawing is complete and the style context has ended, as the figure is
-    shown and saved from there. Layout passes serve every plot: the lower panels'
-    y labels are fitted, the experiment labels are aligned
-    (:func:`~rootfig.plotting.align_experiment_labels`, whose passes are shared
-    too), and then each plot's headroom is raised, so it measures the labels where
-    they end up. A raised limit can change the y axis' offset text and hence the
-    axes geometry, so one more shared layout/headroom pass follows a raise, then
-    the experiment labels are realigned to dodge the offset text. Last, the x labels
-    are kept clear of their offset texts, beside them where the width of the axes
-    leaves room and below them otherwise: by the figure's
-    :class:`~rootfig.plotting.engine.PlotLayoutEngine` at every draw, for the size
-    the figure has then, or once here for a figure without one (axes the caller
-    made). Within :func:`finishing_together` for ``fig`` the plots are collected
-    instead. Nothing is measured if the backend cannot measure artists.
+    shown and saved from there. The x labels are kept clear of their offset texts
+    first, since one moved below takes height from the axes: beside them where the
+    width of the axes leaves room and below them otherwise, by the figure's
+    :class:`~rootfig.plotting.engine.PlotLayoutEngine` in every layout pass from
+    then on, so for the size the figure has at each draw; on a figure without one
+    (axes the caller made) always below, once, which holds at any size. Layout
+    passes serve every plot: the lower panels' y labels are fitted, the experiment
+    labels are aligned (:func:`~rootfig.plotting.align_experiment_labels`, whose
+    passes are shared too), and then each plot's headroom is raised, so it measures
+    the labels where they end up. A raised limit can change the y axis' offset text
+    and hence the axes geometry, so one more shared layout/headroom pass follows a
+    raise, then the experiment labels are realigned to dodge the offset text.
+    Within :func:`finishing_together` for ``fig`` the plots are collected instead.
+    Nothing is measured if the backend cannot measure artists.
     """
     if fig in _collected:
         _collected[fig].extend(plots)
         return
+    # the x labels first: one moved below its offset text takes height from the axes
+    xlabels = [plot.xlabel for plot in plots if plot.xlabel is not None]
+    engine = fig.get_layout_engine()
+    if isinstance(engine, PlotLayoutEngine):
+        for ax in xlabels:  # placed in every layout pass from here on
+            engine.keep_clear(ax)
+        xlabels = []
     if any(p.headroom is not None or p.panels or p.xlabel is not None for p in plots):
-        if lay_out(fig) is None:
+        renderer = lay_out(fig)
+        if renderer is None:
             return
+        moved = [clear_offset_text(ax, renderer) for ax in xlabels]  # every label, no shortcut
+        if any(moved):
+            lay_out(fig)
         for plot in plots:
             for panel in plot.panels:
                 fit_ylabel(panel, laid_out=True)
@@ -91,17 +103,6 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
             if plot.headroom is not None:
                 plot.headroom()
         align_experiment_labels(labels)
-    xlabels = [plot.xlabel for plot in plots if plot.xlabel is not None]
-    engine = fig.get_layout_engine()
-    if isinstance(engine, PlotLayoutEngine):
-        for ax in xlabels:  # placed for the width the axes have at every draw
-            engine.keep_clear(ax)
-        return
-    xlabels = [ax for ax in xlabels if ax.get_xlabel() and ax.xaxis.get_offset_text().get_text()]
-    renderer = lay_out(fig) if xlabels else None
-    if renderer is not None:
-        for ax in xlabels:
-            clear_offset_text(ax, renderer)
 
 
 @contextmanager

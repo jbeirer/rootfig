@@ -1755,6 +1755,38 @@ class TestOffsetText:
         assert label.y0 >= 0
         plt.close(p.fig)
 
+    def test_headroom_holds_with_the_label_below(self) -> None:
+        # the label below the offset text takes height from the axes; the headroom must
+        # be measured with it there
+        rng = np.random.default_rng(0)
+        samples = [rf.Sample({"x": rng.uniform(0, 1e-6, 20_000)}, label=f"{i}") for i in range(5)]
+        p = rf.plot(samples, "x", bins=20, xlabel="x" * 30, legend="upper right", figsize=(5, 4))
+        label, offset = self._boxes(p)
+        assert label.y1 <= offset.y0
+        legend = p.ax.get_legend()
+        (x0, y0), (x1, _) = p.ax.transData.inverted().transform(
+            legend.get_window_extent().get_points()
+        )
+        edges = p.histograms[0].edges
+        under = (edges[1:] > x0) & (edges[:-1] < x1)
+        tallest = max(float(h.hist.values()[under].max()) for h in p.histograms)
+        assert y0 >= 1.08 * tallest * (1 - 1e-6)
+        plt.close(p.fig)
+
+    def test_label_on_axes_the_caller_made_holds_when_resized(self) -> None:
+        # rootfig does not lay out a figure it did not make: the label goes below the
+        # offset text, which fits at any width the label itself fits
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        fig, ax = plt.subplots(figsize=(5, 4))
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 20, ax=ax)
+        for width in (5.0, 3.5, 8.0):
+            fig.set_size_inches(width, 4.0)
+            label, offset = self._boxes(p)
+            assert not label.overlaps(offset), width
+            assert label.y1 <= offset.y0, width
+            assert label.x0 >= ax.get_window_extent().x0, width
+        plt.close(fig)
+
 
 class TestWeightedRangeInference:
     def test_high_weight_entries_stay_on_the_axis(self) -> None:
