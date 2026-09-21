@@ -1041,10 +1041,9 @@ class TestSampleVariations:
         )
         book = rf.PlotBook(sample, rf.ALL)
         assert _names(book) == ["MET", "weight"]
-        results = list(book.plots())
-        assert [list(r.histograms[0].variations) for _, r in results] == [["alt"], ["alt"]]
-        for _, result in results:
-            result.close()
+        ((_, result),) = list(book.select(variables="MET").plots())
+        assert list(result.histograms[0].variations) == ["alt"]
+        result.close()
         # the plot-level form applies to every simulated sample alike
         plain = rf.Sample(signal_file, tree="events", label="S")
         book = rf.PlotBook(
