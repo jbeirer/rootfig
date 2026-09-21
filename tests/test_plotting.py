@@ -63,6 +63,7 @@ from rootfig.plotting.figure import (
     _renderer,
     figure_size,
     fit_ylabel,
+    without_redraw,
 )
 from rootfig.plotting.style import pin_fonts
 from rootfig.selection import Columns
@@ -1401,3 +1402,53 @@ class TestFinishing:
         finish_figure(fig, [finish])
         assert calls == [1]
         plt.close(fig)
+
+    def test_nested_blocks_finish_at_the_outermost_exit(self) -> None:
+        fig, ax = plt.subplots()
+        calls: list[int] = []
+        with finishing_together(fig):
+            finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(1))])
+            with finishing_together(fig):
+                finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(2))])
+            assert calls == []
+            finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(3))])
+        assert calls == [1, 2, 3]
+
+    def test_failed_nested_block_preserves_outer_work(self) -> None:
+        fig, ax = plt.subplots()
+        calls: list[int] = []
+
+        def failing_block() -> None:
+            with finishing_together(fig):
+                finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(2))])
+                raise RuntimeError("inner failed")
+
+        with finishing_together(fig):
+            finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(1))])
+            with pytest.raises(RuntimeError, match="inner failed"):
+                failing_block()
+            assert calls == []
+            finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(3))])
+        assert calls == [1, 3]
+
+    def test_draw_suppression_restores_custom_canvas_draw(self) -> None:
+        fig = plt.figure()
+        calls: list[int] = []
+
+        def custom_draw() -> None:
+            calls.append(1)
+
+        def failing_block() -> None:
+            with without_redraw(fig):
+                fig.canvas.draw()
+                raise RuntimeError("inner failed")
+
+        fig.canvas.draw = custom_draw
+        with without_redraw(fig):
+            with pytest.raises(RuntimeError, match="inner failed"):
+                failing_block()
+            fig.canvas.draw()
+            assert calls == []
+        assert fig.canvas.draw is custom_draw
+        fig.canvas.draw()
+        assert calls == [1]

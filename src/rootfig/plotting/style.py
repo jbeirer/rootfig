@@ -351,6 +351,7 @@ def add_experiment_label(
                 text.set_clip_on(False)
                 right.add_artist(text)
         if (label := _label_of(ax, right)) is not None:
+            _inline_status[label.name] = loc in (0, 1, 4)
             _keep_out_of_layout(label)
         return
     # No experiment: draw status/lumi/energy/text as a plain block of text.
@@ -522,6 +523,7 @@ changes as the label does."""
 
 _label_sizes: WeakKeyDictionary[Text, float] = WeakKeyDictionary()
 _title_pads: WeakKeyDictionary[Text, float] = WeakKeyDictionary()
+_inline_status: WeakKeyDictionary[Text, bool] = WeakKeyDictionary()
 
 
 def _original_size(text: Text) -> float:
@@ -655,7 +657,7 @@ def _fit_label(label: _Label, renderer: Any) -> bool:
 
 
 def _place_status(label: _Label, renderer: Any) -> None:
-    """Put the status word a fixed gap after the experiment name when they share a line."""
+    """Align an inline status with the name's baseline, a fixed gap after the name."""
     name, status = label.name, label.status
     fig = name.get_figure(root=True)
     if status is None or fig is None:
@@ -663,16 +665,27 @@ def _place_status(label: _Label, renderer: Any) -> None:
     exp_box = name.get_window_extent(renderer)
     suffix_box = status.get_window_extent(renderer)
     same_line = suffix_box.y0 < exp_box.y1 and suffix_box.y1 > exp_box.y0
-    if not same_line:
+    if not _inline_status.get(name, same_line):
         return
     em_pt = status.get_fontproperties().get_size_in_points()
     offset_pt = exp_box.width / fig.dpi * 72.0 + LABEL_WORD_GAP_EM * em_pt
-    _, y_status = status.get_position()
-    status.set_position((name.get_position()[0], y_status))
+    # Measure the name's baseline offset from its anchor using public text metrics.
+    # mplhep's initial axes-fraction offset changes in physical size as layout moves
+    # the panels; a point-based offset keeps both words on one line at any size/dpi.
+    alignment = name.get_verticalalignment()
+    try:
+        name.set_verticalalignment("baseline")
+        baseline_box = name.get_window_extent(renderer)
+    finally:
+        name.set_verticalalignment(alignment)
+    baseline_offset = (exp_box.y0 - baseline_box.y0) / fig.dpi
+    status.set_position(name.get_position())
+    status.set_verticalalignment("baseline")
     # ScaledTranslation is evaluated at draw time, so the offset is right at any dpi
     # (offset_copy would freeze it in pixels of the current dpi).
     status.set_transform(
-        label.ax.transAxes + ScaledTranslation(offset_pt / 72.0, 0.0, fig.dpi_scale_trans)
+        label.ax.transAxes
+        + ScaledTranslation(offset_pt / 72.0, baseline_offset, fig.dpi_scale_trans)
     )
 
 

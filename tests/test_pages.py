@@ -170,6 +170,12 @@ class TestValidation:
 
 
 class TestPageFigure:
+    def test_page_without_cell_room_creates_no_figure(self) -> None:
+        before = plt.get_fignums()
+        with pytest.raises(ValueError, match="no room"):
+            make_page((1.0, 1.0), (8, 8))
+        assert plt.get_fignums() == before
+
     def test_page_size_is_the_cells_and_the_gaps_between_them(self) -> None:
         assert page_size((2, 3), (7.0, 5.6)) == pytest.approx(
             (21.0 + 2 * PAGE_GAP, 11.2 + PAGE_GAP)

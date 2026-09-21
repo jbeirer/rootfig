@@ -343,6 +343,8 @@ range avoids range inference.
   wide, the luminosity gets a separate line above the label. The luminosity of
   a broken x axis sits above the right end of the right segment. An explicit
   title is placed above these labels, preserving its font, alignment and padding.
+- The experiment name and status share a baseline, including after resizing
+  the figure. `label_loc=2` and `3` explicitly put the status on a separate line.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).
 

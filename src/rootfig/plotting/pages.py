@@ -260,11 +260,11 @@ def make_page(
     by that much, so every other row and column of the page's grid is a gap of
     :data:`PAGE_GAP` inches.
     """
+    width, height = cell_room(size, grid)
     with style_context(style):
         engine = ConstrainedLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
         fig = plt.figure(figsize=size, layout=engine)
     rows, columns = grid
-    width, height = cell_room(size, grid)
     outer = fig.add_gridspec(
         2 * rows - 1,
         2 * columns - 1,

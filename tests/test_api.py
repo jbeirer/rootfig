@@ -910,6 +910,27 @@ class TestFigureShape:
                 assert exp_box.x0 == pytest.approx(axes_left, abs=1.0)
             em = status.get_fontproperties().get_size_in_points() / 72 * dpi
             assert (status_box.x0 - exp_box.x1) / em == pytest.approx(LABEL_WORD_GAP_EM, abs=0.1)
+            # Matplotlib's text layout reports the first line's baseline relative to
+            # its anchor. Check the baseline that is painted, including after resizing.
+            baselines = [
+                text.get_transform().transform(text.get_position())[1]
+                + text._get_layout(renderer)[1][0][2][1]
+                for text in (name, status)
+            ]
+            assert baselines[0] == pytest.approx(baselines[1], abs=1.0)
+
+    @pytest.mark.parametrize("loc", [2, 3])
+    def test_explicit_multiline_status_stays_below_the_name(self, loc: int) -> None:
+        p = rf.plot(
+            {"x": np.linspace(0, 1, 100)},
+            "x",
+            style=rf.Style(experiment="ATLAS", status="Internal", label_loc=loc),
+        )
+        p.fig.canvas.draw()
+        renderer = p.fig.canvas.get_renderer()
+        name = next(t for t in p.ax.texts if isinstance(t, hep.label.ExpLabel))
+        status = next(t for t in p.ax.texts if isinstance(t, hep.label.ExpText))
+        assert status.get_window_extent(renderer).y1 <= name.get_window_extent(renderer).y0
 
     def test_fonts_are_pinned(self, signal_file: Path, background_file: Path) -> None:
         # Text must render in the style's font after the style context has ended, or the
@@ -1651,6 +1672,19 @@ class TestOffsetText:
         label, offset = self._boxes(p)
         assert not label.overlaps(offset)
         plt.close(p.fig)
+
+    @pytest.mark.parametrize("experiment", ["LHCb", "ALICE"])
+    def test_offset_clearance_uses_the_finished_axes_width(self, experiment: str) -> None:
+        values = np.random.default_rng(0).uniform(0, 1e-6, 10_000)
+        p = rf.plot(
+            {"x": values},
+            "x",
+            bins=20,
+            style=rf.Style(experiment=experiment, lumi=138, com=13.6, figsize=(5, 3)),
+            title="Some plot title",
+        )
+        label, offset = self._boxes(p)
+        assert label.x1 <= offset.x0
 
 
 class TestWeightedRangeInference:

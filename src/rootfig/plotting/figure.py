@@ -499,11 +499,15 @@ def without_redraw(fig: Figure | None) -> Iterator[None]:
         yield
         return
     canvas: Any = fig.canvas
+    original = vars(canvas).get("draw")
     canvas.draw = lambda *_, **__: None
     try:
         yield
     finally:
-        del canvas.draw
+        if original is None:
+            del canvas.draw
+        else:
+            canvas.draw = original
 
 
 def lay_out(fig: Figure) -> Any:

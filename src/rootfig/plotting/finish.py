@@ -53,12 +53,13 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
     """Finish ``plots``, all drawn on ``fig``, against the figure's layout.
 
     Call once drawing is complete and the style context has ended, as the figure is
-    shown and saved from there. One layout pass serves every plot: the x labels move
-    left of their offset texts (``mplhep.xlabel_sci_adjust``), each plot's
-    headroom is raised and its lower panels' y labels are fitted, and last the
+    shown and saved from there. Layout passes serve every plot: each plot's
+    headroom is raised and its lower panels' y labels are fitted, then the
     experiment labels are aligned
     (:func:`~rootfig.plotting.align_experiment_labels`, whose passes are shared
-    too). Within :func:`finishing_together` for ``fig`` the plots are collected
+    too). Finally the x labels move left of their offset texts
+    (``mplhep.xlabel_sci_adjust``), after these changes have settled the axes' widths.
+    Within :func:`finishing_together` for ``fig`` the plots are collected
     instead. Nothing is measured if the backend cannot measure artists.
     """
     if fig in _collected:
@@ -68,14 +69,24 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
         if lay_out(fig) is None:
             return
         for plot in plots:
-            if plot.xlabel is not None:
-                with without_redraw(fig):  # laid out above
-                    hep.xlabel_sci_adjust(plot.xlabel)
             if plot.headroom is not None:
                 plot.headroom()
             for panel in plot.panels:
                 fit_ylabel(panel, laid_out=True)
     align_experiment_labels([(plot.main, plot.right) for plot in plots])
+    xlabels = [
+        plot.xlabel
+        for plot in plots
+        if plot.xlabel is not None
+        and plot.xlabel.get_xlabel()
+        and plot.xlabel.xaxis.get_offset_text().get_text()
+    ]
+    if xlabels:
+        if lay_out(fig) is None:
+            return
+        with without_redraw(fig):
+            for ax in xlabels:
+                hep.xlabel_sci_adjust(ax)
 
 
 @contextmanager
@@ -85,12 +96,16 @@ def finishing_together(fig: Figure) -> Iterator[None]:
     The plotting functions finish their figure before returning; drawing several
     plots onto the cells of one page, each would lay out the whole page again, so
     what they finish on ``fig`` is collected here and finished in one go at the end
-    of the block. A block that raises finishes nothing.
+    of the outermost block. A block that raises discards only its own plots.
     """
-    _collected[fig] = []
+    parent = _collected.get(fig)
+    plots: list[Finish] = []
+    _collected[fig] = plots
     try:
         yield
-        plots = _collected[fig]
     finally:
-        del _collected[fig]
+        if parent is None:
+            del _collected[fig]
+        else:
+            _collected[fig] = parent
     finish_figure(fig, plots)
