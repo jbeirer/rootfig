@@ -1084,3 +1084,56 @@ class TestSampleVariations:
         assert _names(book) == ["x"]
         with pytest.raises(rf.SystematicError, match="cannot use"):
             list(book.plots())
+
+
+class TestBranchReplacements:
+    """A ``replace`` systematic reads the replacement whenever the replaced branch is used."""
+
+    def test_missing_replacement_drops_the_replaced_branch(self) -> None:
+        sample = rf.Sample(
+            {"x": [1.0], "y": [2.0], "z": [3.0], "z_up": [3.1], "z_down": [2.9]},
+            label="A",
+            systematics={"shift": {"x": "x_up"}, "jes": {"z": ("z_up", "z_down")}},
+        )
+        book = rf.PlotBook(sample, rf.ALL)
+        assert _names(book) == ["y", "z", "z_down", "z_up"]  # x: its x_up is missing
+        for _, result in book.plots():
+            result.close()
+        with pytest.raises(rf.MissingBranchError):
+            rf.plot(sample, "x")
+        # a replacement that no histogram can be filled from counts as missing too
+        text = rf.Sample(
+            {"x": [1.0], "x_up": ["a"]}, label="A", systematics={"shift": {"x": "x_up"}}
+        )
+        with pytest.raises(
+            rf.SourceError,
+            match=re.escape(
+                "not plottable ['x_up (string)', \"x (its replacement 'x_up' under systematic "
+                "'shift' is not a plottable branch)\"]"
+            ),
+        ):
+            rf.PlotBook(text, rf.ALL)
+
+    def test_effective_replacements_follow_the_plot(self) -> None:
+        plot_level: dict[str, Any] = {"systematics": {"shift": {"x": "x_up"}}}
+        plain = rf.Sample({"x": [1.0], "y": [2.0]}, label="A")
+        assert _names(rf.PlotBook(plain, rf.ALL, plot_kwargs=plot_level)) == ["y"]
+        # the sample's own source of that name replaces the plot's; observed data has none
+        overriding = rf.Sample({"x": [1.0], "y": [2.0]}, label="A", systematics={"shift": 0.1})
+        book = rf.PlotBook(
+            overriding,
+            rf.ALL,
+            plot_kwargs={**plot_level, "observed": {"x": [1.0, 2.0], "y": [2.0, 3.0]}},
+        )
+        assert _names(book) == ["x", "y"]
+        for _, result in book.plots():
+            assert [h.is_data for h in result.histograms] == [False, True]
+            result.close()
+        # a replacement that is present keeps the branch, and the variation is filled
+        complete = rf.Sample({"x": [1.0], "x_up": [1.5]}, label="A")
+        book = rf.PlotBook(complete, rf.ALL, plot_kwargs=plot_level)
+        assert _names(book) == ["x", "x_up"]
+        results = {task.stem: result for task, result in book.plots()}
+        assert list(results["x"].histograms[0].variations) == ["shift"]
+        for result in results.values():
+            result.close()

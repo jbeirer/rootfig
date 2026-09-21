@@ -78,7 +78,9 @@ def discover(
     The data a ``Systematic.samples`` variation fills or reads from is surveyed
     like a sample of its own and must provide the name in the sample's mode;
     one that cannot be built or surveyed is left to the task, which reports it
-    whatever the variable.
+    whatever the variable. A branch that a ``replace`` systematic replaces is
+    kept only when its replacement is a plottable branch of the sample, since
+    that replacement is read whenever the branch is used.
     ``include`` keeps the names matching one of its shell patterns, ``exclude``
     drops those matching one of its; both match the source name,
     case-sensitively. The result is sorted by source name, a name that is not an
@@ -235,21 +237,28 @@ class _Discovery:
         sample or for none; a sample's own selection or weight, or a systematic
         varying event data that applies to it, rules them out for that sample.
         The data of every ``Systematic.samples`` variation that applies to the
-        sample must provide a name in the sample's mode too.
+        sample must provide a name in the sample's mode too, and a branch that a
+        ``replace`` systematic replaces needs its replacement among the branches.
         """
         common: dict[str, _Mode] | None = None
         for sample in leaf_samples(items):
             inventory = self.inventory(sample)
-            names: dict[str, _Mode] = dict.fromkeys(sorted(inventory.branches), "branch")
+            unreplaced = _missing_replacements(sample, constraints.systematics, inventory.branches)
+            names: dict[str, _Mode] = dict.fromkeys(
+                sorted(inventory.branches - set(unreplaced)), "branch"
+            )
             left_out = constraints.stored_blocker
             if left_out is None:
                 left_out = _needs_event_data(sample, constraints.systematics)
             if left_out is None:
                 for name in sorted(inventory.stored - inventory.branches):
                     names[name] = "stored"
-            self.seen.append(
-                _Seen(sample, inventory, names, left_out if inventory.stored else None)
+            shown = _Inventory(
+                inventory.branches - set(unreplaced),
+                inventory.stored,
+                (*inventory.left_out, *unreplaced.values()),
             )
+            self.seen.append(_Seen(sample, shown, names, left_out if inventory.stored else None))
             for varied in self._variations(sample, constraints.systematics):
                 names = {name: mode for name, mode in names.items() if varied.offers(name, mode)}
                 self.seen.append(varied.seen)
@@ -469,6 +478,32 @@ def _needs_event_data(sample: Sample, plot_level: Mapping[str, Systematic]) -> s
                 "event data"
             )
     return None
+
+
+def _missing_replacements(
+    sample: Sample, plot_level: Mapping[str, Systematic], branches: frozenset[str]
+) -> dict[str, str]:
+    """Return the replaced branches whose replacement is not among ``branches``, described.
+
+    A ``replace`` systematic that applies to ``sample`` reads the replacing
+    branch whenever the replaced one is used, so a variable that is such a
+    branch fails when the replacement is missing or cannot be histogrammed
+    (:func:`~rootfig.histograms.pipeline._read_plan` refuses the read). A
+    replaced branch of the selection or weight fails every variable alike and is
+    left to the task.
+    """
+    missing: dict[str, str] = {}
+    for name, systematic in _sample_systematics(sample, plot_level).items():
+        if systematic.kind != "replace":
+            continue
+        for spec in (systematic.up, systematic.down):
+            for old, new in (spec or {}).items():
+                if new not in branches and old not in missing:
+                    missing[old] = (
+                        f"{old} (its replacement {new!r} under systematic {name!r} is not a "
+                        "plottable branch)"
+                    )
+    return missing
 
 
 def _matching(

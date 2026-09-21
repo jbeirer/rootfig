@@ -129,7 +129,9 @@ set is the intersection over the effective configurations. The files or arrays
 a `Systematic.samples` variation fills or reads from are surveyed like a sample
 of their own and take part in the intersection, in the mode of the sample they
 vary; a variation that cannot be built or surveyed is left to the task, which
-reports it whatever the variable. Stored histograms
+reports it whatever the variable. A branch that a branch-replacement systematic
+replaces is kept only when its replacement is a plottable branch of the sample,
+since the replacement is read whenever the branch is. Stored histograms
 are left out whenever the book is bound to refuse them: a selection, a
 `weight`, `nonfinite="error"`, a `stats` box, a `range` without `bins`, or a
 systematic varying the weight or branches that applies to a sample (the plot's
