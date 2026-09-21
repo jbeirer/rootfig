@@ -641,13 +641,16 @@ def align_experiment_labels(plots: Sequence[tuple[Axes, Axes | None]]) -> None:
 def _fit_label(label: _Label, renderer: Any) -> bool:
     """Fit ``label`` to the figure as laid out; return whether anything changed."""
     ax, name = label.ax, label.name
-    if label.above:
-        x = 0.0
+    fig = ax.get_figure(root=True)
+    if label.above and fig is not None:
+        # flush with the frame, or after the y offset text above it (1e4); in points,
+        # so the gap holds when the figure is resized
+        dodge = 0.0
         offset_text = ax.yaxis.offsetText
         if offset_text.get_visible() and offset_text.get_text():
-            width = offset_text.get_window_extent(renderer).width
-            x = 1.1 * width / ax.get_window_extent(renderer).width
-        name.set_position((x, name.get_position()[1]))
+            dodge = 1.1 * offset_text.get_window_extent(renderer).width / fig.dpi
+        name.set_position((0.0, name.get_position()[1]))
+        name.set_transform(ax.transAxes + ScaledTranslation(dodge, 0.0, fig.dpi_scale_trans))
     fitted = (
         label.above
         and label.lumi is not None
@@ -682,9 +685,10 @@ def _place_status(label: _Label, renderer: Any) -> None:
     status.set_position(name.get_position())
     status.set_verticalalignment("baseline")
     # ScaledTranslation is evaluated at draw time, so the offset is right at any dpi
-    # (offset_copy would freeze it in pixels of the current dpi).
+    # (offset_copy would freeze it in pixels of the current dpi); on top of the name's
+    # transform, the status follows the name wherever that is placed.
     status.set_transform(
-        label.ax.transAxes
+        name.get_transform()
         + ScaledTranslation(offset_pt / 72.0, baseline_offset, fig.dpi_scale_trans)
     )
 

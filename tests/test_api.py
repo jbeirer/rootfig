@@ -926,6 +926,30 @@ class TestFigureShape:
             ]
             assert baselines[0] == pytest.approx(baselines[1], abs=1.0)
 
+    def test_name_above_the_frame_clears_the_y_offset_text_at_any_size(self) -> None:
+        # the name starts after the y axis' offset text (1e7) by a gap in points
+        rng = np.random.default_rng(0)
+        data = {"x": rng.normal(0, 1, 10_000), "w": np.full(10_000, 1e4)}
+        cms = rf.Style(experiment="CMS", status="Preliminary")
+        p = rf.plot(data, "x", weight="w", bins=20, style=cms, figsize=(5, 4))
+        name = next(t for t in p.ax.texts if isinstance(t, hep.label.ExpLabel))
+        [status] = [t for t in p.ax.texts if isinstance(t, hep.label.ExpText)]
+        gaps = []
+        for width, dpi in [(5.0, 100), (3.0, 100), (8.0, 100), (5.0, 200)]:
+            p.fig.set_size_inches(width, 4.0)
+            p.fig.set_dpi(dpi)
+            p.fig.canvas.draw()
+            renderer = p.fig.canvas.get_renderer()
+            offset = p.ax.yaxis.get_offset_text()
+            assert offset.get_text()
+            name_box = name.get_window_extent(renderer)
+            gaps.append((name_box.x0 - offset.get_window_extent(renderer).x1) / dpi * 72)
+            assert status.get_window_extent(renderer).x0 > name_box.x1  # the status follows
+        assert min(gaps) > 0
+        # the same at every width; another dpi only changes the text's own metrics
+        np.testing.assert_allclose(gaps[:3], gaps[0], atol=0.1)
+        plt.close(p.fig)
+
     @pytest.mark.parametrize("loc", [2, 3])
     def test_explicit_multiline_status_stays_below_the_name(self, loc: int) -> None:
         p = rf.plot(
