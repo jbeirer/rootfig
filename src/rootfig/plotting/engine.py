@@ -50,7 +50,6 @@ class _ClearXLabel:
     placed: Transform = field(init=False)
     pad: float = field(init=False)
     shift: float | None = None
-    below: bool = False
 
     def __post_init__(self) -> None:
         axis = self.ax.xaxis
@@ -58,7 +57,7 @@ class _ClearXLabel:
         self.labelpad = self.pad = axis.labelpad
 
     def place(self, renderer: Any, *, beside: bool = True) -> bool:
-        """Put the label beside or below the offset text; return whether it changed line.
+        """Put the label beside or below the offset text; return whether its pad changed.
 
         Matplotlib puts both at the right end of the axis, a label with
         ``loc="right"`` ending there and the offset text (``1e-6``) below the tick
@@ -70,7 +69,10 @@ class _ClearXLabel:
         hold at any dpi. mplhep's ``xlabel_sci_adjust`` moves the label only when
         the formatter uses an additive offset, but the order of magnitude is shown
         without one too (``axes.formatter.useoffset: False``). ``beside=False``
-        always puts an overlapping label below, which holds at any width.
+        always puts an overlapping label below, which holds at any width. The
+        layout reserves the label's height from its pad, so a changed pad, whether
+        the label changed line or the caller changed the pad of one that stays
+        below, means the figure must be laid out again; a shift does not.
         """
         axis = self.ax.xaxis
         label, offset = axis.label, axis.get_offset_text()
@@ -78,8 +80,9 @@ class _ClearXLabel:
         if label.get_transform() is not self.placed:
             self.transform = self.placed = label.get_transform()
             self.shift = None
-        if axis.labelpad != self.pad:
-            self.labelpad = axis.labelpad
+        laid_out = axis.labelpad
+        if laid_out != self.pad:
+            self.labelpad = laid_out
         shift, below, height = None, False, 0.0
         shown = label.get_visible() and label.get_text()
         if fig is not None and shown and offset.get_visible() and offset.get_text():
@@ -105,9 +108,7 @@ class _ClearXLabel:
         # below: the label keeps its own pad under the offset text
         self.pad = self.labelpad + (axis.OFFSETTEXTPAD + height if below else 0.0)
         axis.labelpad = self.pad
-        changed = below != self.below
-        self.below = below
-        return changed
+        return bool(self.pad != laid_out)
 
 
 def clear_offset_text(ax: Axes, renderer: Any) -> bool:
@@ -126,8 +127,9 @@ class PlotLayoutEngine(ConstrainedLayoutEngine):
 
     Every draw lays the figure out and then places each registered x label
     beside or below its axis' offset text for the width its axes have now
-    (:meth:`keep_clear`). A label that changes line changes the height the layout
-    must reserve, so the figure is laid out once more then; a label moved beside
+    (:meth:`keep_clear`). A label whose pad changes (it changed line, or the
+    caller changed the pad of one below) changes the height the layout must
+    reserve, so the figure is laid out once more then; a label moved beside
     changes nothing constrained layout measures.
     """
 
@@ -146,6 +148,6 @@ class PlotLayoutEngine(ConstrainedLayoutEngine):
         renderer = renderer_of(fig) if self._xlabels else None
         if renderer is None:
             return
-        moved = [entry.place(renderer) for entry in self._xlabels]  # every label, no shortcut
-        if any(moved):
+        repadded = [entry.place(renderer) for entry in self._xlabels]  # every label
+        if any(repadded):
             super().execute(fig)

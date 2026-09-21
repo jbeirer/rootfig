@@ -1803,6 +1803,20 @@ class TestOffsetText:
         assert not label.overlaps(offset)
         plt.close(p.fig)
 
+    def test_a_pad_changed_while_below_is_laid_out_at_once(self) -> None:
+        # the label stays below: the layout must still reserve the new pad on this draw
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 30, figsize=(5, 4))
+        p.ax.xaxis.labelpad = 6
+        self._boxes(p)
+        p.ax.xaxis.labelpad = 4
+        label, offset = self._boxes(p)
+        assert label.y1 <= offset.y0
+        assert label.y0 >= 0
+        again, _ = self._boxes(p)
+        np.testing.assert_allclose(again.extents, label.extents, atol=0.5)
+        plt.close(p.fig)
+
     def test_label_on_axes_the_caller_made_holds_when_resized(self) -> None:
         # rootfig does not lay out a figure it did not make: the label goes below the
         # offset text, which fits at any width the label itself fits
