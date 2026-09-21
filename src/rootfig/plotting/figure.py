@@ -13,6 +13,7 @@ from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties
+from matplotlib.gridspec import GridSpecBase, SubplotSpec
 from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.offsetbox import AnchoredOffsetbox
 from matplotlib.ticker import MaxNLocator
@@ -25,6 +26,7 @@ __all__ = [
     "apply_xbreak",
     "break_segments",
     "close_figures_since",
+    "figure_size",
     "finish_axes",
     "fit_ylabel",
     "make_figure",
@@ -42,8 +44,13 @@ RATIO_LABEL_MIN_SCALE = 0.6
 """Smallest y label size of a lower panel, relative to the style's label size."""
 
 BREAK_GAP = 0.04
-LAYOUT_PAD = 0.04  # inches between the canvas edge and the outermost artist
 """Horizontal gap between the two segments of a broken x axis (figure width fraction)."""
+
+PANEL_GAP = 0.06
+"""Vertical gap between the main panel and the ratio panel (figure height fraction)."""
+
+LAYOUT_PAD = 0.04
+"""Inches between the canvas edge and the outermost artist."""
 
 
 @dataclass
@@ -73,6 +80,11 @@ class Layout:
         return (self.ratio,) if self.ratio_right is None else (self.ratio, self.ratio_right)
 
     @property
+    def axes(self) -> tuple[Axes, ...]:
+        """Every axes of the layout: main (left, right), then ratio (left, right)."""
+        return (*self.main_axes, *self.ratio_axes)
+
+    @property
     def is_broken(self) -> bool:
         """True if the x axis is split into two segments."""
         return self.main_right is not None
@@ -89,6 +101,22 @@ class Layout:
         return bottom[-1]
 
 
+def figure_size(
+    style: Style, *, ratio: bool, figsize: tuple[float, float] | None = None
+) -> tuple[float, float]:
+    """Return the size in inches of a figure drawn on its own under ``style``.
+
+    ``figsize`` wins, then the style's own size; otherwise the active
+    ``figure.figsize``, made taller for a ratio panel so the main panel keeps
+    its shape. Read inside the style context, since the rcParams are the style's.
+    """
+    size = figsize or style.figsize
+    if size is None:
+        width, height = plt.rcParams["figure.figsize"]
+        size = (width, height * (1 + RATIO_HEIGHT_FRACTION * 0.85)) if ratio else (width, height)
+    return size
+
+
 def make_figure(
     style: Style,
     *,
@@ -96,6 +124,7 @@ def make_figure(
     ax: AxesLike = None,
     figsize: tuple[float, float] | None = None,
     break_widths: tuple[float, float] | None = None,
+    cell: SubplotSpec | None = None,
 ) -> Layout:
     """Create (or reuse) the figure and axes for a plot.
 
@@ -107,16 +136,24 @@ def make_figure(
         Add a ratio panel below the main panel, sharing the x axis.
     ax
         Existing axes to draw into: one ``Axes``, or ``(main, ratio)``. Not
-        supported together with ``break_widths``.
+        supported together with ``break_widths`` or ``cell``.
     figsize
         Figure size in inches; defaults to the style's, enlarged for a ratio panel.
+        Not supported together with ``cell``, whose figure exists already.
     break_widths
         Relative widths of the left and right segments of a broken x axis.
         ``None`` for an ordinary single x axis.
+    cell
+        A cell of a grid on an existing figure to build the panels in, so that
+        several plots share one page (:class:`~rootfig.PlotBook`). The panels are
+        laid out inside it exactly as they are on a figure of their own.
     """
     if ax is not None:
         if break_widths is not None:
             msg = "a broken x axis (xbreak) cannot be drawn into existing axes; leave ax=None"
+            raise ValueError(msg)
+        if cell is not None:
+            msg = "ax= and cell= both name where to draw; pass one of them"
             raise ValueError(msg)
         if isinstance(ax, Axes):
             if ratio:
@@ -130,24 +167,27 @@ def make_figure(
         main, lower = axes
         return Layout(_figure_of(main), main, lower if ratio else None)
 
-    size = figsize or style.figsize
-    if size is None:
-        width, height = plt.rcParams["figure.figsize"]
-        size = (width, height * (1 + RATIO_HEIGHT_FRACTION * 0.85)) if ratio else (width, height)
-    # Constrained layout fits labels, legends and colour bars into the canvas, so a saved
-    # figure has exactly the requested size and every plot type shares one shape.
-    engine = ConstrainedLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
-    fig = plt.figure(figsize=size, layout=engine)
     rows = 2 if ratio else 1
     columns = 2 if break_widths is not None else 1
-    grid = fig.add_gridspec(
-        rows,
-        columns,
-        height_ratios=[1.0, RATIO_HEIGHT_FRACTION] if ratio else None,
-        width_ratios=list(break_widths) if break_widths is not None else None,
-        hspace=0.06,
-        wspace=BREAK_GAP,
-    )
+    grid_options: dict[str, Any] = {
+        "height_ratios": [1.0, RATIO_HEIGHT_FRACTION] if ratio else None,
+        "width_ratios": list(break_widths) if break_widths is not None else None,
+        "hspace": PANEL_GAP,
+        "wspace": BREAK_GAP,
+    }
+    grid: GridSpecBase
+    if cell is not None:
+        if figsize is not None:
+            msg = "figsize cannot be set for a plot drawn into a cell of a page; the page is sized"
+            raise ValueError(msg)
+        fig = _figure_of_cell(cell)
+        grid = cell.subgridspec(rows, columns, **grid_options)
+    else:
+        # Constrained layout fits labels, legends and colour bars into the canvas, so a
+        # saved figure has exactly the requested size and every plot type shares one shape.
+        engine = ConstrainedLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
+        fig = plt.figure(figsize=figure_size(style, ratio=ratio, figsize=figsize), layout=engine)
+        grid = fig.add_gridspec(rows, columns, **grid_options)
     main = fig.add_subplot(grid[0, 0])
     layout = Layout(fig, main)
     _pin_tick_label_size(main)
@@ -188,6 +228,15 @@ def _figure_of(ax: Axes) -> Figure:
     if not isinstance(figure, Figure):  # pragma: no cover - matplotlib always sets it
         msg = "axes is not attached to a figure"
         raise ValueError(msg)
+    return figure
+
+
+def _figure_of_cell(cell: SubplotSpec) -> Figure:
+    """Return the figure whose grid ``cell`` belongs to."""
+    figure: Any = getattr(cell.get_gridspec(), "figure", None)  # GridSpec has it, its base not
+    if not isinstance(figure, Figure):
+        msg = "cell= must be a cell of a grid on a figure (Figure.add_gridspec)"
+        raise TypeError(msg)
     return figure
 
 

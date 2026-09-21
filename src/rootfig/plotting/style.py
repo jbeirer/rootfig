@@ -439,8 +439,8 @@ def _style_font() -> str | None:
     return None
 
 
-def pin_fonts(fig: Figure) -> None:
-    """Replace generic font families on every text of ``fig`` by the style's font list.
+def pin_fonts(fig: Figure, *, axes: Sequence[Axes] | None = None) -> None:
+    """Replace generic font families on the texts of ``fig`` by the style's font list.
 
     A generic family such as ``"sans-serif"`` is resolved from rcParams each time
     a text is drawn, and matplotlib caches text metrics by the generic name. A
@@ -448,6 +448,10 @@ def pin_fonts(fig: Figure) -> None:
     would therefore be painted in different fonts from those its layout and
     label positions were computed with: labels shift and get clipped. Call this
     inside the style context once drawing is complete.
+
+    ``axes`` limits the pinning to those axes and the texts they hold. Several
+    plots on one page each carry their own style, so each pins what it drew and
+    leaves the others as they are; ``None`` pins every text of the figure.
 
     Only families that are actually installed are pinned. matplotlib walks the
     whole family list on *every* draw (it builds the glyph fallback chain from
@@ -472,12 +476,18 @@ def pin_fonts(fig: Figure) -> None:
         missing[tuple(unique)] = None
         return [fallback]
 
-    for text in fig.findobj(Text):
+    if axes is None:
+        texts = fig.findobj(Text)
+        pinned_axes: Sequence[Axes] = fig.axes
+    else:
+        texts = [text for ax in axes for text in ax.findobj(Text)]
+        pinned_axes = axes
+    for text in texts:
         text.set_fontfamily(concrete(text.get_fontfamily()))
     tick_family = concrete(mpl.rcParams["font.family"])
-    for axes in fig.axes:
+    for ax in pinned_axes:
         # tick labels are re-created on every draw; give them the family explicitly
-        axes.tick_params(axis="both", which="both", labelfontfamily=tick_family)
+        ax.tick_params(axis="both", which="both", labelfontfamily=tick_family)
 
     for families in missing:
         warnings.warn(
@@ -489,16 +499,20 @@ def pin_fonts(fig: Figure) -> None:
         )
 
 
-def finalize_figure(fig: Figure, *, panels: Sequence[Axes] = ()) -> None:
+def finalize_figure(
+    fig: Figure, *, axes: Sequence[Axes] | None = None, panels: Sequence[Axes] = ()
+) -> None:
     """Fix what the figure's look depends on while its style context is still active.
 
     Call as the last drawing step inside the style context: pins the fonts (see
-    :func:`pin_fonts`) and fits the y label of each lower panel in ``panels`` (see
-    :func:`~rootfig.plotting.figure.fit_ylabel`), which measures text and so must
-    follow the font pinning that decides which font is drawn. The experiment label
-    is anchored afterwards, outside the context (see :func:`align_experiment_label`).
+    :func:`pin_fonts`; on ``axes`` alone when given, so a plot sharing its figure
+    with others touches only its own) and fits the y label of each lower panel in
+    ``panels`` (see :func:`~rootfig.plotting.figure.fit_ylabel`), which measures
+    text and so must follow the font pinning that decides which font is drawn. The
+    experiment label is anchored afterwards, outside the context (see
+    :func:`align_experiment_label`).
     """
-    pin_fonts(fig)
+    pin_fonts(fig, axes=axes)
     for panel in panels:
         fit_ylabel(panel)
 

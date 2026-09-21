@@ -13,6 +13,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
+from matplotlib.gridspec import SubplotSpec
+
 from rootfig.api._common import as_observed, normalize_for_plot, style_for
 from rootfig.api._hists import (
     histogram_objects,
@@ -503,12 +505,16 @@ def draw_plot(
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
     save: str | None = None,
+    cell: SubplotSpec | None = None,
 ) -> Plot:
     """Draw prepared histograms; see :func:`plot` for the options.
 
     The histograms are not modified: every transformation for display
     (normalisation, flow bins, sums) works on copies, so one
-    :class:`PreparedPlot` can be drawn several ways.
+    :class:`PreparedPlot` can be drawn several ways. ``cell`` is a cell of a
+    grid on an existing figure to build the panels in (see
+    :func:`~rootfig.plotting.make_figure`), for several plots on one page; the
+    figure then belongs to the page, which sets its size and saves it.
     """
     histograms_ = prepared.histograms
     variable = prepared.variable
@@ -566,7 +572,7 @@ def draw_plot(
     with style_context(resolved_style) as st:
         want_ratio = bool(ratio)
         layout = make_figure(
-            st, ratio=want_ratio, ax=ax, figsize=figsize, break_widths=break_widths
+            st, ratio=want_ratio, ax=ax, figsize=figsize, break_widths=break_widths, cell=cell
         )
         drawn = None
         for axis in layout.main_axes:
@@ -685,7 +691,8 @@ def draw_plot(
             if layout.ratio is not None and layout.ratio_right is not None:
                 apply_xbreak(layout.ratio, layout.ratio_right, *segments)
 
-        finalize_figure(layout.fig, panels=layout.ratio_axes)  # last: fonts, panel labels
+        # last: fonts and panel labels, of this plot's axes only (a page holds others)
+        finalize_figure(layout.fig, axes=layout.axes, panels=layout.ratio_axes)
     # outside the style context, against the layout the figure is drawn with
     align_experiment_label(layout.main, right=layout.main_right)
     result = Plot(

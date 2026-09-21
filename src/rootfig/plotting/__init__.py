@@ -7,6 +7,7 @@ from rootfig.plotting.figure import (
     Layout,
     apply_xbreak,
     break_segments,
+    figure_size,
     finish_axes,
     make_figure,
     overlay_artists,
@@ -24,6 +25,7 @@ from rootfig.plotting.hist1d import (
     show_flow_bins,
 )
 from rootfig.plotting.hist2d import draw_hist2d
+from rootfig.plotting.pages import Page, make_page, multipage_pdf, page_size, plan_pages
 from rootfig.plotting.points import draw_efficiencies, draw_profiles
 from rootfig.plotting.ratio import draw_ratio_panel, draw_significance_panel, ratio_ylim
 from rootfig.plotting.result import Plot
@@ -52,6 +54,7 @@ __all__ = [
     "Drawn",
     "FlowSpec",
     "Layout",
+    "Page",
     "Plot",
     "add_experiment_label",
     "add_legend",
@@ -71,6 +74,7 @@ __all__ = [
     "draw_ratio_panel",
     "draw_significance_panel",
     "envelope",
+    "figure_size",
     "finalize_figure",
     "finish_axes",
     "fold_flow_bins",
@@ -78,7 +82,11 @@ __all__ = [
     "label_flow_bins",
     "legend_location",
     "make_figure",
+    "make_page",
+    "multipage_pdf",
     "overlay_artists",
+    "page_size",
+    "plan_pages",
     "raise_ylim_above",
     "ratio_ylim",
     "resolve_rc",
