@@ -871,9 +871,10 @@ class PlotBook:
         ValueError
             A ``layout`` that is not ``"auto"`` or a pair of positive integers, a
             ``figsize`` that is not a pair of positive finite numbers, a path with
-            a suffix other than ``.pdf``, a reserved ``savefig`` keyword, or a
-            ``figsize`` in ``plot_kwargs`` or a variant; all before anything is
-            read or drawn.
+            a suffix other than ``.pdf``, a reserved ``savefig`` keyword, a
+            ``figsize`` in ``plot_kwargs`` or a variant, or plots sharing a page
+            whose styles ask for different page backgrounds; all before anything
+            is read or drawn.
         IsADirectoryError
             ``path`` is an existing directory.
 

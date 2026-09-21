@@ -207,12 +207,15 @@ class TestBasics:
         rf.PlotBook(samples, [X, Y]).save_pdf(tmp_path / "sized.pdf")
         assert calls == [2]
 
+    @pytest.mark.parametrize("figsize", [None, (9.0, 7.0)])
     def test_a_style_that_cannot_be_resolved_names_its_task(
-        self, samples: list[rf.Sample], tmp_path: Path
+        self, samples: list[rf.Sample], tmp_path: Path, figsize: Any
     ) -> None:
+        # without a figsize the style is resolved by cell_size(), with one by the page the
+        # task opens; both are outside the drawing step that carries the task note itself
         book = rf.PlotBook(samples, [X], variants={"ok": {}, "bad": {"style": "no-such-style"}})
         with pytest.raises(ValueError, match="unknown style") as info:
-            book.save_pdf(tmp_path / "plots.pdf")
+            book.save_pdf(tmp_path / "plots.pdf", layout=(1, 1), figsize=figsize)
         assert any("variant='bad'" in note for note in info.value.__notes__)
         assert sorted(tmp_path.iterdir()) == []
 
@@ -447,7 +450,7 @@ class TestCells:
         assert second.xaxis.label.get_fontfamily()[0] == "DejaVu Sans"
         assert (first.xaxis.label.get_fontsize(), second.xaxis.label.get_fontsize()) == (22, 9)
 
-    def test_page_background_follows_the_first_task(
+    def test_page_background_is_the_one_its_plots_ask_for(
         self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         pages = _pages(monkeypatch)
@@ -455,10 +458,42 @@ class TestCells:
             rf.PlotBook(samples, X).save_pdf(tmp_path / "dark.pdf")
         assert pages[0].get_facecolor() == (0.0, 0.0, 0.0, 0.0)
         red = rf.Style(rc={"figure.facecolor": "red"})
-        rf.PlotBook(samples, X, variants={"r": {"style": red}, "d": {}}).save_pdf(
-            tmp_path / "r.pdf"
-        )
+        rf.PlotBook(samples, X, variants={"r": {"style": red}}).save_pdf(tmp_path / "r.pdf")
         assert pages[1].get_facecolor() == (1.0, 0.0, 0.0, 1.0)
+
+    def test_plots_wanting_different_backgrounds_do_not_share_a_page(
+        self, samples: list[rf.Sample], tmp_path: Path
+    ) -> None:
+        # a cell's labels and legend are drawn outside its axes, on the page's background,
+        # so a dark plot beside a light one would lose them; there is no per-cell figure
+        red = rf.Style(rc={"figure.facecolor": "red"})
+        book = rf.PlotBook(samples, X, variants={"r": {"style": red}, "d": {}})
+        with pytest.raises(ValueError, match="different page backgrounds") as info:
+            book.save_pdf(tmp_path / "plots.pdf")
+        message = str(info.value)
+        assert "variant='r'" in message
+        assert "variant='d'" in message
+        assert "select(variants='d')" in message
+        assert sorted(tmp_path.iterdir()) == []
+        assert plt.get_fignums() == []
+        # one per page is fine: each page takes the background of the plots on it
+        assert book.save_pdf(tmp_path / "split.pdf", layout=(1, 1)).is_file()
+
+    def test_one_background_spelt_two_ways_is_not_a_clash(
+        self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # ATLAS writes it '#FFFFFF' and CMS 'white'; resolved colours are compared, not names
+        pages = _pages(monkeypatch)
+        book = rf.PlotBook(
+            samples,
+            X,
+            variants={
+                "atlas": {"style": rf.Style(experiment="ATLAS")},
+                "cms": {"style": rf.Style(experiment="CMS")},
+            },
+        )
+        assert book.save_pdf(tmp_path / "plots.pdf").is_file()
+        assert pages[0].get_facecolor() == (1.0, 1.0, 1.0, 1.0)
 
 
 class TestBatching:

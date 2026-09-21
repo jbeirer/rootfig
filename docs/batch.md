@@ -278,6 +278,18 @@ sets the size of the whole page instead:
 book.save_pdf("overview.pdf", figsize=(16, 10))
 ```
 
+Each cell carries its own style, so plots with different fonts, sizes or colours
+sit side by side. The one thing a cell cannot have of its own is the *page*
+background, which belongs to the figure the whole page is drawn on: plots sharing
+a page whose styles ask for different backgrounds are refused before anything is
+drawn, since the labels and legend of a cell are drawn outside its axes and would
+land on the wrong background. Write one document per style instead:
+
+```python
+for name in ("light", "dark"):
+    book.select(variants=name).save_pdf(f"overview-{name}.pdf")
+```
+
 A `figsize` in `plot_kwargs` or a variant has no meaning inside a shared page and
 is rejected before anything is read; pass it to `save_pdf()`. What a task runs
 with decides: a `figsize` in `plot_kwargs` that every variant overrides with

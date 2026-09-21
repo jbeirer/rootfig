@@ -10,12 +10,21 @@ the next one is begun, so one page figure exists at a time.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from matplotlib.colors import to_hex
+
 from rootfig.plotting import Plot, figure_size, style_context
 from rootfig.plotting.figure import close_figures_since, open_figure_ids
-from rootfig.plotting.pages import Page, make_page, multipage_pdf, page_size
+from rootfig.plotting.pages import (
+    Page,
+    background_color,
+    make_page,
+    multipage_pdf,
+    page_size,
+)
 
 if TYPE_CHECKING:
     from rootfig.api.batch import PlotTask
@@ -32,6 +41,20 @@ class PreparedTask(Protocol):
         ...
 
 
+@contextmanager
+def task_note(task: PlotTask, doing: str) -> Iterator[None]:
+    """Add a note naming ``task`` to any error from the block; the type is kept.
+
+    ``doing`` says what was being done (``"sizing"``), so a failure outside
+    :meth:`PlotBook.plots`' own drawing step still names the task at fault.
+    """
+    try:
+        yield
+    except Exception as exc:
+        exc.add_note(f"while {doing} PlotBook task {task.describe()}")
+        raise
+
+
 def is_complex(kwargs: Mapping[str, Any]) -> bool:
     """Whether ``plot(**kwargs)`` draws a lower panel or a broken x axis, which need room."""
     return bool(kwargs.get("ratio", False)) or kwargs.get("xbreak") is not None
@@ -46,12 +69,8 @@ def cell_size(tasks: Sequence[PlotTask]) -> tuple[float, float]:
     """
     sizes = []
     for task in tasks:
-        try:
-            with style_context(task.kwargs.get("style")) as st:
-                sizes.append(figure_size(st, ratio=bool(task.kwargs.get("ratio", False))))
-        except Exception as exc:
-            exc.add_note(f"while sizing PlotBook task {task.describe()}")
-            raise
+        with task_note(task, "sizing"), style_context(task.kwargs.get("style")) as st:
+            sizes.append(figure_size(st, ratio=bool(task.kwargs.get("ratio", False))))
     return (max(width for width, _ in sizes), max(height for _, height in sizes))
 
 
@@ -67,6 +86,50 @@ def page_sizes(
         return [figsize] * len(pages)
     inches = cell_size(tasks)
     return [page_size(page.grid, inches) for page in pages]
+
+
+def check_page_backgrounds(tasks: Sequence[PlotTask], pages: Sequence[Page]) -> None:
+    """Raise if the plots sharing a page want different page backgrounds.
+
+    A page is one figure and so has one background, which the first plot's style
+    gives it (:func:`write_pdf`). The labels, ticks and legends of the others are
+    drawn outside their axes, on that background rather than their own, so a dark
+    plot beside a light one loses its white labels against the light page. There
+    is no per-cell figure to fix this with, so such a book is refused before
+    anything is drawn and pointed at one document per style. Styles that compare
+    equal are not resolved at all: a book with one style throughout, which is the
+    usual one, costs nothing here.
+
+    Raises
+    ------
+    ValueError
+        Two plots of one page resolve to different backgrounds.
+    """
+    position = 0
+    for number, page in enumerate(pages, start=1):
+        own = tasks[position : position + page.count]
+        position += page.count
+        style = own[0].kwargs.get("style")
+        if all(task.kwargs.get("style") == style for task in own[1:]):
+            continue
+        first, *rest = ((task, _page_background(task)) for task in own)
+        clash = next(((task, colour) for task, colour in rest if colour != first[1]), None)
+        if clash is None:
+            continue
+        msg = (
+            f"the plots of PDF page {number} ask for different page backgrounds: "
+            f"{first[0].describe()} wants {to_hex(first[1], keep_alpha=True)} and "
+            f"{clash[0].describe()} wants {to_hex(clash[1], keep_alpha=True)}; one page is one "
+            f"figure and has one background, so write a document per style, e.g. "
+            f"book.select(variants={clash[0].variant_id!r}).save_pdf(...)"
+        )
+        raise ValueError(msg)
+
+
+def _page_background(task: PlotTask) -> tuple[float, float, float, float]:
+    """Return the page background ``task``'s own style asks for."""
+    with task_note(task, "resolving the page background of"):
+        return background_color(task.kwargs.get("style"))
 
 
 def write_pdf(
@@ -93,6 +156,7 @@ def write_pdf(
     """
     kwargs = {"facecolor": "auto", "edgecolor": "auto", **savefig_kwargs}
     metadata = kwargs.pop("metadata", None)
+    check_page_backgrounds(tasks, pages)
     sizes = page_sizes(tasks, pages, figsize)
     position = 0
     with multipage_pdf(target, metadata=metadata) as pdf:
@@ -101,7 +165,8 @@ def write_pdf(
             position += page.count
             before = open_figure_ids()
             try:
-                fig, cells = make_page(size, page.grid, style=first.kwargs.get("style"))
+                with task_note(first, f"opening PDF page {number} for"):
+                    fig, cells = make_page(size, page.grid, style=first.kwargs.get("style"))
                 for cell in cells[: page.count]:
                     next(prepared).draw(cell=cell)
                 try:

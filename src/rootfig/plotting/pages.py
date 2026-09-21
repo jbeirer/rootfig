@@ -21,6 +21,7 @@ from typing import Any, Literal, TypeAlias
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from matplotlib.gridspec import SubplotSpec
 from matplotlib.layout_engine import ConstrainedLayoutEngine
@@ -33,6 +34,7 @@ __all__ = [
     "LayoutSpec",
     "Page",
     "auto_grid",
+    "background_color",
     "check_figsize",
     "check_layout",
     "make_page",
@@ -208,6 +210,16 @@ def page_size(grid: Grid, cell: tuple[float, float]) -> tuple[float, float]:
     """
     rows, columns = grid
     return (columns * cell[0], rows * cell[1])
+
+
+def background_color(style: StyleLike = None) -> tuple[float, float, float, float]:
+    """Return the figure background ``style`` asks for, as RGBA.
+
+    Resolved rather than compared as written, so that ``"white"`` and
+    ``"#FFFFFF"`` count as the one colour they are.
+    """
+    with style_context(style):
+        return to_rgba(plt.rcParams["figure.facecolor"])
 
 
 def make_page(
