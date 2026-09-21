@@ -24,12 +24,14 @@ from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
     DEFAULT_COLORS,
     ROOTFIG_STYLE,
+    Finish,
     Layout,
     Plot,
     add_experiment_label,
     add_legend,
     add_stats_box,
     add_text,
+    align_experiment_label,
     apply_xbreak,
     break_segments,
     color_cycle,
@@ -40,6 +42,8 @@ from rootfig.plotting import (
     draw_ratio_panel,
     envelope,
     finish_axes,
+    finish_figure,
+    finishing_together,
     fold_flow_bins,
     label_flow_bins,
     make_figure,
@@ -235,6 +239,7 @@ class TestStyle:
         with style_context(Style(experiment="ATLAS")):
             fig, ax = plt.subplots()
             add_experiment_label(ax, Style(experiment="ATLAS", status="Internal"), has_data=True)
+            align_experiment_label(ax)  # the plotting functions do so on the finished figure
             fig.canvas.draw()
             renderer = fig.canvas.get_renderer()
             texts = {t.get_text(): t for t in ax.texts}
@@ -1361,3 +1366,38 @@ class TestSystematicDrawing:
         assert result.syst_errors is not None
         band = next(c for c in ax.collections if isinstance(c, PolyCollection))
         assert band.get_label() == "A stat. + syst. unc."
+
+
+class TestFinishing:
+    """What is measured against the laid-out figure runs after drawing, once per figure."""
+
+    def test_plots_drawn_together_are_finished_at_the_end_of_the_block(self) -> None:
+        fig = plt.figure()
+        calls: list[int] = []
+        first = Finish(fig.add_subplot(1, 2, 1), headroom=lambda: calls.append(1))
+        second = Finish(fig.add_subplot(1, 2, 2), headroom=lambda: calls.append(2))
+        with finishing_together(fig):
+            finish_figure(fig, [first])
+            finish_figure(fig, [second])
+            assert calls == []
+        assert calls == [1, 2]
+        finish_figure(fig, [first])  # collected only within the block
+        assert calls == [1, 2, 1]
+        plt.close(fig)
+
+    def test_a_block_that_raises_finishes_nothing(self) -> None:
+        fig = plt.figure()
+        calls: list[int] = []
+        finish = Finish(fig.add_subplot(), headroom=lambda: calls.append(1))
+
+        def failing_page() -> None:
+            with finishing_together(fig):
+                finish_figure(fig, [finish])
+                raise RuntimeError("drawing failed")
+
+        with pytest.raises(RuntimeError, match="drawing failed"):
+            failing_page()
+        assert calls == []
+        finish_figure(fig, [finish])
+        assert calls == [1]
+        plt.close(fig)

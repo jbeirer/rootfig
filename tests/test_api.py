@@ -1604,7 +1604,9 @@ class TestHeadroomIsMeasured:
         [
             pytest.param({"stats": True}, id="stats"),
             pytest.param({"text": ["a line", "another line"]}, id="text"),
-            pytest.param({"style": "ATLAS"}, id="experiment-label"),
+            pytest.param(
+                {"style": rf.Style(experiment="ATLAS", lumi=140, com=13)}, id="experiment-label"
+            ),
             pytest.param({"legend": "upper right"}, id="anchored-legend"),
             pytest.param({"xbreak": (3.0, 7.0), "legend": "upper right"}, id="xbreak"),
         ],
@@ -1612,6 +1614,42 @@ class TestHeadroomIsMeasured:
     def test_axis_filling_plot_is_lifted(self, options: dict[str, Any]) -> None:
         p = rf.plot(self._flat(), "x", bins=50, **options)
         assert self._ratio(p) > 1.20
+        plt.close(p.fig)
+
+
+class TestOffsetText:
+    """The x label stays clear of the axis' offset text, which shares its corner."""
+
+    @staticmethod
+    def _boxes(p: rf.Plot) -> tuple[Any, Any]:
+        axis = (p.ratio_ax or p.ax).xaxis
+        p.fig.canvas.draw()
+        renderer = p.fig.canvas.get_renderer()
+        offset = axis.get_offset_text()
+        assert offset.get_text()  # the values need one
+        return axis.label.get_window_extent(renderer), offset.get_window_extent(renderer)
+
+    @pytest.mark.parametrize("ratio", [False, True])
+    def test_label_and_offset_text_do_not_overlap(self, ratio: bool) -> None:
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        samples = [
+            rf.Sample({"x": values}, label="A"),
+            rf.Sample({"x": values * 1.1}, label="B"),
+        ]
+        p = rf.plot(samples, "x", bins=20, ratio=ratio)
+        label, offset = self._boxes(p)
+        assert not label.overlaps(offset)
+        assert label.x1 <= offset.x0  # beside it, on the same line
+        assert label.y0 < offset.y1
+        assert offset.y0 < label.y1
+        plt.close(p.fig)
+
+    def test_plot2d_label_and_offset_text_do_not_overlap(self) -> None:
+        rng = np.random.default_rng(0)
+        data = {"x": rng.normal(2e-6, 1e-6, 5_000), "y": rng.normal(0, 1, 5_000)}
+        p = rf.plot2d(data, "x", "y", bins=20)
+        label, offset = self._boxes(p)
+        assert not label.overlaps(offset)
         plt.close(p.fig)
 
 

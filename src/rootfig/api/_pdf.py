@@ -16,11 +16,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from matplotlib.colors import to_hex
 
-from rootfig.plotting import Plot, figure_size, style_context
+from rootfig.plotting import Plot, figure_size, finishing_together, style_context
 from rootfig.plotting.figure import close_figures_since, open_figure_ids
 from rootfig.plotting.pages import (
     Page,
     background_color,
+    cell_room,
     make_page,
     multipage_pdf,
     page_size,
@@ -81,8 +82,15 @@ def page_sizes(
 
     An explicit ``figsize`` is the size of each page, and the styles of the tasks
     are left alone; otherwise a page is its grid of cells of :func:`cell_size`.
+
+    Raises
+    ------
+    ValueError
+        ``figsize`` leaves no room for the cells of a page's grid.
     """
     if figsize is not None:
+        for page in pages:
+            cell_room(figsize, page.grid)
         return [figsize] * len(pages)
     inches = cell_size(tasks)
     return [page_size(page.grid, inches) for page in pages]
@@ -149,7 +157,9 @@ def write_pdf(
     ``prepared`` yields the tasks in the order of ``tasks``, which ``pages`` split
     into consecutive runs; the tasks of a page are drawn in reading order into the
     cells of one figure of the size :func:`page_sizes` gives the page, created
-    under the style of the page's first task. The document is written
+    under the style of the page's first task, and finished together once all are
+    drawn (:func:`~rootfig.plotting.finishing_together`), so a page is laid out a
+    fixed number of times however many plots it holds. The document is written
     through :func:`~rootfig.plotting.pages.multipage_pdf`: an existing ``target``
     is replaced only once every page is written. A ``metadata`` among
     ``savefig_kwargs`` describes the document, not a page, so it goes to the
@@ -170,8 +180,9 @@ def write_pdf(
             try:
                 with task_note(first, f"opening PDF page {number} for"):
                     fig, cells = make_page(size, page.grid, style=first.kwargs.get("style"))
-                for cell in cells[: page.count]:
-                    next(prepared).draw(cell=cell)
+                with finishing_together(fig):
+                    for cell in cells[: page.count]:
+                        next(prepared).draw(cell=cell)
                 try:
                     pdf.savefig(fig, **kwargs)
                 except Exception as exc:

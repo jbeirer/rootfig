@@ -306,12 +306,16 @@ range avoids range inference.
   `Variable`'s `log` flag (`plot2d`, `efficiency` and `profile` do the same for
   their variables); `True`/`False` override it.
 - `xlabel`, `ylabel`, `unit`, `title`. The title sits above the axes, where
-  the CMS-style label is also drawn; with such a style prefer `text=`.
+  the CMS-style label is also drawn; with such a style prefer `text=`. The x
+  label ends at the right end of the axis, where matplotlib also puts the
+  axis' offset text (`×10⁻⁶` for small values); when both are shown the label
+  moves left of it (mplhep's `xlabel_sci_adjust`).
 - Automatic y limits leave room for the legend, the experiment label, the
   statistics box and `text` lines: a small fixed margin is added above the
   tallest bin, and the upper limit is then raised until none of them covers a
-  histogram (the legend picks a free upper corner). Room is only made for
-  what is actually drawn, so a plot without annotations keeps the margin.
+  histogram (the legend picks a free upper corner of its axes). Room is only
+  made for what is actually drawn, so a plot without annotations keeps the
+  margin. It is measured on the figure as laid out, as it is shown and saved.
   A `ylim` with an explicit upper value switches this off.
 
 ## Legend, labels, text and statistics

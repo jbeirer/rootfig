@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -28,18 +29,19 @@ from rootfig.model import (
 )
 from rootfig.plotting import (
     AxesLike,
+    Finish,
     Plot,
     add_experiment_label,
     add_legend,
-    align_experiment_label,
     color_cycle,
     draw_efficiencies,
     draw_profiles,
-    finalize_figure,
     finish_axes,
+    finish_figure,
     legend_location,
     make_figure,
     overlay_artists,
+    pin_fonts,
     raise_ylim_above,
     style_context,
 )
@@ -139,13 +141,15 @@ def efficiency(
             layout.main.set_title(title)
         add_experiment_label(layout.main, st, has_data=any(s.is_data for s in samples))
         legend_artist = add_legend(layout.main, st)
+        headroom = None
         if ylim is None or ylim[1] is None:
             edges = efficiencies[0].edges
             heights = np.nanmax(
                 np.vstack([np.nan_to_num(e.upper, nan=0.0) for e in efficiencies]), axis=0
             )
             floating = legend_location(st) == "best"
-            raise_ylim_above(
+            headroom = partial(
+                raise_ylim_above,
                 [layout.main],
                 overlay_artists(layout.main, None if floating else legend_artist),
                 edges=edges,
@@ -153,9 +157,9 @@ def efficiency(
                 logy=False,
                 floating=[legend_artist] if floating and legend_artist is not None else [],
             )
-        finalize_figure(layout.fig)  # last: fonts
+        pin_fonts(layout.fig)  # last: fonts
     # outside the style context, against the layout the figure is drawn with
-    align_experiment_label(layout.main)
+    finish_figure(layout.fig, [Finish(layout.main, xlabel=layout.main, headroom=headroom)])
     result = Plot(
         fig=layout.fig,
         ax=layout.main,
@@ -273,6 +277,7 @@ def profile(
             layout.main.set_title(title)
         add_experiment_label(layout.main, st, has_data=any(s.is_data for s in samples))
         legend_artist = add_legend(layout.main, st)
+        headroom = None
         if ylim is None or ylim[1] is None:
             heights = np.nanmax(
                 np.vstack(
@@ -285,7 +290,8 @@ def profile(
             )
             heights = np.where(np.isfinite(heights), heights, 0.0)
             floating = legend_location(st) == "best"
-            raise_ylim_above(
+            headroom = partial(
+                raise_ylim_above,
                 [layout.main],
                 overlay_artists(layout.main, None if floating else legend_artist),
                 edges=edges,
@@ -293,9 +299,9 @@ def profile(
                 logy=logy,
                 floating=[legend_artist] if floating and legend_artist is not None else [],
             )
-        finalize_figure(layout.fig)  # last: fonts
+        pin_fonts(layout.fig)  # last: fonts
     # outside the style context, against the layout the figure is drawn with
-    align_experiment_label(layout.main)
+    finish_figure(layout.fig, [Finish(layout.main, xlabel=layout.main, headroom=headroom)])
     result = Plot(fig=layout.fig, ax=layout.main, variable=var_x, profiles=profiles)
     if save:
         result.save(save)

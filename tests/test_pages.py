@@ -13,9 +13,12 @@ from matplotlib.colors import to_rgba
 from matplotlib.layout_engine import ConstrainedLayoutEngine
 
 import rootfig as rf
+from rootfig.plotting.figure import LAYOUT_PAD
 from rootfig.plotting.pages import (
+    PAGE_GAP,
     Page,
     auto_grid,
+    cell_room,
     check_figsize,
     check_layout,
     make_page,
@@ -167,24 +170,39 @@ class TestValidation:
 
 
 class TestPageFigure:
-    def test_page_size_multiplies_the_cell(self) -> None:
-        assert page_size((2, 3), (7.0, 5.6)) == pytest.approx((21.0, 11.2))
+    def test_page_size_is_the_cells_and_the_gaps_between_them(self) -> None:
+        assert page_size((2, 3), (7.0, 5.6)) == pytest.approx(
+            (21.0 + 2 * PAGE_GAP, 11.2 + PAGE_GAP)
+        )
         assert page_size((1, 1), (7.0, 7.0)) == (7.0, 7.0)
 
+    def test_cell_room_is_what_the_gaps_leave(self) -> None:
+        assert cell_room(page_size((2, 3), (7.0, 5.6)), (2, 3)) == pytest.approx((7.0, 5.6))
+        assert cell_room((7.0, 7.0), (1, 1)) == (7.0, 7.0)
+        with pytest.raises(ValueError, match=r"no room for a 8 x 8 grid .* at least"):
+            cell_room((1.0, 1.0), (8, 8))
+
     def test_make_page_cells_in_reading_order(self) -> None:
-        fig, cells = make_page((6.0, 4.0), (2, 3))
+        size = page_size((2, 3), (2.0, 1.5))
+        fig, cells = make_page(size, (2, 3))
         try:
-            assert tuple(fig.get_size_inches()) == (6.0, 4.0)
-            assert isinstance(fig.get_layout_engine(), ConstrainedLayoutEngine)
+            assert tuple(fig.get_size_inches()) == pytest.approx(size)
+            engine = fig.get_layout_engine()
+            assert isinstance(engine, ConstrainedLayoutEngine)
+            assert engine.get()["h_pad"] == engine.get()["w_pad"] == LAYOUT_PAD
             assert fig.axes == []  # cells are grid positions; the plots add their own axes
+            # every other row and column is a gap between the cells
             assert [(c.rowspan.start, c.colspan.start) for c in cells] == [
                 (0, 0),
-                (0, 1),
                 (0, 2),
-                (1, 0),
-                (1, 1),
-                (1, 2),
+                (0, 4),
+                (2, 0),
+                (2, 2),
+                (2, 4),
             ]
+            grid = cells[0].get_gridspec()
+            assert grid.get_width_ratios() == pytest.approx([2.0, PAGE_GAP] * 2 + [2.0])
+            assert grid.get_height_ratios() == pytest.approx([1.5, PAGE_GAP, 1.5])
         finally:
             plt.close(fig)
 

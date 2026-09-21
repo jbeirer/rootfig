@@ -15,7 +15,7 @@ from matplotlib.figure import Figure
 
 import rootfig as rf
 from rootfig.api import _pdf, batch
-from rootfig.plotting.pages import Page
+from rootfig.plotting.pages import PAGE_GAP, Page, page_size
 from test_batch import _reads, _spy, assert_same_plot
 
 X = rf.Variable("x", bins=(5, 0, 1))
@@ -77,11 +77,11 @@ def _temporaries(directory: Path) -> list[Path]:
 
 
 def _cell(ax: Axes) -> tuple[int, int]:
-    """The (row, column) of the page cell ``ax`` was drawn in."""
+    """The (row, column) of the page cell ``ax`` was drawn in (every other one is a gap)."""
     spec = ax.get_subplotspec()
     assert spec is not None
     outer = spec.get_topmost_subplotspec()
-    return outer.rowspan.start, outer.colspan.start
+    return outer.rowspan.start // 2, outer.colspan.start // 2
 
 
 class TestBasics:
@@ -254,7 +254,7 @@ class TestPages:
         rf.PlotBook(samples, variables).save_pdf(tmp_path / "plots.pdf")
         assert [len(page.axes) for page in pages] == [6, 1]
         assert [tuple(page.get_size_inches()) for page in pages] == [
-            pytest.approx((3 * CELL[0], 2 * CELL[1])),
+            pytest.approx((3 * CELL[0] + 2 * PAGE_GAP, 2 * CELL[1] + PAGE_GAP)),
             pytest.approx(CELL),
         ]
         assert not any(plt.fignum_exists(page.number) for page in pages)
@@ -269,7 +269,7 @@ class TestPages:
         book.save_pdf(tmp_path / "plots.pdf", layout=(2, 2))
         assert [len(page.axes) for page in pages] == [4, 1]  # no axes for the three unused cells
         assert [tuple(page.get_size_inches()) for page in pages] == [
-            pytest.approx((2 * CELL[0], 2 * CELL[1]))
+            pytest.approx(page_size((2, 2), CELL))
         ] * 2
         assert [task.stem for task, _ in drawn] == [task.stem for task in book.tasks()]
         assert [_cell(result.ax) for _, result in drawn] == [(0, 0), (0, 1), (1, 0), (1, 1), (0, 0)]
@@ -282,7 +282,9 @@ class TestPages:
         rf.PlotBook(samples, variables, plot_kwargs={"ratio": True}).save_pdf(tmp_path / "p.pdf")
         assert [len(page.axes) for page in pages] == [8, 2]  # main and ratio axes per cell
         cell_height = CELL[1] * (1 + 0.3 * 0.85)  # as make_figure enlarges a ratio figure
-        assert tuple(pages[0].get_size_inches()) == pytest.approx((2 * CELL[0], 2 * cell_height))
+        assert tuple(pages[0].get_size_inches()) == pytest.approx(
+            page_size((2, 2), (CELL[0], cell_height))
+        )
 
     def test_tasks_stay_in_book_order_across_pages(
         self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -321,7 +323,7 @@ class TestPages:
         book.save_pdf(tmp_path / "plots.pdf", layout=(1, 2))
         cell_height = CELL[1] * (1 + 0.3 * 0.85)
         assert [tuple(page.get_size_inches()) for page in pages] == [
-            pytest.approx((2 * CELL[0], cell_height))
+            pytest.approx(page_size((1, 2), (CELL[0], cell_height)))
         ] * 2
         wide = rf.Style(figsize=(9.0, 4.0))
         book = rf.PlotBook(samples, [X, Y], variants={"a": {}, "b": {"style": wide}})
@@ -516,6 +518,120 @@ class TestCells:
         )
         assert book.save_pdf(tmp_path / "plots.pdf").is_file()
         assert pages[0].get_facecolor() == (1.0, 1.0, 1.0, 1.0)
+
+
+def _geometry(result: rf.Plot) -> dict[str, np.ndarray]:
+    """Where everything of ``result`` sits, in inches from its top-left panel corner."""
+    fig = result.fig
+    fig.draw_without_rendering()
+    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
+    corners = np.array([ax.get_window_extent(renderer).get_points() for ax in result.axes])
+    origin = np.array([corners[:, 0, 0].min(), corners[:, 1, 1].max()])
+
+    def box(artist: Any) -> np.ndarray:
+        (x0, y0), (x1, y1) = artist.get_window_extent(renderer).get_points()
+        return np.array([x0 - origin[0], origin[1] - y1, x1 - x0, y1 - y0]) / fig.dpi
+
+    found = {"ylim": np.array(result.ax.get_ylim())}
+    for i, ax in enumerate(result.axes):
+        found[f"axes {i}"] = box(ax)
+        texts = [*ax.texts, ax.xaxis.label, ax.yaxis.label, ax.xaxis.get_offset_text(), ax.title]
+        for text in texts:
+            if text.get_visible() and text.get_text():
+                found[f"axes {i} {text.get_text()!r}"] = np.r_[box(text), text.get_fontsize()]
+        for j, artist in enumerate([*ax.artists, ax.get_legend()]):
+            if artist is not None:
+                found[f"axes {i} artist {j}"] = box(artist)
+    return found
+
+
+class TestLayoutIndependence:
+    """A cell holds its plot exactly as a figure of its own does, at any layout, and a page
+    costs as many layout passes as a page of one plot."""
+
+    CMS = rf.Style(experiment="CMS", status="Preliminary", lumi=138, com=13.6)
+    OWN = rf.Style(
+        experiment="FCC-ee",  # no mplhep helper of its own
+        status="Simulation",
+        lumi="10.8 ab^-1",
+        com="240 GeV",
+        figsize=(5.0, 4.5),
+        rc={"figure.subplot.left": 0.25, "font.size": 13, "axes.labelsize": 17},
+    )
+
+    @pytest.mark.parametrize("layout", [(1, 1), (3, 2)])
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            pytest.param({"ratio": True}, id="ratio"),
+            pytest.param({"ratio": True, "style": CMS}, id="experiment-label"),
+            pytest.param({"ratio": True, "style": OWN}, id="own-style"),
+            pytest.param({"stats": True, "text": ["a line", "another"]}, id="stats-text"),
+            pytest.param({"xbreak": (0.4, 0.6), "ratio": True}, id="xbreak"),
+        ],
+    )
+    def test_cells_equal_their_own_figures(
+        self,
+        samples: list[rf.Sample],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        layout: tuple[int, int],
+        kwargs: dict[str, Any],
+    ) -> None:
+        book = rf.PlotBook(samples, [X, X.replace(name="x2", bins=(3, 0, 1))], plot_kwargs=kwargs)
+        alone = []
+        for _, result in book.plots():
+            alone.append(_geometry(result))
+            result.close()
+        cells: list[dict[str, np.ndarray]] = []
+        drawn = _drawn(monkeypatch)
+        original = backend_pdf.PdfPages.savefig
+
+        def measuring(self: Any, figure: Figure, **options: Any) -> Any:
+            cells.extend(_geometry(result) for _, result in drawn[len(cells) :])
+            return original(self, figure, **options)
+
+        monkeypatch.setattr(backend_pdf.PdfPages, "savefig", measuring)
+        book.save_pdf(tmp_path / "plots.pdf", layout=layout)
+        assert len(cells) == len(alone) == 2
+        for cell, own in zip(cells, alone, strict=True):
+            assert cell.keys() == own.keys()
+            for name, where in own.items():
+                np.testing.assert_allclose(cell[name], where, atol=2e-3, err_msg=name)
+
+    @pytest.mark.parametrize("style", [None, CMS], ids=["plain", "experiment-label"])
+    def test_a_page_is_laid_out_as_often_as_a_page_of_one_plot(
+        self,
+        samples: list[rf.Sample],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        style: rf.Style | None,
+    ) -> None:
+        draws: list[Figure] = []
+        original = Figure.draw
+
+        def counting(self: Figure, renderer: Any) -> None:
+            draws.append(self)
+            original(self, renderer)
+
+        monkeypatch.setattr(Figure, "draw", counting)
+        kwargs = {"ratio": True, "style": style}
+        one = rf.PlotBook(samples, [X], plot_kwargs=kwargs)
+        one.save_pdf(tmp_path / "one.pdf", layout=(1, 1))
+        per_page = len(draws)
+        draws.clear()
+        four = rf.PlotBook(samples, [X.replace(name=f"x{i}") for i in range(4)], plot_kwargs=kwargs)
+        four.save_pdf(tmp_path / "four.pdf", layout=(2, 2))
+        assert len({id(fig) for fig in draws}) == 1
+        assert len(draws) == per_page
+
+    def test_a_page_too_small_for_its_grid_is_refused_before_drawing(
+        self, samples: list[rf.Sample], tmp_path: Path
+    ) -> None:
+        with pytest.raises(ValueError, match=r"no room for a 8 x 8 grid"):
+            rf.PlotBook(samples, [X, Y]).save_pdf(tmp_path / "p.pdf", layout=(8, 8), figsize=(1, 1))
+        assert sorted(tmp_path.iterdir()) == []
+        assert plt.get_fignums() == []
 
 
 class TestBatching:
