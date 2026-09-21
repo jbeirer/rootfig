@@ -716,6 +716,28 @@ class TestBatching:
 
 
 class TestFailures:
+    def test_deferred_mathtext_failure_names_the_page_and_preserves_output(
+        self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        existing = plt.figure()
+        target = tmp_path / "plots.pdf"
+        target.write_bytes(b"old")
+        drawn = _drawn(monkeypatch)
+        pages = _pages(monkeypatch)
+        book = rf.PlotBook(
+            samples,
+            X,
+            variants={"a": {}, "b": {}, "c": {}, "bad": {"title": r"$\notacommand$"}},
+        )
+        with pytest.raises(ValueError, match="Unknown symbol") as info:
+            book.save_pdf(target, layout=(1, 2))
+        assert len(drawn) == 4  # both draw calls on page 2 returned; finishing it failed
+        assert len(pages) == 1
+        assert info.value.__notes__ == [f"while rendering PlotBook PDF page 2 to {str(target)!r}"]
+        assert plt.get_fignums() == [existing.number]
+        assert target.read_bytes() == b"old"
+        assert _temporaries(tmp_path) == []
+
     def test_drawing_failure_cleans_up(self, samples: list[rf.Sample], tmp_path: Path) -> None:
         existing = plt.figure()
         target = tmp_path / "plots.pdf"
@@ -724,7 +746,8 @@ class TestFailures:
         with pytest.raises(ValueError, match="ratio reference 'missing'") as info:
             book.save_pdf(target)
         assert info.value.__notes__ == [
-            "while running PlotBook task variable='x', selection='all', variant='bad'"
+            "while running PlotBook task variable='x', selection='all', variant='bad'",
+            f"while rendering PlotBook PDF page 1 to {str(target)!r}",
         ]
         assert plt.get_fignums() == [existing.number]
         assert target.read_bytes() == b"old"
@@ -740,7 +763,8 @@ class TestFailures:
             book.save_pdf(target, layout=(1, 1))
         assert len(pages) == 1  # the first page had been written to the temporary file
         assert info.value.__notes__ == [
-            "while running PlotBook task variable='nosuch', selection='all', variant='default'"
+            "while running PlotBook task variable='nosuch', selection='all', variant='default'",
+            f"while rendering PlotBook PDF page 2 to {str(target)!r}",
         ]
         assert sorted(tmp_path.iterdir()) == []
         assert plt.get_fignums() == []

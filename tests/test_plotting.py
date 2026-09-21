@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from functools import partial
 
 import hist
 import matplotlib
@@ -1383,6 +1384,48 @@ class TestSystematicDrawing:
 
 class TestFinishing:
     """What is measured against the laid-out figure runs after drawing, once per figure."""
+
+    @pytest.mark.parametrize("count", [1, 4])
+    def test_headroom_survives_a_new_y_axis_offset(self, count: int) -> None:
+        fig, axes = plt.subplots(1, count, figsize=(6 * count, 4), layout="constrained")
+        plots = []
+        legends = []
+        for ax in np.atleast_1d(axes):
+            for i in range(4):
+                ax.plot([0, 1], [8000, 8000], label=f"entry {i}")
+            ax.set_ylim(0, 9600)
+            ax.ticklabel_format(axis="y", scilimits=(-3, 4))
+            legend = ax.legend(loc="upper right")
+            legends.append(legend)
+            plots.append(
+                Finish(
+                    ax,
+                    headroom=partial(
+                        raise_ylim_above,
+                        [ax],
+                        [legend],
+                        edges=np.array([0, 1]),
+                        heights=np.array([8000]),
+                        logy=False,
+                    ),
+                )
+            )
+        fig.canvas.draw()
+        assert all(not plot.main.yaxis.get_offset_text().get_text() for plot in plots)
+        draws: list[object] = []
+        fig.canvas.mpl_connect("draw_event", draws.append)
+        with finishing_together(fig):
+            for plot in plots:
+                finish_figure(fig, [plot])
+        assert len(draws) == 2  # shared layout passes, independent of the number of plots
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for plot, legend in zip(plots, legends, strict=True):
+            ax = plot.main
+            assert ax.yaxis.get_offset_text().get_text() == "1e4"
+            box = legend.get_window_extent(renderer)
+            bottom = ax.transData.inverted().transform((box.x0, box.y0))[1]
+            assert bottom >= 1.08 * 8000 - 1e-6
 
     def test_plots_drawn_together_are_finished_at_the_end_of_the_block(self) -> None:
         fig = plt.figure()

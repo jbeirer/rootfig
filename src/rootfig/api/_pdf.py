@@ -163,9 +163,10 @@ def write_pdf(
     through :func:`~rootfig.plotting.pages.multipage_pdf`: an existing ``target``
     is replaced only once every page is written. A ``metadata`` among
     ``savefig_kwargs`` describes the document, not a page, so it goes to the
-    writer; the rest is passed to every :meth:`PdfPages.savefig`. A failing task
-    raises with its note (see :meth:`PlotBook.plots`), a failing write with a note
-    naming the page and the file; the page figure is closed either way.
+    writer; the rest is passed to every :meth:`PdfPages.savefig`. Errors during
+    drawing, deferred finishing or writing carry a note naming the page and file.
+    Preparation and drawing errors also retain their task note (see
+    :meth:`PlotBook.plots`); the page figure is closed either way.
     """
     kwargs = {"facecolor": "auto", "edgecolor": "auto", **savefig_kwargs}
     metadata = kwargs.pop("metadata", None)
@@ -180,9 +181,13 @@ def write_pdf(
             try:
                 with task_note(first, f"opening PDF page {number} for"):
                     fig, cells = make_page(size, page.grid, style=first.kwargs.get("style"))
-                with finishing_together(fig):
-                    for cell in cells[: page.count]:
-                        next(prepared).draw(cell=cell)
+                try:
+                    with finishing_together(fig):
+                        for cell in cells[: page.count]:
+                            next(prepared).draw(cell=cell)
+                except Exception as exc:
+                    exc.add_note(f"while rendering PlotBook PDF page {number} to {str(target)!r}")
+                    raise
                 try:
                     pdf.savefig(fig, **kwargs)
                 except Exception as exc:

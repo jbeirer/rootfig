@@ -67,8 +67,9 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
     y labels are fitted, the experiment labels are aligned
     (:func:`~rootfig.plotting.align_experiment_labels`, whose passes are shared
     too), and then each plot's headroom is raised, so it measures the labels where
-    they end up; a raised limit can change the y axis' offset text, which a label
-    above the frame dodges, so the labels are aligned again then. Last, the x labels
+    they end up. A raised limit can change the y axis' offset text and hence the
+    axes geometry, so one more shared layout/headroom pass follows a raise, then
+    the experiment labels are realigned to dodge the offset text. Last, the x labels
     move left of their offset texts (:func:`clear_offset_text`), once the widths of
     the axes are settled. Within :func:`finishing_together` for ``fig`` the plots
     are collected instead. Nothing is measured if the backend cannot measure
@@ -92,6 +93,11 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
             plot.headroom()
             raised = raised or plot.main.get_ylim()[1] != top
     if raised:
+        if lay_out(fig) is None:
+            return
+        for plot in plots:
+            if plot.headroom is not None:
+                plot.headroom()
         align_experiment_labels(labels)
     xlabels = [
         plot.xlabel
