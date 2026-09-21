@@ -59,7 +59,7 @@ from rootfig.histograms import (
 from rootfig.model import Cut, Group, Sample, Style, Systematic, Variable, log_bins
 from rootfig.plotting import Plot, dark_theme, use_style
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 __all__ = [
     "ALL",
