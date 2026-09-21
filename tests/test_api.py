@@ -1732,6 +1732,18 @@ class TestOffsetText:
             assert not label.overlaps(offset), (size, dpi)
         plt.close(p.fig)
 
+    def test_label_changes_line_as_the_figure_is_resized(self) -> None:
+        # beside the offset text where the axes leave room, below it where they do not
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 20, figsize=(5, 4))
+        for width, below in [(5.0, False), (3.5, True), (5.0, False)]:
+            p.fig.set_size_inches(width, 4.0)
+            label, offset = self._boxes(p)
+            assert not label.overlaps(offset), width
+            assert bool(label.y1 <= offset.y0) == below, width
+            assert label.x0 >= p.ax.get_window_extent().x0, width
+        plt.close(p.fig)
+
     def test_label_without_room_beside_goes_below(self) -> None:
         # constrained layout reserves an x label's height, never its width, so a label
         # moved past the left end of the axes could leave the canvas

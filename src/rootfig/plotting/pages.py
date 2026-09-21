@@ -24,9 +24,9 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from matplotlib.gridspec import SubplotSpec
-from matplotlib.layout_engine import ConstrainedLayoutEngine
 
 from rootfig.model.style import StyleLike
+from rootfig.plotting.engine import PlotLayoutEngine
 from rootfig.plotting.figure import LAYOUT_PAD
 from rootfig.plotting.style import style_context
 
@@ -262,7 +262,7 @@ def make_page(
     """
     width, height = cell_room(size, grid)
     with style_context(style):
-        engine = ConstrainedLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
+        engine = PlotLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
         fig = plt.figure(figsize=size, layout=engine)
     rows, columns = grid
     outer = fig.add_gridspec(

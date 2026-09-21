@@ -14,23 +14,16 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
 from weakref import WeakKeyDictionary
 
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from matplotlib.transforms import ScaledTranslation
 
+from rootfig.plotting.engine import PlotLayoutEngine, clear_offset_text
 from rootfig.plotting.figure import fit_ylabel, lay_out
 from rootfig.plotting.style import align_experiment_labels
 
-__all__ = [
-    "OFFSET_TEXT_GAP_EM",
-    "Finish",
-    "clear_offset_text",
-    "finish_figure",
-    "finishing_together",
-]
+__all__ = ["Finish", "finish_figure", "finishing_together"]
 
 
 @dataclass(frozen=True)
@@ -53,10 +46,6 @@ class Finish:
     headroom: Callable[[], None] | None = None
 
 
-OFFSET_TEXT_GAP_EM = 0.5
-"""Horizontal gap between an x label and the offset text beside it, in units of the
-offset text's font size."""
-
 _collected: WeakKeyDictionary[Figure, list[Finish]] = WeakKeyDictionary()
 
 
@@ -71,10 +60,12 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
     they end up. A raised limit can change the y axis' offset text and hence the
     axes geometry, so one more shared layout/headroom pass follows a raise, then
     the experiment labels are realigned to dodge the offset text. Last, the x labels
-    are kept clear of their offset texts (:func:`clear_offset_text`), beside them
-    where the settled width of the axes leaves room and below them otherwise.
-    Within :func:`finishing_together` for ``fig`` the plots are collected instead.
-    Nothing is measured if the backend cannot measure artists.
+    are kept clear of their offset texts, beside them where the width of the axes
+    leaves room and below them otherwise: by the figure's
+    :class:`~rootfig.plotting.engine.PlotLayoutEngine` at every draw, for the size
+    the figure has then, or once here for a figure without one (axes the caller
+    made). Within :func:`finishing_together` for ``fig`` the plots are collected
+    instead. Nothing is measured if the backend cannot measure artists.
     """
     if fig in _collected:
         _collected[fig].extend(plots)
@@ -100,17 +91,15 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
             if plot.headroom is not None:
                 plot.headroom()
         align_experiment_labels(labels)
-    xlabels = [
-        plot.xlabel
-        for plot in plots
-        if plot.xlabel is not None
-        and plot.xlabel.get_xlabel()
-        and plot.xlabel.xaxis.get_offset_text().get_text()
-    ]
-    if xlabels:
-        renderer = lay_out(fig)
-        if renderer is None:
-            return
+    xlabels = [plot.xlabel for plot in plots if plot.xlabel is not None]
+    engine = fig.get_layout_engine()
+    if isinstance(engine, PlotLayoutEngine):
+        for ax in xlabels:  # placed for the width the axes have at every draw
+            engine.keep_clear(ax)
+        return
+    xlabels = [ax for ax in xlabels if ax.get_xlabel() and ax.xaxis.get_offset_text().get_text()]
+    renderer = lay_out(fig) if xlabels else None
+    if renderer is not None:
         for ax in xlabels:
             clear_offset_text(ax, renderer)
 
@@ -135,40 +124,3 @@ def finishing_together(fig: Figure) -> Iterator[None]:
         else:
             _collected[fig] = parent
     finish_figure(fig, plots)
-
-
-def clear_offset_text(ax: Axes, renderer: Any) -> None:
-    """Keep the x label of ``ax`` clear of the axis' offset text.
-
-    Matplotlib puts both at the right end of the axis, a label with
-    ``loc="right"`` ending there and the offset text (``1e-6``) below the tick
-    labels, and moves neither. The label moves left until it ends
-    :data:`OFFSET_TEXT_GAP_EM` before the offset text, or, where it would then
-    start left of the axes, below the offset text instead: constrained layout
-    reserves the height of an x label but never its width, so a label pushed past
-    the axes could leave the canvas. Both moves are offsets in points, which hold
-    when the figure is resized or saved at another dpi. mplhep's
-    ``xlabel_sci_adjust`` moves the label only when the formatter uses an additive
-    offset, but the order of magnitude is shown without one too
-    (``axes.formatter.useoffset: False``). A label that does not overlap is left
-    where it is, so finishing again changes nothing.
-    """
-    axis = ax.xaxis
-    label, offset = axis.label, axis.get_offset_text()
-    fig = ax.get_figure(root=True)
-    if fig is None or not (label.get_visible() and offset.get_visible()):
-        return
-    label_box = label.get_window_extent(renderer)
-    offset_box = offset.get_window_extent(renderer)
-    if not label_box.overlaps(offset_box):
-        return
-    points = 72.0 / fig.dpi
-    gap = OFFSET_TEXT_GAP_EM * offset.get_fontproperties().get_size_in_points()
-    shift = (label_box.x1 - offset_box.x0) * points + gap
-    if label_box.x0 - shift / points >= ax.get_window_extent(renderer).x0:
-        beside = ScaledTranslation(-shift / 72.0, 0.0, fig.dpi_scale_trans)
-        label.set_transform(label.get_transform() + beside)
-    else:
-        # the pad below the tick labels grows by what the label shares with the
-        # offset text, and by the pad again to keep that gap below the offset text
-        axis.labelpad += (label_box.y1 - offset_box.y0) * points + axis.labelpad

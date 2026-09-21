@@ -15,11 +15,12 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties
 from matplotlib.gridspec import GridSpec, GridSpecBase, SubplotParams, SubplotSpec
-from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.offsetbox import AnchoredOffsetbox
 from matplotlib.ticker import MaxNLocator
 
 from rootfig.model.style import Style
+from rootfig.plotting.engine import PlotLayoutEngine
+from rootfig.plotting.engine import renderer_of as _renderer
 
 __all__ = [
     "AxesLike",
@@ -206,8 +207,9 @@ def make_figure(
         grid = cell.subgridspec(rows, columns, **grid_options)
     else:
         # Constrained layout fits labels, legends and colour bars into the canvas, so a
-        # saved figure has exactly the requested size and every plot type shares one shape.
-        engine = ConstrainedLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
+        # saved figure has exactly the requested size and every plot type shares one shape;
+        # rootfig's engine then keeps the x labels clear of the offset texts at every draw.
+        engine = PlotLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
         fig = plt.figure(figsize=figure_size(style, ratio=ratio, figsize=figsize), layout=engine)
         grid = fig.add_gridspec(rows, columns, **grid_options)
     main = fig.add_subplot(grid[0, 0])
@@ -462,15 +464,6 @@ def finish_axes(
     if top <= bottom:
         top = bottom + 1.0
     ax.set_ylim(bottom, top)
-
-
-def _renderer(fig: Any) -> Any:
-    """Return a renderer for measuring artists, or ``None`` if the backend has none."""
-    get = getattr(fig.canvas, "get_renderer", None)
-    if callable(get):
-        return get()
-    private = getattr(fig, "_get_renderer", None)
-    return private() if callable(private) else None
 
 
 def _balanced_wrap(text: str) -> str:
