@@ -24,9 +24,10 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from matplotlib.gridspec import SubplotSpec
-from matplotlib.layout_engine import ConstrainedLayoutEngine
 
 from rootfig.model.style import StyleLike
+from rootfig.plotting.engine import PlotLayoutEngine
+from rootfig.plotting.figure import LAYOUT_PAD
 from rootfig.plotting.style import style_context
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "Page",
     "auto_grid",
     "background_color",
+    "cell_room",
     "check_figsize",
     "check_layout",
     "make_page",
@@ -57,12 +59,12 @@ MAX_COMPLEX_CELLS = 4
 """Most plots on one automatically laid out page when one of them has a lower panel or a
 broken axis, which need the room."""
 
-PAGE_PAD = 0.12
-"""Inches between the cells of a page, and between the page's edge and its outermost artist.
+PAGE_GAP = 0.16
+"""Inches between neighbouring cells of a page.
 
-Constrained layout separates nested grids by their padding alone (the spacing of a
-grid applies between its own cells, and a plot's panels are their own grid), so
-this is what keeps neighbouring plots apart, wider than the pad of a lone figure.
+A cell is laid out like a figure of its own, with its outermost artists
+:data:`~rootfig.plotting.figure.LAYOUT_PAD` inside its edges, so neighbouring
+plots are this plus twice that apart.
 """
 
 _PDF_SUFFIX = ".pdf"
@@ -206,10 +208,33 @@ def page_size(grid: Grid, cell: tuple[float, float]) -> tuple[float, float]:
 
     The cell size is the size the plots would have on figures of their own
     (:func:`~rootfig.plotting.figure_size`), the same for every page of a
-    document, so a plot keeps its usual size and pages differ only by their grid.
+    document, so a plot keeps its usual size and pages differ only by their grid;
+    :data:`PAGE_GAP` separates the cells.
     """
     rows, columns = grid
-    return (columns * cell[0], rows * cell[1])
+    return (columns * cell[0] + (columns - 1) * PAGE_GAP, rows * cell[1] + (rows - 1) * PAGE_GAP)
+
+
+def cell_room(size: tuple[float, float], grid: Grid) -> tuple[float, float]:
+    """Return the size of each cell of a page of ``size`` inches with ``grid``.
+
+    Raises
+    ------
+    ValueError
+        The gaps between the cells leave them no room.
+    """
+    rows, columns = grid
+    width = (size[0] - (columns - 1) * PAGE_GAP) / columns
+    height = (size[1] - (rows - 1) * PAGE_GAP) / rows
+    if width <= 0 or height <= 0:
+        gaps = page_size(grid, (0.0, 0.0))
+        msg = (
+            f"figsize={size} leaves no room for a {rows} x {columns} grid of plots: the "
+            f"{PAGE_GAP} in gaps between the cells alone take ({gaps[0]:g}, {gaps[1]:g}) "
+            f"inches; give the page more than that, or a smaller layout"
+        )
+        raise ValueError(msg)
+    return (width, height)
 
 
 def background_color(style: StyleLike = None) -> tuple[float, float, float, float]:
@@ -229,14 +254,24 @@ def make_page(
 
     The figure is created under ``style``, which sets what belongs to the figure
     itself (its background); each plot then draws under its own style. Constrained
-    layout keeps every label inside the page, as on a figure of its own.
+    layout pads the page as it pads a figure of its own, and places the plots of
+    the cells independently of each other, so a plot is laid out as it would be
+    on a figure of its cell's size. It pads the plots of neighbouring cells only
+    by that much, so every other row and column of the page's grid is a gap of
+    :data:`PAGE_GAP` inches.
     """
+    width, height = cell_room(size, grid)
     with style_context(style):
-        engine = ConstrainedLayoutEngine(w_pad=PAGE_PAD, h_pad=PAGE_PAD)
+        engine = PlotLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
         fig = plt.figure(figsize=size, layout=engine)
     rows, columns = grid
-    outer = fig.add_gridspec(rows, columns)
-    return fig, [outer[row, column] for row in range(rows) for column in range(columns)]
+    outer = fig.add_gridspec(
+        2 * rows - 1,
+        2 * columns - 1,
+        width_ratios=[width, PAGE_GAP] * (columns - 1) + [width],
+        height_ratios=[height, PAGE_GAP] * (rows - 1) + [height],
+    )
+    return fig, [outer[2 * row, 2 * column] for row in range(rows) for column in range(columns)]
 
 
 @contextmanager

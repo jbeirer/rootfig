@@ -306,12 +306,22 @@ range avoids range inference.
   `Variable`'s `log` flag (`plot2d`, `efficiency` and `profile` do the same for
   their variables); `True`/`False` override it.
 - `xlabel`, `ylabel`, `unit`, `title`. The title sits above the axes, where
-  the CMS-style label is also drawn; with such a style prefer `text=`.
+  the CMS-style label is also drawn; with such a style prefer `text=`. The x
+  label ends at the right end of the axis, where matplotlib also puts the
+  axis' offset text (`×10⁻⁶` for small values); when both are shown the label
+  moves left of it, or below it where the axis is too short for both side by
+  side, also with `axes.formatter.useoffset` off, which drops an additive offset
+  but still shows the order of magnitude. On a figure rootfig makes the place is
+  chosen each time the figure is drawn, so a resized figure keeps the label clear
+  for its new size; on axes passed with `ax=` the label goes below the offset
+  text, which holds at any size. A `labelpad` or transform set on the label after
+  plotting is kept, and the label is kept clear starting from it.
 - Automatic y limits leave room for the legend, the experiment label, the
   statistics box and `text` lines: a small fixed margin is added above the
   tallest bin, and the upper limit is then raised until none of them covers a
-  histogram (the legend picks a free upper corner). Room is only made for
-  what is actually drawn, so a plot without annotations keeps the margin.
+  histogram (the legend picks a free upper corner of its axes). Room is only
+  made for what is actually drawn, so a plot without annotations keeps the
+  margin. It is measured on the figure as laid out, as it is shown and saved.
   A `ylim` with an explicit upper value switches this off.
 
 ## Legend, labels, text and statistics
@@ -339,6 +349,8 @@ range avoids range inference.
   wide, the luminosity gets a separate line above the label. The luminosity of
   a broken x axis sits above the right end of the right segment. An explicit
   title is placed above these labels, preserving its font, alignment and padding.
+- The experiment name and status share a baseline, including after resizing
+  the figure. `label_loc=2` and `3` explicitly put the status on a separate line.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).
 

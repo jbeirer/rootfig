@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from matplotlib.gridspec import SubplotSpec
@@ -50,26 +51,27 @@ from rootfig.model import (
 from rootfig.model.samples import HistType
 from rootfig.plotting import (
     AxesLike,
+    Finish,
     FlowSpec,
     Plot,
     add_experiment_label,
     add_legend,
     add_stats_box,
-    align_experiment_label,
     apply_xbreak,
     break_segments,
     draw_histograms,
     draw_ratio_panel,
     draw_significance_panel,
     envelope,
-    finalize_figure,
     finish_axes,
+    finish_figure,
     fold_flow_bins,
     foreground,
     label_flow_bins,
     legend_location,
     make_figure,
     overlay_artists,
+    pin_fonts,
     raise_ylim_above,
     show_flow_bins,
     style_context,
@@ -624,14 +626,16 @@ def draw_plot(
                 colors=drawn.colors,
                 legend=legend_artist,
             )
+        headroom = None
         if ylim is None or ylim[1] is None:
-            # keep legend, labels and text boxes clear of the histograms
+            # keep legend, labels and text boxes clear of the histograms, once laid out
             floating = legend_location(st) == "best" and legend_loc is None
             obstacles = overlay_artists(layout.legend_axes, None if floating else legend_artist)
             if layout.legend_axes is not layout.main:
                 obstacles += overlay_artists(layout.main, None)
             env_edges, env_heights = envelope(histograms_, stack=stack)
-            raise_ylim_above(
+            headroom = partial(
+                raise_ylim_above,
                 layout.main_axes,
                 obstacles,
                 edges=env_edges,
@@ -691,10 +695,17 @@ def draw_plot(
             if layout.ratio is not None and layout.ratio_right is not None:
                 apply_xbreak(layout.ratio, layout.ratio_right, *segments)
 
-        # last: fonts and panel labels, of this plot's axes only (a page holds others)
-        finalize_figure(layout.fig, axes=layout.axes, panels=layout.ratio_axes)
+        # last: fonts, of this plot's axes only (a page holds others)
+        pin_fonts(layout.fig, axes=layout.axes)
     # outside the style context, against the layout the figure is drawn with
-    align_experiment_label(layout.main, right=layout.main_right)
+    finish = Finish(
+        layout.main,
+        right=layout.main_right,
+        panels=layout.ratio_axes,
+        xlabel=layout.xlabel_axes,
+        headroom=headroom,
+    )
+    finish_figure(layout.fig, [finish])
     result = Plot(
         fig=layout.fig,
         ax=layout.main,

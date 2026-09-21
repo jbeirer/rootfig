@@ -11,6 +11,7 @@ import contextlib
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 from weakref import WeakKeyDictionary
 
@@ -28,7 +29,7 @@ from matplotlib.transforms import ScaledTranslation
 
 from rootfig.errors import RootfigWarning
 from rootfig.model.style import EXPERIMENT_STYLES, Style, StyleLike, as_style
-from rootfig.plotting.figure import fit_ylabel
+from rootfig.plotting.figure import lay_out, without_redraw
 
 __all__ = [
     "DARK_THEME",
@@ -36,9 +37,9 @@ __all__ = [
     "ROOTFIG_STYLE",
     "add_experiment_label",
     "align_experiment_label",
+    "align_experiment_labels",
     "color_cycle",
     "dark_theme",
-    "finalize_figure",
     "foreground",
     "pin_fonts",
     "resolve_rc",
@@ -329,12 +330,15 @@ def add_experiment_label(
         if text_lines and loc != 0:
             # below the label, inside the frame
             kwargs["supp"] = "\n".join(text_lines)
-        if callable(label_fn):
-            # mplhep's per-experiment helpers apply that experiment's conventions.
-            kwargs.pop("exp", None)
-            label_fn(**kwargs)
-        else:
-            hep.label.exp_label(**kwargs)
+        # mplhep measures the axes as they stand: they are placed as on a figure of their
+        # own until laid out, and everything placed from them is aligned once they are
+        with without_redraw(ax.get_figure(root=True)):
+            if callable(label_fn):
+                # mplhep's per-experiment helpers apply that experiment's conventions.
+                kwargs.pop("exp", None)
+                label_fn(**kwargs)
+            else:
+                hep.label.exp_label(**kwargs)
         if text_lines and loc == 0:
             # With the label above the frame mplhep would turn supp= into a note rotated
             # along the frame's right edge; the lines belong inside, like any free text.
@@ -346,7 +350,9 @@ def add_experiment_label(
                 text.set_transform(right.transAxes)
                 text.set_clip_on(False)
                 right.add_artist(text)
-        align_experiment_label(ax, right=right)
+        if (label := _label_of(ax, right)) is not None:
+            _inline_status[label.name] = loc in (0, 1, 4)
+            _keep_out_of_layout(label)
         return
     # No experiment: draw status/lumi/energy/text as a plain block of text.
     lines = [header] if header else []
@@ -499,24 +505,6 @@ def pin_fonts(fig: Figure, *, axes: Sequence[Axes] | None = None) -> None:
         )
 
 
-def finalize_figure(
-    fig: Figure, *, axes: Sequence[Axes] | None = None, panels: Sequence[Axes] = ()
-) -> None:
-    """Fix what the figure's look depends on while its style context is still active.
-
-    Call as the last drawing step inside the style context: pins the fonts (see
-    :func:`pin_fonts`; on ``axes`` alone when given, so a plot sharing its figure
-    with others touches only its own) and fits the y label of each lower panel in
-    ``panels`` (see :func:`~rootfig.plotting.figure.fit_ylabel`), which measures
-    text and so must follow the font pinning that decides which font is drawn. The
-    experiment label is anchored afterwards, outside the context (see
-    :func:`align_experiment_label`).
-    """
-    pin_fonts(fig, axes=axes)
-    for panel in panels:
-        fit_ylabel(panel)
-
-
 LABEL_WORD_GAP_EM = 0.5
 """Horizontal gap, in units of the status text's font size, between the experiment
 name and the status word (mplhep places them nearly touching)."""
@@ -535,6 +523,7 @@ changes as the label does."""
 
 _label_sizes: WeakKeyDictionary[Text, float] = WeakKeyDictionary()
 _title_pads: WeakKeyDictionary[Text, float] = WeakKeyDictionary()
+_inline_status: WeakKeyDictionary[Text, bool] = WeakKeyDictionary()
 
 
 def _original_size(text: Text) -> float:
@@ -548,6 +537,53 @@ def _is_stacked(text: Text) -> bool:
     """Whether a luminosity text has a line of its own above the label line."""
     axes = text.axes
     return axes is not None and text.get_transform() is not axes.transAxes
+
+
+@dataclass(frozen=True)
+class _Label:
+    """An mplhep experiment label on ``ax`` and the texts that make it up."""
+
+    ax: Axes
+    name: Text
+    status: Text | None
+    lumi: Text | None
+    texts: list[Text]  # every text of ``ax`` and of the right segment of a broken x axis
+    above: bool  # the name sits above the frame (mplhep loc 0/3)
+
+
+def _label_of(ax: Axes, right: Axes | None) -> _Label | None:
+    """Return the experiment label drawn on ``ax``, ``None`` if it carries none."""
+    name = next((t for t in ax.texts if isinstance(t, hep.label.ExpLabel)), None)
+    if name is None:
+        return None
+    texts = [*ax.texts, *(right.texts if right is not None else ())]
+    return _Label(
+        ax=ax,
+        name=name,
+        status=next(
+            (t for t in ax.texts if isinstance(t, hep.label.ExpText) and t.get_text()), None
+        ),
+        lumi=next((t for t in texts if _is_lumi_above(t) and t.get_text()), None),
+        texts=texts,
+        above=name.get_position()[1] >= 1.0 and name.get_horizontalalignment() == "left",
+    )
+
+
+def _keep_out_of_layout(label: _Label) -> None:
+    """Take the texts out of constrained layout that could collapse a small axes.
+
+    The status word and the luminosity text can be wider than a small axes. Left in
+    the layout, constrained layout would shrink the axes to make room for them until
+    it collapses; the short experiment name stays in and reserves the space above the
+    axes. A name inside the frame reserves nothing up there, so a luminosity text
+    above the frame then stays in the layout, which it cannot collapse on its own, and
+    so does one on a line of its own (see :func:`_fit_label_line`).
+    """
+    for text in label.texts:
+        if isinstance(text, hep.label.ExpText) or (
+            label.above and _is_lumi_above(text) and not _is_stacked(text)
+        ):
+            text.set_in_layout(False)
 
 
 def align_experiment_label(ax: Axes, *, right: Axes | None = None) -> None:
@@ -568,65 +604,92 @@ def align_experiment_label(ax: Axes, *, right: Axes | None = None) -> None:
     plotting functions do: tick labels and colour bars are laid out when the figure
     is drawn, from the rcParams active then, so only that layout is the one the
     figure is shown with. Fitting the label changes the layout in turn, so the
-    figure is drawn and measured again, up to :data:`LABEL_FIT_PASSES` times, until
-    nothing changes. Sizes follow from the texts' original sizes, so aligning again
-    leaves the label as it is. ``right`` is the right segment of a broken x axis,
-    which carries the luminosity text (see :func:`add_experiment_label`). Does
+    figure is laid out and measured again, up to :data:`LABEL_FIT_PASSES` times,
+    until nothing changes. Sizes follow from the texts' original sizes, so aligning
+    again leaves the label as it is. ``right`` is the right segment of a broken x
+    axis, which carries the luminosity text (see :func:`add_experiment_label`). Does
     nothing when ``ax`` carries no mplhep label.
     """
-    exp_txt = next((t for t in ax.texts if isinstance(t, hep.label.ExpLabel)), None)
-    if exp_txt is None:
+    align_experiment_labels([(ax, right)])
+
+
+def align_experiment_labels(plots: Sequence[tuple[Axes, Axes | None]]) -> None:
+    """Align the experiment labels of several plots on one figure at once.
+
+    ``plots`` are ``(ax, right)`` pairs as :func:`align_experiment_label` takes
+    them. Each pass lays out the figure once for every label still changing: a
+    layout pass costs the whole figure, and the plots of a page are laid out
+    independently of each other, so aligning them together gives each label what
+    aligning it alone would, in as many passes as the slowest one needs.
+    """
+    labels = [label for ax, right in plots if (label := _label_of(ax, right)) is not None]
+    fig = labels[0].ax.get_figure(root=True) if labels else None
+    if fig is None:
         return
-    fig = ax.get_figure(root=True)
-    if fig is None:  # pragma: no cover
-        return
-    texts = [*ax.texts, *(right.texts if right is not None else ())]
-    x_exp, y_exp = exp_txt.get_position()
-    above = y_exp >= 1.0 and exp_txt.get_horizontalalignment() == "left"  # mplhep loc 0/3
-    suffix = next((t for t in ax.texts if isinstance(t, hep.label.ExpText) and t.get_text()), None)
-    lumi = next((t for t in texts if _is_lumi_above(t) and t.get_text()), None)
-    # The status word and the luminosity text can be wider than a small axes. Left in the
-    # layout, constrained layout would shrink the axes to make room for them until it
-    # collapses; the short experiment name stays in and reserves the space above the axes.
-    # A name inside the frame reserves nothing up there, so a luminosity text above the
-    # frame then stays in the layout, which it cannot collapse on its own, and so does one
-    # on a line of its own (see _fit_label_line).
-    for text in texts:
-        if isinstance(text, hep.label.ExpText) or (
-            above and _is_lumi_above(text) and not _is_stacked(text)
-        ):
-            text.set_in_layout(False)
+    pending = labels
     for _ in range(LABEL_FIT_PASSES):
-        fig.canvas.draw()
-        renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
-        if above:
-            x_exp = 0.0
-            offset_text = ax.yaxis.offsetText
-            if offset_text.get_visible() and offset_text.get_text():
-                width = offset_text.get_window_extent(renderer).width
-                x_exp = 1.1 * width / ax.get_window_extent(renderer).width
-            exp_txt.set_position((x_exp, y_exp))
-        fitted = above and lumi is not None and _fit_label_line(exp_txt, suffix, lumi, renderer)
-        if not (_clear_title(ax, texts, renderer) or fitted):
+        renderer = lay_out(fig)
+        pending = [label for label in pending if _fit_label(label, renderer)]
+        if not pending:
             break
     else:
-        fig.canvas.draw()
-        renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
-    if suffix is None:
+        renderer = lay_out(fig)
+    for label in labels:
+        _place_status(label, renderer)
+
+
+def _fit_label(label: _Label, renderer: Any) -> bool:
+    """Fit ``label`` to the figure as laid out; return whether anything changed."""
+    ax, name = label.ax, label.name
+    fig = ax.get_figure(root=True)
+    if label.above and fig is not None:
+        # flush with the frame, or after the y offset text above it (1e4); in points,
+        # so the gap holds when the figure is resized
+        dodge = 0.0
+        offset_text = ax.yaxis.offsetText
+        if offset_text.get_visible() and offset_text.get_text():
+            dodge = 1.1 * offset_text.get_window_extent(renderer).width / fig.dpi
+        name.set_position((0.0, name.get_position()[1]))
+        name.set_transform(ax.transAxes + ScaledTranslation(dodge, 0.0, fig.dpi_scale_trans))
+    fitted = (
+        label.above
+        and label.lumi is not None
+        and _fit_label_line(name, label.status, label.lumi, renderer)
+    )
+    return _clear_title(ax, label.texts, renderer) or fitted
+
+
+def _place_status(label: _Label, renderer: Any) -> None:
+    """Align an inline status with the name's baseline, a fixed gap after the name."""
+    name, status = label.name, label.status
+    fig = name.get_figure(root=True)
+    if status is None or fig is None:
         return
-    exp_box = exp_txt.get_window_extent(renderer)
-    suffix_box = suffix.get_window_extent(renderer)
+    exp_box = name.get_window_extent(renderer)
+    suffix_box = status.get_window_extent(renderer)
     same_line = suffix_box.y0 < exp_box.y1 and suffix_box.y1 > exp_box.y0
-    if not same_line:
+    if not _inline_status.get(name, same_line):
         return
-    em_pt = suffix.get_fontproperties().get_size_in_points()
+    em_pt = status.get_fontproperties().get_size_in_points()
     offset_pt = exp_box.width / fig.dpi * 72.0 + LABEL_WORD_GAP_EM * em_pt
-    _, y_suffix = suffix.get_position()
-    suffix.set_position((x_exp, y_suffix))
+    # Measure the name's baseline offset from its anchor using public text metrics.
+    # mplhep's initial axes-fraction offset changes in physical size as layout moves
+    # the panels; a point-based offset keeps both words on one line at any size/dpi.
+    alignment = name.get_verticalalignment()
+    try:
+        name.set_verticalalignment("baseline")
+        baseline_box = name.get_window_extent(renderer)
+    finally:
+        name.set_verticalalignment(alignment)
+    baseline_offset = (exp_box.y0 - baseline_box.y0) / fig.dpi
+    status.set_position(name.get_position())
+    status.set_verticalalignment("baseline")
     # ScaledTranslation is evaluated at draw time, so the offset is right at any dpi
-    # (offset_copy would freeze it in pixels of the current dpi).
-    suffix.set_transform(
-        ax.transAxes + ScaledTranslation(offset_pt / 72.0, 0.0, fig.dpi_scale_trans)
+    # (offset_copy would freeze it in pixels of the current dpi); on top of the name's
+    # transform, the status follows the name wherever that is placed.
+    status.set_transform(
+        name.get_transform()
+        + ScaledTranslation(offset_pt / 72.0, baseline_offset, fig.dpi_scale_trans)
     )
 
 

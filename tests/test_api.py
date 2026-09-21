@@ -16,8 +16,10 @@ import pytest
 import uproot
 from matplotlib.colors import to_rgba
 from matplotlib.font_manager import FontProperties
+from matplotlib.transforms import ScaledTranslation
 
 import rootfig as rf
+from rootfig.api import plots1d
 from rootfig.api.plots2d import _split_bins
 from rootfig.errors import (
     BinningError,
@@ -28,7 +30,12 @@ from rootfig.errors import (
     SourceError,
 )
 from rootfig.model.style import EXPERIMENT_STYLES
-from rootfig.plotting import add_experiment_label, align_experiment_label, style_context
+from rootfig.plotting import (
+    add_experiment_label,
+    align_experiment_label,
+    raise_ylim_above,
+    style_context,
+)
 from rootfig.plotting.style import LABEL_MIN_SCALE
 
 
@@ -910,6 +917,51 @@ class TestFigureShape:
                 assert exp_box.x0 == pytest.approx(axes_left, abs=1.0)
             em = status.get_fontproperties().get_size_in_points() / 72 * dpi
             assert (status_box.x0 - exp_box.x1) / em == pytest.approx(LABEL_WORD_GAP_EM, abs=0.1)
+            # Matplotlib's text layout reports the first line's baseline relative to
+            # its anchor. Check the baseline that is painted, including after resizing.
+            baselines = [
+                text.get_transform().transform(text.get_position())[1]
+                + text._get_layout(renderer)[1][0][2][1]
+                for text in (name, status)
+            ]
+            assert baselines[0] == pytest.approx(baselines[1], abs=1.0)
+
+    def test_name_above_the_frame_clears_the_y_offset_text_at_any_size(self) -> None:
+        # the name starts after the y axis' offset text (1e7) by a gap in points
+        rng = np.random.default_rng(0)
+        data = {"x": rng.normal(0, 1, 10_000), "w": np.full(10_000, 1e4)}
+        cms = rf.Style(experiment="CMS", status="Preliminary")
+        p = rf.plot(data, "x", weight="w", bins=20, style=cms, figsize=(5, 4))
+        name = next(t for t in p.ax.texts if isinstance(t, hep.label.ExpLabel))
+        [status] = [t for t in p.ax.texts if isinstance(t, hep.label.ExpText)]
+        gaps = []
+        for width, dpi in [(5.0, 100), (3.0, 100), (8.0, 100), (5.0, 200)]:
+            p.fig.set_size_inches(width, 4.0)
+            p.fig.set_dpi(dpi)
+            p.fig.canvas.draw()
+            renderer = p.fig.canvas.get_renderer()
+            offset = p.ax.yaxis.get_offset_text()
+            assert offset.get_text()
+            name_box = name.get_window_extent(renderer)
+            gaps.append((name_box.x0 - offset.get_window_extent(renderer).x1) / dpi * 72)
+            assert status.get_window_extent(renderer).x0 > name_box.x1  # the status follows
+        assert min(gaps) > 0
+        # the same at every width; another dpi only changes the text's own metrics
+        np.testing.assert_allclose(gaps[:3], gaps[0], atol=0.1)
+        plt.close(p.fig)
+
+    @pytest.mark.parametrize("loc", [2, 3])
+    def test_explicit_multiline_status_stays_below_the_name(self, loc: int) -> None:
+        p = rf.plot(
+            {"x": np.linspace(0, 1, 100)},
+            "x",
+            style=rf.Style(experiment="ATLAS", status="Internal", label_loc=loc),
+        )
+        p.fig.canvas.draw()
+        renderer = p.fig.canvas.get_renderer()
+        name = next(t for t in p.ax.texts if isinstance(t, hep.label.ExpLabel))
+        status = next(t for t in p.ax.texts if isinstance(t, hep.label.ExpText))
+        assert status.get_window_extent(renderer).y1 <= name.get_window_extent(renderer).y0
 
     def test_fonts_are_pinned(self, signal_file: Path, background_file: Path) -> None:
         # Text must render in the style's font after the style context has ended, or the
@@ -1604,7 +1656,9 @@ class TestHeadroomIsMeasured:
         [
             pytest.param({"stats": True}, id="stats"),
             pytest.param({"text": ["a line", "another line"]}, id="text"),
-            pytest.param({"style": "ATLAS"}, id="experiment-label"),
+            pytest.param(
+                {"style": rf.Style(experiment="ATLAS", lumi=140, com=13)}, id="experiment-label"
+            ),
             pytest.param({"legend": "upper right"}, id="anchored-legend"),
             pytest.param({"xbreak": (3.0, 7.0), "legend": "upper right"}, id="xbreak"),
         ],
@@ -1613,6 +1667,193 @@ class TestHeadroomIsMeasured:
         p = rf.plot(self._flat(), "x", bins=50, **options)
         assert self._ratio(p) > 1.20
         plt.close(p.fig)
+
+    @pytest.mark.parametrize("experiment", ["ATLAS", "CMS", "LHCb"])
+    def test_label_is_measured_where_it_ends_up(
+        self, monkeypatch: pytest.MonkeyPatch, experiment: str
+    ) -> None:
+        # the status word moves when the label is aligned; the headroom must see it there
+        measured: dict[int, np.ndarray] = {}
+
+        def recording(axes: Any, obstacles: Any, **kwargs: Any) -> None:
+            renderer = axes[0].figure.canvas.get_renderer()
+            for artist in obstacles:
+                measured[id(artist)] = artist.get_window_extent(renderer).extents
+            raise_ylim_above(axes, obstacles, **kwargs)
+
+        monkeypatch.setattr(plots1d, "raise_ylim_above", recording)
+        style = rf.Style(experiment=experiment, status="Internal", lumi=140, com=13.6)
+        p = rf.plot(self._peaked(), "x", bins=50, style=style)
+        p.fig.canvas.draw()
+        renderer = p.fig.canvas.get_renderer()
+        label = [t for t in p.ax.texts if isinstance(t, hep.label.ExpText) and t.get_text()]
+        assert label
+        for text in label:
+            np.testing.assert_allclose(
+                measured[id(text)], text.get_window_extent(renderer).extents, atol=0.5
+            )
+        plt.close(p.fig)
+
+
+class TestOffsetText:
+    """The x label stays clear of the axis' offset text, which shares its corner."""
+
+    @staticmethod
+    def _boxes(p: rf.Plot) -> tuple[Any, Any]:
+        axis = (p.ratio_ax or p.ax).xaxis
+        p.fig.canvas.draw()
+        renderer = p.fig.canvas.get_renderer()
+        offset = axis.get_offset_text()
+        assert offset.get_text()  # the values need one
+        return axis.label.get_window_extent(renderer), offset.get_window_extent(renderer)
+
+    @pytest.mark.parametrize("use_offset", [True, False], ids=["offset", "no-offset"])
+    @pytest.mark.parametrize("ratio", [False, True])
+    def test_label_and_offset_text_do_not_overlap(self, ratio: bool, use_offset: bool) -> None:
+        # without an additive offset matplotlib still shows the order of magnitude
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        samples = [
+            rf.Sample({"x": values}, label="A"),
+            rf.Sample({"x": values * 1.1}, label="B"),
+        ]
+        style = rf.Style(rc={"axes.formatter.useoffset": use_offset})
+        p = rf.plot(samples, "x", bins=20, ratio=ratio, style=style)
+        label, offset = self._boxes(p)
+        assert not label.overlaps(offset)
+        assert label.x1 <= offset.x0  # beside it, on the same line
+        assert label.y0 < offset.y1
+        assert offset.y0 < label.y1
+        plt.close(p.fig)
+
+    def test_plot2d_label_and_offset_text_do_not_overlap(self) -> None:
+        rng = np.random.default_rng(0)
+        data = {"x": rng.normal(2e-6, 1e-6, 5_000), "y": rng.normal(0, 1, 5_000)}
+        p = rf.plot2d(data, "x", "y", bins=20)
+        label, offset = self._boxes(p)
+        assert not label.overlaps(offset)
+        plt.close(p.fig)
+
+    @pytest.mark.parametrize("experiment", ["LHCb", "ALICE"])
+    def test_offset_clearance_uses_the_finished_axes_width(self, experiment: str) -> None:
+        values = np.random.default_rng(0).uniform(0, 1e-6, 10_000)
+        p = rf.plot(
+            {"x": values},
+            "x",
+            bins=20,
+            style=rf.Style(experiment=experiment, lumi=138, com=13.6, figsize=(5, 3)),
+            title="Some plot title",
+        )
+        label, offset = self._boxes(p)
+        assert label.x1 <= offset.x0
+
+    @pytest.mark.parametrize("xlabel", ["x", "x" * 30], ids=["beside", "below"])
+    def test_clearance_holds_when_the_figure_is_resized(self, xlabel: str) -> None:
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel=xlabel, figsize=(5, 4))
+        for size, dpi in [((3.5, 3.0), 100.0), ((12.0, 8.0), 100.0), ((5.0, 4.0), 200.0)]:
+            p.fig.set_size_inches(size)
+            p.fig.set_dpi(dpi)
+            label, offset = self._boxes(p)
+            assert not label.overlaps(offset), (size, dpi)
+        plt.close(p.fig)
+
+    def test_label_changes_line_as_the_figure_is_resized(self) -> None:
+        # beside the offset text where the axes leave room, below it where they do not
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 20, figsize=(5, 4))
+        for width, below in [(5.0, False), (3.5, True), (5.0, False)]:
+            p.fig.set_size_inches(width, 4.0)
+            label, offset = self._boxes(p)
+            assert not label.overlaps(offset), width
+            assert bool(label.y1 <= offset.y0) == below, width
+            assert label.x0 >= p.ax.get_window_extent().x0, width
+        plt.close(p.fig)
+
+    def test_label_without_room_beside_goes_below(self) -> None:
+        # constrained layout reserves an x label's height, never its width, so a label
+        # moved past the left end of the axes could leave the canvas
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 30, figsize=(5, 4))
+        label, offset = self._boxes(p)
+        assert label.y1 <= offset.y0
+        assert label.x0 >= p.ax.get_window_extent().x0
+        assert label.y0 >= 0
+        plt.close(p.fig)
+
+    def test_headroom_holds_with_the_label_below(self) -> None:
+        # the label below the offset text takes height from the axes; the headroom must
+        # be measured with it there
+        rng = np.random.default_rng(0)
+        samples = [rf.Sample({"x": rng.uniform(0, 1e-6, 20_000)}, label=f"{i}") for i in range(5)]
+        p = rf.plot(samples, "x", bins=20, xlabel="x" * 30, legend="upper right", figsize=(5, 4))
+        label, offset = self._boxes(p)
+        assert label.y1 <= offset.y0
+        legend = p.ax.get_legend()
+        (x0, y0), (x1, _) = p.ax.transData.inverted().transform(
+            legend.get_window_extent().get_points()
+        )
+        edges = p.histograms[0].edges
+        under = (edges[1:] > x0) & (edges[:-1] < x1)
+        tallest = max(float(h.hist.values()[under].max()) for h in p.histograms)
+        assert y0 >= 1.08 * tallest * (1 - 1e-6)
+        plt.close(p.fig)
+
+    def test_changes_made_after_plotting_are_kept(self) -> None:
+        # the axes stay the caller's: a pad or transform set later survives every draw
+        values = np.random.default_rng(0).normal(0, 1, 5_000)  # no offset text
+        p = rf.plot({"x": values}, "x", bins=20)
+        p.fig.canvas.draw()
+        label = p.ax.xaxis.label
+        lowered = label.get_transform() + ScaledTranslation(0, -0.1, p.fig.dpi_scale_trans)
+        label.set_transform(lowered)
+        p.ax.xaxis.labelpad = 25
+        for _ in range(2):
+            p.fig.canvas.draw()
+            assert p.ax.xaxis.labelpad == 25
+            assert label.get_transform() is lowered
+        plt.close(p.fig)
+
+    def test_a_pad_set_after_plotting_counts_against_the_offset_text(self) -> None:
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 30, figsize=(5, 4))
+        label, offset = self._boxes(p)
+        assert label.y1 <= offset.y0  # below, on rootfig's own pad
+        p.ax.xaxis.labelpad = 30  # clears the offset text on its own
+        label, offset = self._boxes(p)
+        assert p.ax.xaxis.labelpad == 30
+        assert label.y1 <= offset.y0
+        p.ax.xaxis.labelpad = 2  # back onto the offset text's line: rootfig moves it again
+        label, offset = self._boxes(p)
+        assert not label.overlaps(offset)
+        plt.close(p.fig)
+
+    def test_a_pad_changed_while_below_is_laid_out_at_once(self) -> None:
+        # the label stays below: the layout must still reserve the new pad on this draw
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 30, figsize=(5, 4))
+        p.ax.xaxis.labelpad = 6
+        self._boxes(p)
+        p.ax.xaxis.labelpad = 4
+        label, offset = self._boxes(p)
+        assert label.y1 <= offset.y0
+        assert label.y0 >= 0
+        again, _ = self._boxes(p)
+        np.testing.assert_allclose(again.extents, label.extents, atol=0.5)
+        plt.close(p.fig)
+
+    def test_label_on_axes_the_caller_made_holds_when_resized(self) -> None:
+        # rootfig does not lay out a figure it did not make: the label goes below the
+        # offset text, which fits at any width the label itself fits
+        values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
+        fig, ax = plt.subplots(figsize=(5, 4))
+        p = rf.plot({"x": values}, "x", bins=20, xlabel="x" * 20, ax=ax)
+        for width in (5.0, 3.5, 8.0):
+            fig.set_size_inches(width, 4.0)
+            label, offset = self._boxes(p)
+            assert not label.overlaps(offset), width
+            assert label.y1 <= offset.y0, width
+            assert label.x0 >= ax.get_window_extent().x0, width
+        plt.close(fig)
 
 
 class TestWeightedRangeInference:

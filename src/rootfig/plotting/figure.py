@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
@@ -13,12 +14,13 @@ from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties
-from matplotlib.gridspec import GridSpecBase, SubplotSpec
-from matplotlib.layout_engine import ConstrainedLayoutEngine
+from matplotlib.gridspec import GridSpec, GridSpecBase, SubplotParams, SubplotSpec
 from matplotlib.offsetbox import AnchoredOffsetbox
 from matplotlib.ticker import MaxNLocator
 
 from rootfig.model.style import Style
+from rootfig.plotting.engine import PlotLayoutEngine
+from rootfig.plotting.engine import renderer_of as _renderer
 
 __all__ = [
     "AxesLike",
@@ -29,8 +31,10 @@ __all__ = [
     "figure_size",
     "finish_axes",
     "fit_ylabel",
+    "lay_out",
     "make_figure",
     "open_figure_ids",
+    "without_redraw",
     "ylabel_for",
 ]
 
@@ -146,7 +150,7 @@ def make_figure(
     cell
         A cell of a grid on an existing figure to build the panels in, so that
         several plots share one page (:class:`~rootfig.PlotBook`). The panels are
-        laid out inside it exactly as they are on a figure of their own.
+        laid out inside it exactly as they are on a figure of the cell's size.
     """
     if ax is not None:
         if break_widths is not None:
@@ -176,16 +180,36 @@ def make_figure(
         "wspace": BREAK_GAP,
     }
     grid: GridSpecBase
+    own: GridSpec | None = None
     if cell is not None:
         if figsize is not None:
             msg = "figsize cannot be set for a plot drawn into a cell of a page; the page is sized"
             raise ValueError(msg)
         fig = _figure_of_cell(cell)
+        x0, y0, width, height = _cell_box(cell)
+        # Until constrained layout places the panels, when the page is drawn, they sit
+        # where a figure of the cell's size puts them, so what is measured while drawing
+        # (mplhep's label, the statistics box) is measured as on that figure.
+        params = SubplotParams()
+        own = GridSpec(
+            rows,
+            columns,
+            left=x0 + params.left * width,
+            right=x0 + params.right * width,
+            bottom=y0 + params.bottom * height,
+            top=y0 + params.top * height,
+            **grid_options,
+        )
+        # Constrained layout reads a grid's spacing as a fraction of the whole figure, so
+        # the gaps are scaled to the cell's share of it to keep their size on the page.
+        grid_options["hspace"] = PANEL_GAP * height
+        grid_options["wspace"] = BREAK_GAP * width
         grid = cell.subgridspec(rows, columns, **grid_options)
     else:
         # Constrained layout fits labels, legends and colour bars into the canvas, so a
-        # saved figure has exactly the requested size and every plot type shares one shape.
-        engine = ConstrainedLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
+        # saved figure has exactly the requested size and every plot type shares one shape;
+        # rootfig's engine then keeps the x labels clear of the offset texts at every draw.
+        engine = PlotLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
         fig = plt.figure(figsize=figure_size(style, ratio=ratio, figsize=figsize), layout=engine)
         grid = fig.add_gridspec(rows, columns, **grid_options)
     main = fig.add_subplot(grid[0, 0])
@@ -205,6 +229,12 @@ def make_figure(
             )
             _pin_tick_label_size(layout.ratio_right)
             layout.main_right.tick_params(axis="x", labelbottom=False)
+    if own is not None:
+        for panel in layout.axes:
+            spec = panel.get_subplotspec()
+            assert spec is not None
+            panel.set_position(own[spec.rowspan.start, spec.colspan.start].get_position(fig))
+            panel.set_in_layout(True)  # set_position takes the axes out of the layout
     return layout
 
 
@@ -229,6 +259,23 @@ def _figure_of(ax: Axes) -> Figure:
         msg = "axes is not attached to a figure"
         raise ValueError(msg)
     return figure
+
+
+def _cell_box(cell: SubplotSpec) -> tuple[float, float, float, float]:
+    """Return ``(x0, y0, width, height)`` of ``cell`` as fractions of its figure.
+
+    Where constrained layout puts it: the grid spans the whole figure and its
+    cells are sized by their ratios alone.
+    """
+    grid = cell.get_gridspec()
+    widths = np.asarray(grid.get_width_ratios(), dtype=float)
+    heights = np.asarray(grid.get_height_ratios(), dtype=float)
+    widths, heights = widths / widths.sum(), heights / heights.sum()
+    width = float(widths[cell.colspan.start : cell.colspan.stop].sum())
+    height = float(heights[cell.rowspan.start : cell.rowspan.stop].sum())
+    x0 = float(widths[: cell.colspan.start].sum())
+    y0 = 1.0 - float(heights[: cell.rowspan.start].sum()) - height
+    return x0, y0, width, height
 
 
 def _figure_of_cell(cell: SubplotSpec) -> Figure:
@@ -419,15 +466,6 @@ def finish_axes(
     ax.set_ylim(bottom, top)
 
 
-def _renderer(fig: Any) -> Any:
-    """Return a renderer for measuring artists, or ``None`` if the backend has none."""
-    get = getattr(fig.canvas, "get_renderer", None)
-    if callable(get):
-        return get()
-    private = getattr(fig, "_get_renderer", None)
-    return private() if callable(private) else None
-
-
 def _balanced_wrap(text: str) -> str:
     """Break ``text`` at the space that leaves the two lines most even in length."""
     words = text.split()
@@ -440,8 +478,47 @@ def _balanced_wrap(text: str) -> str:
     return " ".join(words[:split]) + "\n" + " ".join(words[split:])
 
 
+@contextmanager
+def without_redraw(fig: Figure | None) -> Iterator[None]:
+    """Make drawing ``fig``'s canvas do nothing within the block.
+
+    mplhep draws the whole figure before measuring the words it appends to an
+    experiment label, and a page holds many plots, so that would be every plot of
+    the page for each of them. rootfig lays the figure out itself where a measurement needs it
+    (:func:`lay_out`); in the block, mplhep measures the figure as it stands.
+    """
+    if fig is None:  # pragma: no cover - axes always belong to a figure
+        yield
+        return
+    canvas: Any = fig.canvas
+    original = vars(canvas).get("draw")
+    canvas.draw = lambda *_, **__: None
+    try:
+        yield
+    finally:
+        if original is None:
+            del canvas.draw
+        else:
+            canvas.draw = original
+
+
+def lay_out(fig: Figure) -> Any:
+    """Lay ``fig`` out as drawing it would, without painting, and return its renderer.
+
+    Constrained layout sizes and places the axes when a figure is drawn, and tick
+    labels and offset texts are settled then too, so whatever is measured against
+    the figure comes after this. ``None`` if the backend cannot measure artists.
+    """
+    fig.draw_without_rendering()
+    return _renderer(fig)
+
+
 def fit_ylabel(
-    ax: Axes, *, min_scale: float = RATIO_LABEL_MIN_SCALE, fraction: float = 0.98
+    ax: Axes,
+    *,
+    laid_out: bool = False,
+    min_scale: float = RATIO_LABEL_MIN_SCALE,
+    fraction: float = 0.98,
 ) -> None:
     """Shrink (and if necessary wrap) the y label of ``ax`` until it fits the panel.
 
@@ -456,15 +533,15 @@ def fit_ylabel(
     two lines (never mathtext, which must not be broken) and shrunk again. A very
     long label in a very short panel stops at the floor rather than becoming
     unreadable. A label that already fits is left untouched, as is a figure whose
-    backend cannot measure artists.
+    backend cannot measure artists. The panel is measured as constrained layout
+    sizes it, so the figure is laid out first unless ``laid_out`` says it is.
     """
     label = ax.yaxis.label
     text = label.get_text()
     fig = ax.get_figure(root=True)
     if not text or fig is None:
         return
-    fig.canvas.draw()  # constrained layout sizes the axes at draw time
-    renderer = _renderer(fig)
+    renderer = _renderer(fig) if laid_out else lay_out(fig)
     if renderer is None:
         return
 
@@ -523,10 +600,10 @@ def raise_ylim_above(
     histogram maximum under its horizontal extent is compared with its lower edge
     and, if it would cover the histogram, the shared y range is stretched until
     the edge sits ``margin`` above the histogram. ``floating`` artists (a legend
-    with ``loc="best"``) are relocated by matplotlib at draw time; for those only
-    the size matters and room is made for them in the upper left *or* upper right
-    corner, whichever needs less. Nothing happens if the backend cannot measure
-    artists.
+    with ``loc="best"``) are relocated by matplotlib at draw time, within their own
+    axes; for those only the size matters and room is made for them in the upper
+    left *or* upper right corner of that axes, whichever needs less. Nothing
+    happens if the backend cannot measure artists.
     """
     if not axes or (not obstacles and not floating) or heights.size == 0:
         return
@@ -540,8 +617,9 @@ def raise_ylim_above(
         bottom, top = ax.get_ylim()
         if logy and bottom <= 0:
             return
-        # an obstacle low in the axes cannot be helped by more headroom
-        if not 0.25 <= fraction < 1.0:
+        # an obstacle low in the axes cannot be helped by more headroom, and one resting
+        # on the frame's top (a label above it, there up to rounding) covers nothing
+        if not 0.25 <= fraction < 1.0 or math.isclose(fraction, 1.0):
             return
         covered = (edges[1:] > lo) & (edges[:-1] < hi)
         if not covered.any():
@@ -574,8 +652,8 @@ def raise_ylim_above(
             span = to_data.transform([[bbox.x0, bbox.y0], [bbox.x1, bbox.y0]])[:, 0]
             consider(ax, fraction, max(min(span), x_low), min(max(span), x_high))
         for artist in floating:
-            bbox = _extent(artist, renderer)
-            if bbox is None:
+            bbox = _extent(artist, renderer) if artist.axes is ax else None
+            if bbox is None:  # a legend floats within its own axes only
                 continue
             (fx0, fy0), (fx1, fy1) = to_axes.transform(bbox.get_points())
             width, height = fx1 - fx0, fy1 - fy0

@@ -268,11 +268,17 @@ included; its unused cells stay empty:
 book.save_pdf("overview.pdf", layout=(2, 3))
 ```
 
-A page is as large as the grid of figures the plots would have on their own, so
-a plot in a cell keeps its usual size: every cell of the document is as large as
-the largest figure any plot of the book would draw alone (a ratio panel makes it
-taller, a `Style` with a `figsize` sets its own). `figsize=` on `save_pdf()`
-sets the size of the whole page instead:
+A page is as large as the grid of figures the plots would have on their own,
+plus a narrow gap between neighbouring cells, so a plot in a cell keeps its
+usual size: every cell of the document is as large as the largest figure any
+plot of the book would draw alone (a ratio panel makes it taller, a `Style` with
+a `figsize` sets its own). A cell is laid out exactly as a figure of its size,
+whatever the grid and the style: the gap above a ratio panel, the room for
+labels, the legend and the y limits are the same on a `1 × 1` page as on an
+`8 × 8` one. The plots of a page are finished together, so a dense page takes
+about as long as the same plots on pages of their own. `figsize=` on
+`save_pdf()` sets the size of the whole page instead, the cells sharing what the
+gaps leave; one too small for the grid is refused before anything is drawn:
 
 ```python
 book.save_pdf("overview.pdf", figsize=(16, 10))

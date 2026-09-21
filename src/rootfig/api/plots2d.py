@@ -34,14 +34,15 @@ from rootfig.model import (
 )
 from rootfig.plotting import (
     AxesLike,
+    Finish,
     Plot,
     add_experiment_label,
-    align_experiment_label,
     correlation_figsize,
     draw_correlation,
     draw_hist2d,
-    finalize_figure,
+    finish_figure,
     make_figure,
+    pin_fonts,
     style_context,
 )
 from rootfig.selection import Columns, NonFinitePolicy
@@ -191,9 +192,9 @@ def plot2d(
             main_ax.set_title(title)
         # the bins fill the frame: an experiment label goes above it
         add_experiment_label(main_ax, st, has_data=is_data, above=True)
-        finalize_figure(fig)  # last: fonts
+        pin_fonts(fig)  # last: fonts
     # outside the style context, against the layout the figure is drawn with
-    align_experiment_label(main_ax)
+    finish_figure(fig, [Finish(main_ax, xlabel=main_ax)])
     result = Plot(fig=fig, ax=main_ax, histograms=[histogram_], variable=var_x)
     if save:
         result.save(save)
@@ -251,9 +252,9 @@ def correlation(
             add_experiment_label(main_ax, st, has_data=sample.is_data, above=True)
         if title is not None or not st.experiment:
             main_ax.set_title(title if title is not None else f"{sample.label}: correlation")
-        finalize_figure(fig)  # last: fonts
+        pin_fonts(fig)  # last: fonts
     # outside the style context, against the layout the figure is drawn with
-    align_experiment_label(main_ax)
+    finish_figure(fig, [Finish(main_ax)])
     result = Plot(fig=fig, ax=main_ax, matrix=matrix)
     if save:
         result.save(save)

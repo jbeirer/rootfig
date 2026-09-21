@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from functools import partial
 
 import hist
 import matplotlib
@@ -24,12 +25,14 @@ from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
     DEFAULT_COLORS,
     ROOTFIG_STYLE,
+    Finish,
     Layout,
     Plot,
     add_experiment_label,
     add_legend,
     add_stats_box,
     add_text,
+    align_experiment_label,
     apply_xbreak,
     break_segments,
     color_cycle,
@@ -40,6 +43,8 @@ from rootfig.plotting import (
     draw_ratio_panel,
     envelope,
     finish_axes,
+    finish_figure,
+    finishing_together,
     fold_flow_bins,
     label_flow_bins,
     make_figure,
@@ -59,6 +64,7 @@ from rootfig.plotting.figure import (
     _renderer,
     figure_size,
     fit_ylabel,
+    without_redraw,
 )
 from rootfig.plotting.style import pin_fonts
 from rootfig.selection import Columns
@@ -235,6 +241,7 @@ class TestStyle:
         with style_context(Style(experiment="ATLAS")):
             fig, ax = plt.subplots()
             add_experiment_label(ax, Style(experiment="ATLAS", status="Internal"), has_data=True)
+            align_experiment_label(ax)  # the plotting functions do so on the finished figure
             fig.canvas.draw()
             renderer = fig.canvas.get_renderer()
             texts = {t.get_text(): t for t in ax.texts}
@@ -1044,6 +1051,18 @@ class TestHeadroom:
         plt.close(fig)
         plt.close(fig2)
 
+    def test_label_resting_on_the_frame_is_not_an_obstacle(self) -> None:
+        # a label above the frame sits on its top edge, up to rounding either way; the
+        # error bars of the tallest bins can reach into the margin it would claim
+        fig, ax, edges, _ = self._axes()
+        heights = np.full(10, 115.0)
+        for y in (1.0, 1.0 - 1e-15):
+            text = ax.text(0.0, y, "CMS", transform=ax.transAxes, va="bottom")
+            raise_ylim_above([ax], [text], edges=edges, heights=heights, logy=False)
+            assert ax.get_ylim()[1] == 120
+            text.remove()
+        plt.close(fig)
+
     def test_degenerate_inputs(self) -> None:
         fig, ax, edges, heights = self._axes()
         raise_ylim_above([], [], edges=edges, heights=heights, logy=False)
@@ -1361,3 +1380,130 @@ class TestSystematicDrawing:
         assert result.syst_errors is not None
         band = next(c for c in ax.collections if isinstance(c, PolyCollection))
         assert band.get_label() == "A stat. + syst. unc."
+
+
+class TestFinishing:
+    """What is measured against the laid-out figure runs after drawing, once per figure."""
+
+    @pytest.mark.parametrize("count", [1, 4])
+    def test_headroom_survives_a_new_y_axis_offset(self, count: int) -> None:
+        fig, axes = plt.subplots(1, count, figsize=(6 * count, 4), layout="constrained")
+        plots = []
+        legends = []
+        for ax in np.atleast_1d(axes):
+            for i in range(4):
+                ax.plot([0, 1], [8000, 8000], label=f"entry {i}")
+            ax.set_ylim(0, 9600)
+            ax.ticklabel_format(axis="y", scilimits=(-3, 4))
+            legend = ax.legend(loc="upper right")
+            legends.append(legend)
+            plots.append(
+                Finish(
+                    ax,
+                    headroom=partial(
+                        raise_ylim_above,
+                        [ax],
+                        [legend],
+                        edges=np.array([0, 1]),
+                        heights=np.array([8000]),
+                        logy=False,
+                    ),
+                )
+            )
+        fig.canvas.draw()
+        assert all(not plot.main.yaxis.get_offset_text().get_text() for plot in plots)
+        draws: list[object] = []
+        fig.canvas.mpl_connect("draw_event", draws.append)
+        with finishing_together(fig):
+            for plot in plots:
+                finish_figure(fig, [plot])
+        assert len(draws) == 2  # shared layout passes, independent of the number of plots
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for plot, legend in zip(plots, legends, strict=True):
+            ax = plot.main
+            assert ax.yaxis.get_offset_text().get_text() == "1e4"
+            box = legend.get_window_extent(renderer)
+            bottom = ax.transData.inverted().transform((box.x0, box.y0))[1]
+            assert bottom >= 1.08 * 8000 - 1e-6
+
+    def test_plots_drawn_together_are_finished_at_the_end_of_the_block(self) -> None:
+        fig = plt.figure()
+        calls: list[int] = []
+        first = Finish(fig.add_subplot(1, 2, 1), headroom=lambda: calls.append(1))
+        second = Finish(fig.add_subplot(1, 2, 2), headroom=lambda: calls.append(2))
+        with finishing_together(fig):
+            finish_figure(fig, [first])
+            finish_figure(fig, [second])
+            assert calls == []
+        assert calls == [1, 2]
+        finish_figure(fig, [first])  # collected only within the block
+        assert calls == [1, 2, 1]
+        plt.close(fig)
+
+    def test_a_block_that_raises_finishes_nothing(self) -> None:
+        fig = plt.figure()
+        calls: list[int] = []
+        finish = Finish(fig.add_subplot(), headroom=lambda: calls.append(1))
+
+        def failing_page() -> None:
+            with finishing_together(fig):
+                finish_figure(fig, [finish])
+                raise RuntimeError("drawing failed")
+
+        with pytest.raises(RuntimeError, match="drawing failed"):
+            failing_page()
+        assert calls == []
+        finish_figure(fig, [finish])
+        assert calls == [1]
+        plt.close(fig)
+
+    def test_nested_blocks_finish_at_the_outermost_exit(self) -> None:
+        fig, ax = plt.subplots()
+        calls: list[int] = []
+        with finishing_together(fig):
+            finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(1))])
+            with finishing_together(fig):
+                finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(2))])
+            assert calls == []
+            finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(3))])
+        assert calls == [1, 2, 3]
+
+    def test_failed_nested_block_preserves_outer_work(self) -> None:
+        fig, ax = plt.subplots()
+        calls: list[int] = []
+
+        def failing_block() -> None:
+            with finishing_together(fig):
+                finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(2))])
+                raise RuntimeError("inner failed")
+
+        with finishing_together(fig):
+            finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(1))])
+            with pytest.raises(RuntimeError, match="inner failed"):
+                failing_block()
+            assert calls == []
+            finish_figure(fig, [Finish(ax, headroom=lambda: calls.append(3))])
+        assert calls == [1, 3]
+
+    def test_draw_suppression_restores_custom_canvas_draw(self) -> None:
+        fig = plt.figure()
+        calls: list[int] = []
+
+        def custom_draw() -> None:
+            calls.append(1)
+
+        def failing_block() -> None:
+            with without_redraw(fig):
+                fig.canvas.draw()
+                raise RuntimeError("inner failed")
+
+        fig.canvas.draw = custom_draw
+        with without_redraw(fig):
+            with pytest.raises(RuntimeError, match="inner failed"):
+                failing_block()
+            fig.canvas.draw()
+            assert calls == []
+        assert fig.canvas.draw is custom_draw
+        fig.canvas.draw()
+        assert calls == [1]
