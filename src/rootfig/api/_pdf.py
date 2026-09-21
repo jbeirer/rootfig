@@ -68,14 +68,17 @@ def write_pdf(
     the document the largest of the tasks' own figure sizes (:func:`cell_size`),
     created under the style of the page's first task. The document is written
     through :func:`~rootfig.plotting.pages.multipage_pdf`: an existing ``target``
-    is replaced only once every page is written. A failing task raises with its
-    note (see :meth:`PlotBook.plots`), a failing write with a note naming the page
-    and the file; the page figure is closed either way.
+    is replaced only once every page is written. A ``metadata`` among
+    ``savefig_kwargs`` describes the document, not a page, so it goes to the
+    writer; the rest is passed to every :meth:`PdfPages.savefig`. A failing task
+    raises with its note (see :meth:`PlotBook.plots`), a failing write with a note
+    naming the page and the file; the page figure is closed either way.
     """
     kwargs = {"facecolor": "auto", "edgecolor": "auto", **savefig_kwargs}
+    metadata = kwargs.pop("metadata", None)
     inches = cell_size(tasks)
     position = 0
-    with multipage_pdf(target) as pdf:
+    with multipage_pdf(target, metadata=metadata) as pdf:
         for number, page in enumerate(pages, start=1):
             first = tasks[position]
             position += page.count

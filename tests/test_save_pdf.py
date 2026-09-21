@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,12 @@ def _drawn(monkeypatch: pytest.MonkeyPatch) -> list[tuple[rf.PlotTask, rf.Plot]]
     return results
 
 
+def _info_dict(target: Path) -> dict[str, str]:
+    """The document information dictionary of ``target``, read back from the written file."""
+    raw = target.read_bytes()
+    return {key.decode(): value.decode() for key, value in re.findall(rb"/(\w+) \(([^)]*)\)", raw)}
+
+
 def _temporaries(directory: Path) -> list[Path]:
     return sorted(directory.glob("*.tmp-*"))
 
@@ -108,7 +115,7 @@ class TestBasics:
         assert sorted(tmp_path.iterdir()) == []
         assert plt.get_fignums() == []
 
-    @pytest.mark.parametrize("keyword", ["format", "fname", "figure"])
+    @pytest.mark.parametrize("keyword", ["format", "fname", "figure", "backend"])
     def test_reserved_savefig_kwargs(self, tmp_path: Path, keyword: str) -> None:
         with pytest.raises(ValueError, match=f"does not take '{keyword}'"):
             rf.PlotBook(object(), X).save_pdf(tmp_path / "plots.pdf", **{keyword: "png"})
@@ -129,6 +136,20 @@ class TestBasics:
         assert calls == [{"facecolor": "auto", "edgecolor": "auto", "dpi": 50}] * 2
         rf.PlotBook(samples, X).save_pdf(tmp_path / "b.pdf", facecolor="white")
         assert calls[-1] == {"facecolor": "white", "edgecolor": "auto"}
+
+    def test_metadata_describes_the_document(
+        self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # PdfPages.savefig() reuses the document opened with the first page and drops a
+        # metadata= of its own, so it has to reach the writer instead
+        calls = _pages(monkeypatch)
+        target = rf.PlotBook(samples, [X, Y]).save_pdf(
+            tmp_path / "plots.pdf", layout=(1, 1), metadata={"Title": "Overview", "Author": "rf"}
+        )
+        assert len(calls) == 2
+        info = _info_dict(target)
+        assert info["Title"] == "Overview"
+        assert info["Author"] == "rf"
 
     @pytest.mark.parametrize("layout", [(0, 2), (2, 0), (2,), ("2", 2), (True, 2), "dense"])
     def test_bad_layout_fails_before_anything_runs(self, tmp_path: Path, layout: Any) -> None:
@@ -167,6 +188,31 @@ class TestBasics:
         for _, result in book.plots():
             assert tuple(result.fig.get_size_inches()) == (8.0, 6.0)
             result.close()
+
+    def test_figsize_overridden_away_by_every_variant_is_accepted(
+        self, samples: list[rf.Sample], tmp_path: Path
+    ) -> None:
+        # no task runs with a figsize, so the page keeps the size save_pdf() gives it
+        book = rf.PlotBook(
+            samples,
+            [X],
+            plot_kwargs={"figsize": (8.0, 6.0)},
+            variants={"a": {"figsize": None}, "b": {"figsize": None}},
+        )
+        assert book.save_pdf(tmp_path / "plots.pdf").is_file()
+
+    def test_figsize_left_by_one_variant_names_where_it_comes_from(
+        self, samples: list[rf.Sample], tmp_path: Path
+    ) -> None:
+        book = rf.PlotBook(
+            samples,
+            [X],
+            plot_kwargs={"figsize": (8.0, 6.0)},
+            variants={"a": {"figsize": None}, "b": {}},
+        )
+        with pytest.raises(ValueError, match="remove figsize= from plot_kwargs"):
+            book.save_pdf(tmp_path / "plots.pdf")
+        assert sorted(tmp_path.iterdir()) == []
 
 
 class TestPages:

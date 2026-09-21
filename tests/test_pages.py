@@ -241,6 +241,14 @@ class TestMultipagePdf:
         assert target.read_bytes() == b"old"
         assert _temporaries(tmp_path) == []
 
+    def test_metadata_reaches_the_document(self, tmp_path: Path) -> None:
+        target = tmp_path / "a.pdf"
+        with multipage_pdf(target, metadata={"Title": "Pages"}) as pdf:
+            fig = plt.figure()
+            pdf.savefig(fig)
+            plt.close(fig)
+        assert b"/Title (Pages)" in target.read_bytes()
+
     def test_no_page_is_an_error(self, tmp_path: Path) -> None:
         target = tmp_path / "a.pdf"
         with pytest.raises(ValueError, match="no page was written"), multipage_pdf(target):

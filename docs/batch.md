@@ -279,18 +279,21 @@ book.save_pdf("overview.pdf", figsize=(16, 10))
 ```
 
 A `figsize` in `plot_kwargs` or a variant has no meaning inside a shared page and
-is rejected before anything is read; pass it to `save_pdf()`.
+is rejected before anything is read; pass it to `save_pdf()`. What a task runs
+with decides: a `figsize` in `plot_kwargs` that every variant overrides with
+`None` leaves no task with one and is accepted.
 
 `.pdf` is appended to a path without a suffix (`"overview"` writes
 `overview.pdf`), parent directories are created, another suffix raises
 `ValueError` and an existing directory `IsADirectoryError`. The remaining
-keywords go to `PdfPages.savefig` for every page (`dpi=` for rasterised parts,
-`metadata=`); `format`, `fname` and `figure` are refused. The document is written
-to a temporary file next to its final name and renamed onto it once every page
-is done, so a failure part way leaves an existing file as it was and no
-half-written PDF behind. Pages are written one after another and each page's
-figure is closed before the next begins, so memory stays bounded however many
-plots the book holds.
+keywords go to `PdfPages.savefig` for every page (`dpi=` for rasterised parts),
+except `metadata=`, the document information dictionary (`{"Title": ...}`), which
+describes the whole PDF and is applied to it; `format`, `fname`, `figure` and
+`backend` are refused. The document is written to a temporary file next to its
+final name and renamed onto it once every page is done, so a failure part way
+leaves an existing file as it was and no half-written PDF behind. Pages are
+written one after another and each page's figure is closed before the next
+begins, so memory stays bounded however many plots the book holds.
 
 The histograms are prepared exactly as for `plots()` and `save()`, with the same
 batched reads and the same reuse of one preparation for the variants that only

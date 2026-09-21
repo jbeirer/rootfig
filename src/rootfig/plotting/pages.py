@@ -12,11 +12,11 @@ from __future__ import annotations
 import math
 import os
 import secrets
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -228,7 +228,7 @@ def make_page(
 
 
 @contextmanager
-def multipage_pdf(target: Path) -> Iterator[PdfPages]:
+def multipage_pdf(target: Path, *, metadata: Mapping[str, Any] | None = None) -> Iterator[PdfPages]:
     """Write a multipage PDF to ``target``, through a temporary file next to it.
 
     The block saves its pages with :meth:`PdfPages.savefig`. The temporary file
@@ -239,6 +239,11 @@ def multipage_pdf(target: Path) -> Iterator[PdfPages]:
     writer is closed, the temporary file removed and the exception re-raised.
     The parent directory is created if needed.
 
+    ``metadata`` is the document information dictionary (``{"Title": ..., "Author":
+    ...}``). It belongs to the document, so it is given to the writer here rather
+    than to a page: :meth:`PdfPages.savefig` reuses the document opened with the
+    first page and drops a ``metadata`` of its own.
+
     Raises
     ------
     ValueError
@@ -246,7 +251,7 @@ def multipage_pdf(target: Path) -> Iterator[PdfPages]:
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f"{target.name}.tmp-{os.getpid()}-{secrets.token_hex(4)}")
-    pdf = PdfPages(temporary)  # opens the file at the first page saved
+    pdf = PdfPages(temporary, metadata=metadata)  # opens the file at the first page saved
     try:
         yield pdf
         pdf.close()

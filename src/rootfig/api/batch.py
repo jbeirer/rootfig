@@ -108,8 +108,13 @@ those of the selections and weights, for every sample of the book.
 _RESERVED_SAVEFIG_KWARGS = frozenset({"format", "fname"})
 """Keywords of ``savefig`` that would fight the file names :meth:`PlotBook.save` builds."""
 
-_RESERVED_PDF_KWARGS = frozenset({"format", "fname", "figure"})
-"""Keywords of ``savefig`` that :meth:`PlotBook.save_pdf` fills in for every page."""
+_RESERVED_PDF_KWARGS = frozenset({"format", "fname", "figure", "backend"})
+"""Keywords of ``savefig`` that :meth:`PlotBook.save_pdf` fills in for every page.
+
+``PdfPages.savefig`` passes ``format="pdf", backend="pdf"`` itself, so either from
+the caller would reach ``Figure.savefig`` twice; rejected up front, the error
+arrives before the first page is drawn.
+"""
 
 _SEPARATOR = "__"
 """Joins the variable, selection and variant components of an output file name."""
@@ -848,10 +853,13 @@ class PlotBook:
             A task's own ``figsize`` cannot apply inside a shared page and raises.
         **savefig_kwargs
             Forwarded to :meth:`matplotlib.backends.backend_pdf.PdfPages.savefig`
-            for every page (``dpi=`` for rasterised parts, ``metadata=``, ...).
-            The background is the page's own unless ``facecolor`` is given, as for
-            :meth:`Plot.save`. ``format``, ``fname`` and ``figure`` are rejected,
-            since the method writes PDF pages of its own figures.
+            for every page (``dpi=`` for rasterised parts, ...). The background is
+            the page's own unless ``facecolor`` is given, as for :meth:`Plot.save`.
+            ``metadata=`` is the exception: it is the document information
+            dictionary (``{"Title": ..., "Author": ...}``), which belongs to the
+            document rather than to a page, and is applied to the whole PDF.
+            ``format``, ``fname``, ``figure`` and ``backend`` are rejected, since
+            the method writes PDF pages of its own figures.
 
         Returns
         -------
@@ -900,17 +908,25 @@ class PlotBook:
         return target
 
     def _reject_task_figsize(self) -> None:
-        """Raise if a task sets ``figsize``: on a shared page the page has the size."""
-        where = [("plot_kwargs", self.plot_kwargs)]
-        if self.variants is not None:
-            where.extend((f"variant {name!r}", own) for name, own in self.variants.items())
-        for place, kwargs in where:
-            if kwargs.get("figsize") is not None:
-                msg = (
-                    f"PlotBook.save_pdf() controls the page size; remove figsize= from {place} "
-                    "and pass figsize= to save_pdf() instead"
-                )
-                raise ValueError(msg)
+        """Raise if a task sets ``figsize``: on a shared page the page has the size.
+
+        Judged on the keywords a task actually runs with, a variant's overrides
+        applied, so a ``figsize`` in ``plot_kwargs`` that every variant overrides
+        with ``None`` leaves no task with one and is no obstacle; the message
+        names wherever the surviving value comes from.
+        """
+        variants: Sequence[tuple[str | None, Mapping[str, Any]]] = (
+            list(self.variants.items()) if self.variants is not None else [(None, {})]
+        )
+        for name, overrides in variants:
+            if {**self.plot_kwargs, **overrides}.get("figsize") is None:
+                continue
+            place = f"variant {name!r}" if "figsize" in overrides else "plot_kwargs"
+            msg = (
+                f"PlotBook.save_pdf() controls the page size; remove figsize= from {place} "
+                "and pass figsize= to save_pdf() instead"
+            )
+            raise ValueError(msg)
 
     def select(
         self,
