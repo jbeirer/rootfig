@@ -309,7 +309,8 @@ range avoids range inference.
   the CMS-style label is also drawn; with such a style prefer `text=`. The x
   label ends at the right end of the axis, where matplotlib also puts the
   axis' offset text (`×10⁻⁶` for small values); when both are shown the label
-  moves left of it (mplhep's `xlabel_sci_adjust`).
+  moves left of it, also with `axes.formatter.useoffset` off, which drops an
+  additive offset but still shows the order of magnitude.
 - Automatic y limits leave room for the legend, the experiment label, the
   statistics box and `text` lines: a small fixed margin is added above the
   tallest bin, and the upper limit is then raised until none of them covers a

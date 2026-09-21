@@ -185,8 +185,10 @@ class TestPageFigure:
     def test_cell_room_is_what_the_gaps_leave(self) -> None:
         assert cell_room(page_size((2, 3), (7.0, 5.6)), (2, 3)) == pytest.approx((7.0, 5.6))
         assert cell_room((7.0, 7.0), (1, 1)) == (7.0, 7.0)
-        with pytest.raises(ValueError, match=r"no room for a 8 x 8 grid .* at least"):
+        with pytest.raises(ValueError, match=r"no room for a 8 x 8 grid .* take \(1.12, 1.12\)"):
             cell_room((1.0, 1.0), (8, 8))
+        # the gaps are the limit: any room left for the cells is accepted
+        assert cell_room((2.0, 2.0), (8, 8)) == pytest.approx((0.11, 0.11))
 
     def test_make_page_cells_in_reading_order(self) -> None:
         size = page_size((2, 3), (2.0, 1.5))

@@ -18,6 +18,7 @@ from matplotlib.colors import to_rgba
 from matplotlib.font_manager import FontProperties
 
 import rootfig as rf
+from rootfig.api import plots1d
 from rootfig.api.plots2d import _split_bins
 from rootfig.errors import (
     BinningError,
@@ -28,7 +29,12 @@ from rootfig.errors import (
     SourceError,
 )
 from rootfig.model.style import EXPERIMENT_STYLES
-from rootfig.plotting import add_experiment_label, align_experiment_label, style_context
+from rootfig.plotting import (
+    add_experiment_label,
+    align_experiment_label,
+    raise_ylim_above,
+    style_context,
+)
 from rootfig.plotting.style import LABEL_MIN_SCALE
 
 
@@ -1637,6 +1643,32 @@ class TestHeadroomIsMeasured:
         assert self._ratio(p) > 1.20
         plt.close(p.fig)
 
+    @pytest.mark.parametrize("experiment", ["ATLAS", "CMS", "LHCb"])
+    def test_label_is_measured_where_it_ends_up(
+        self, monkeypatch: pytest.MonkeyPatch, experiment: str
+    ) -> None:
+        # the status word moves when the label is aligned; the headroom must see it there
+        measured: dict[int, np.ndarray] = {}
+
+        def recording(axes: Any, obstacles: Any, **kwargs: Any) -> None:
+            renderer = axes[0].figure.canvas.get_renderer()
+            for artist in obstacles:
+                measured[id(artist)] = artist.get_window_extent(renderer).extents
+            raise_ylim_above(axes, obstacles, **kwargs)
+
+        monkeypatch.setattr(plots1d, "raise_ylim_above", recording)
+        style = rf.Style(experiment=experiment, status="Internal", lumi=140, com=13.6)
+        p = rf.plot(self._peaked(), "x", bins=50, style=style)
+        p.fig.canvas.draw()
+        renderer = p.fig.canvas.get_renderer()
+        label = [t for t in p.ax.texts if isinstance(t, hep.label.ExpText) and t.get_text()]
+        assert label
+        for text in label:
+            np.testing.assert_allclose(
+                measured[id(text)], text.get_window_extent(renderer).extents, atol=0.5
+            )
+        plt.close(p.fig)
+
 
 class TestOffsetText:
     """The x label stays clear of the axis' offset text, which shares its corner."""
@@ -1650,14 +1682,17 @@ class TestOffsetText:
         assert offset.get_text()  # the values need one
         return axis.label.get_window_extent(renderer), offset.get_window_extent(renderer)
 
+    @pytest.mark.parametrize("use_offset", [True, False], ids=["offset", "no-offset"])
     @pytest.mark.parametrize("ratio", [False, True])
-    def test_label_and_offset_text_do_not_overlap(self, ratio: bool) -> None:
+    def test_label_and_offset_text_do_not_overlap(self, ratio: bool, use_offset: bool) -> None:
+        # without an additive offset matplotlib still shows the order of magnitude
         values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
         samples = [
             rf.Sample({"x": values}, label="A"),
             rf.Sample({"x": values * 1.1}, label="B"),
         ]
-        p = rf.plot(samples, "x", bins=20, ratio=ratio)
+        style = rf.Style(rc={"axes.formatter.useoffset": use_offset})
+        p = rf.plot(samples, "x", bins=20, ratio=ratio, style=style)
         label, offset = self._boxes(p)
         assert not label.overlaps(offset)
         assert label.x1 <= offset.x0  # beside it, on the same line

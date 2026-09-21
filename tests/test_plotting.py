@@ -1050,6 +1050,18 @@ class TestHeadroom:
         plt.close(fig)
         plt.close(fig2)
 
+    def test_label_resting_on_the_frame_is_not_an_obstacle(self) -> None:
+        # a label above the frame sits on its top edge, up to rounding either way; the
+        # error bars of the tallest bins can reach into the margin it would claim
+        fig, ax, edges, _ = self._axes()
+        heights = np.full(10, 115.0)
+        for y in (1.0, 1.0 - 1e-15):
+            text = ax.text(0.0, y, "CMS", transform=ax.transAxes, va="bottom")
+            raise_ylim_above([ax], [text], edges=edges, heights=heights, logy=False)
+            assert ax.get_ylim()[1] == 120
+            text.remove()
+        plt.close(fig)
+
     def test_degenerate_inputs(self) -> None:
         fig, ax, edges, heights = self._axes()
         raise_ylim_above([], [], edges=edges, heights=heights, logy=False)

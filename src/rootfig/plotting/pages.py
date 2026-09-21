@@ -227,11 +227,11 @@ def cell_room(size: tuple[float, float], grid: Grid) -> tuple[float, float]:
     width = (size[0] - (columns - 1) * PAGE_GAP) / columns
     height = (size[1] - (rows - 1) * PAGE_GAP) / rows
     if width <= 0 or height <= 0:
-        least = page_size(grid, (1.0, 1.0))
+        gaps = page_size(grid, (0.0, 0.0))
         msg = (
-            f"figsize={size} leaves no room for a {rows} x {columns} grid of plots "
-            f"{PAGE_GAP} in apart; give the page at least ({least[0]:g}, {least[1]:g}) inches "
-            f"or a smaller layout"
+            f"figsize={size} leaves no room for a {rows} x {columns} grid of plots: the "
+            f"{PAGE_GAP} in gaps between the cells alone take ({gaps[0]:g}, {gaps[1]:g}) "
+            f"inches; give the page more than that, or a smaller layout"
         )
         raise ValueError(msg)
     return (width, height)

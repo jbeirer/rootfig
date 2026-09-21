@@ -489,10 +489,9 @@ def _balanced_wrap(text: str) -> str:
 def without_redraw(fig: Figure | None) -> Iterator[None]:
     """Make drawing ``fig``'s canvas do nothing within the block.
 
-    mplhep draws the whole figure before measuring what it places (the words
-    appended to an experiment label, an x label beside the offset text), and a
-    page holds many plots, so that would be every plot of the page for each of
-    them. rootfig lays the figure out itself where a measurement needs it
+    mplhep draws the whole figure before measuring the words it appends to an
+    experiment label, and a page holds many plots, so that would be every plot of
+    the page for each of them. rootfig lays the figure out itself where a measurement needs it
     (:func:`lay_out`); in the block, mplhep measures the figure as it stands.
     """
     if fig is None:  # pragma: no cover - axes always belong to a figure
@@ -625,8 +624,9 @@ def raise_ylim_above(
         bottom, top = ax.get_ylim()
         if logy and bottom <= 0:
             return
-        # an obstacle low in the axes cannot be helped by more headroom
-        if not 0.25 <= fraction < 1.0:
+        # an obstacle low in the axes cannot be helped by more headroom, and one resting
+        # on the frame's top (a label above it, there up to rounding) covers nothing
+        if not 0.25 <= fraction < 1.0 or math.isclose(fraction, 1.0):
             return
         covered = (edges[1:] > lo) & (edges[:-1] < hi)
         if not covered.any():
