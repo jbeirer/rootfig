@@ -76,7 +76,7 @@ def stored_mode(samples: Sequence[Sample], variables: Sequence[Variable]) -> boo
     return bool(stored)
 
 
-def stored_names(sample: Sample) -> list[str]:
+def stored_names(sample: Sample, *, variation: bool = False) -> list[str]:
     """Return the names ``sample`` reads as stored 1D histograms, sorted.
 
     The ``TH1`` objects of the sample's first file, under the rule of
@@ -85,20 +85,22 @@ def stored_names(sample: Sample) -> list[str]:
     a name that a branch of the file's one tree takes. A histogram inside a
     directory is listed by its path (``"sel/mz"``), which an expression writes
     in backticks. This is the stored half of what ``PlotBook(data, rf.ALL)``
-    discovers.
+    discovers. With ``variation``, ``sample`` is the one a ``Systematic.samples``
+    variation reads (:func:`read_stored`): its histograms are read by name
+    alone, so the file's trees and their branches do not enter.
 
     Raises
     ------
     SourceError
         If the file holds several trees next to its histograms (pass ``tree=``
-        to read a branch).
+        to read a branch); not for a variation.
     """
     source = sample.source
     if not isinstance(source, FileSource) or _addresses_a_tree(source) is not None:
         return []
     names = source.histograms(ndim=1)
-    if not names:
-        return []
+    if variation or not names:
+        return names
     trees = source.trees()
     if len(trees) > 1:
         raise SourceError(_several_trees(source, f"{len(names)} stored histograms", trees))

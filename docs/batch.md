@@ -125,7 +125,11 @@ variable must be present in every one of them, the same way: a name that is a
 branch in one sample and a stored histogram in another is not a common
 variable. Variants that change how the histograms are prepared (`tree`,
 `observed`, `weight`, ...) must all be able to plot it too, so the discovered
-set is the intersection over the effective configurations. Stored histograms
+set is the intersection over the effective configurations. The files or arrays
+a `Systematic.samples` variation fills or reads from are surveyed like a sample
+of their own and take part in the intersection, in the mode of the sample they
+vary; a variation that cannot be built or surveyed is left to the task, which
+reports it whatever the variable. Stored histograms
 are left out whenever the book is bound to refuse them: a selection, a
 `weight`, `nonfinite="error"`, a `stats` box, a `range` without `bins`, or a
 systematic varying the weight or branches that applies to a sample (the plot's

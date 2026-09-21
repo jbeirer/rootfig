@@ -660,28 +660,17 @@ class TestBranchForms:
 
         path = tmp_path / "types.root"
         with uproot.recreate(path) as file:
-            tree = file.mktree(
+            # the branch types are inferred from the arrays, the same on every uproot version
+            file.mktree(
                 "events",
-                {
-                    "f": "float64",
-                    "i": "int16",
-                    "u": "uint8",
-                    "b": "bool",
-                    "jag": "var * float32",
-                    "fixed": ("float64", (3,)),
-                    "s": "string",
-                    "odd-name": "float32",
-                },
-            )
-            tree.extend(
                 {
                     "f": np.zeros(2),
                     "i": np.zeros(2, dtype=np.int16),
                     "u": np.zeros(2, dtype=np.uint8),
                     "b": np.zeros(2, dtype=bool),
-                    "jag": ak.Array([[1.0], []]),
+                    "jag": ak.values_astype(ak.Array([[1.0], []]), np.float32),
                     "fixed": np.zeros((2, 3)),
-                    "s": ["a", "b"],
+                    "s": ak.Array(["a", "b"]),
                     "odd-name": np.zeros(2, dtype=np.float32),
                 },
             )

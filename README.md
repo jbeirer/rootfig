@@ -150,7 +150,7 @@ histograms of the files (metadata only), filtered by name:
 
 ```python
 book = rf.PlotBook(
-    samples,
+    [vv, signal],
     variables=rf.ALL,
     exclude=["*_cov", "*Index"],
 )

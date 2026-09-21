@@ -12,7 +12,7 @@ explicit list.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Any, Literal
@@ -23,7 +23,9 @@ from rootfig.errors import RootfigError, SourceError
 from rootfig.expressions import quote_name
 from rootfig.histograms import stored_names
 from rootfig.histograms.pipeline import _sample_systematics
+from rootfig.histograms.pipeline import _variant_sample as _varied_sample
 from rootfig.histograms.sources import shared_source
+from rootfig.histograms.stored import _variant_sample as _varied_stored_sample
 from rootfig.io import FileSource, ReadCache, Source
 from rootfig.io.objects import histogram_dimension, is_tree_class
 from rootfig.io.schema import plottable
@@ -73,6 +75,10 @@ def discover(
     box, a ``(low, high)`` range without bins, or a systematic varying event data
     that applies to the sample (the plot's, unless the sample's own source of
     that name replaces it; none for observed data) rules stored histograms out.
+    The data a ``Systematic.samples`` variation fills or reads from is surveyed
+    like a sample of its own and must provide the name in the sample's mode;
+    one that cannot be built or surveyed is left to the task, which reports it
+    whatever the variable.
     ``include`` keeps the names matching one of its shell patterns, ``exclude``
     drops those matching one of its; both match the source name,
     case-sensitively. The result is sorted by source name, a name that is not an
@@ -195,6 +201,24 @@ class _Seen:
     """Why its stored histograms were not offered, when it has any."""
 
 
+@dataclass(frozen=True)
+class _Varied:
+    """What the data of one ``Systematic.samples`` variation offers, in either mode."""
+
+    branches: frozenset[str]
+    """Branches it can be filled from."""
+
+    stored: frozenset[str]
+    """1D histograms read by name from its files; empty when it cannot read any."""
+
+    seen: _Seen
+    """Its entry for the message when nothing is left."""
+
+    def offers(self, name: str, mode: _Mode) -> bool:
+        """Whether the variation provides ``name`` the way the nominal sample does."""
+        return name in (self.branches if mode == "branch" else self.stored)
+
+
 class _Discovery:
     """Inventories of the sources of a book, each file inspected once however often it is met."""
 
@@ -210,6 +234,8 @@ class _Discovery:
         The configuration's ``constraints`` rule stored histograms out for every
         sample or for none; a sample's own selection or weight, or a systematic
         varying event data that applies to it, rules them out for that sample.
+        The data of every ``Systematic.samples`` variation that applies to the
+        sample must provide a name in the sample's mode too.
         """
         common: dict[str, _Mode] | None = None
         for sample in leaf_samples(items):
@@ -224,8 +250,64 @@ class _Discovery:
             self.seen.append(
                 _Seen(sample, inventory, names, left_out if inventory.stored else None)
             )
+            for varied in self._variations(sample, constraints.systematics):
+                names = {name: mode for name, mode in names.items() if varied.offers(name, mode)}
+                self.seen.append(varied.seen)
             common = names if common is None else _both(common, names)
         return common or {}
+
+    def _variations(
+        self, sample: Sample, plot_level: Mapping[str, Systematic]
+    ) -> Iterator[_Varied]:
+        """Survey the data of every ``Systematic.samples`` variation that applies to ``sample``.
+
+        A variation is filled like a sample of its own or its histogram read by
+        name from its files (:func:`~rootfig.histograms.build_histograms`,
+        :func:`~rootfig.histograms.read_stored`), so it must provide the
+        variable too. One whose data cannot be built or surveyed is left to the
+        task, which reports it whatever the variable.
+        """
+        for name, systematic in _sample_systematics(sample, plot_level).items():
+            if systematic.kind != "samples":
+                continue
+            for direction, spec in (("up", systematic.up), ("down", systematic.down)):
+                if spec is None:
+                    continue
+                varied = self._variation(sample, spec, f"{sample.label} [{name} {direction}]")
+                if varied is not None:
+                    yield varied
+
+    def _variation(self, sample: Sample, spec: Any, context: str) -> _Varied | None:
+        """Survey one variation's data as it is filled from and as its histograms are read."""
+        shown: Sample | None = None
+        branches: frozenset[str] = frozenset()
+        left_out: tuple[str, ...] = ()
+        try:
+            filled = _varied_sample(sample, spec, context, cache=self._cache)
+            inventory = self.inventory(filled)
+        except RootfigError:
+            pass  # not to be built or surveyed: the task reports it, whatever the variable
+        else:
+            shown, branches, left_out = filled, inventory.branches, inventory.left_out
+        stored: frozenset[str] = frozenset()
+        stored_left_out: str | None = None
+        try:
+            read = _varied_stored_sample(sample, spec, context, cache=self._cache)
+        except RootfigError:
+            if shown is not None:  # arrays: to be filled from, but holding no stored histograms
+                stored_left_out = "in-memory data holds no stored histograms"
+        else:
+            shown = shown or read
+            stored_left_out = _needs_event_data(read, {})
+            if stored_left_out is None:
+                stored = frozenset(stored_names(read, variation=True))
+        if shown is None:
+            return None
+        offered: dict[str, _Mode] = dict.fromkeys(sorted(branches), "branch")
+        for name in sorted(stored - branches):
+            offered[name] = "stored"
+        seen = _Seen(shown, _Inventory(branches, stored, left_out), offered, stored_left_out)
+        return _Varied(branches, stored, seen)
 
     def inventory(self, sample: Sample) -> _Inventory:
         """Return what the source of ``sample`` offers, inspecting each distinct file once."""
@@ -258,6 +340,8 @@ class _Discovery:
                 if seen.stored_left_out is not None:
                     stored += f" left out ({seen.stored_left_out})"
                 held.append(stored)
+            elif seen.stored_left_out is not None:
+                held.append(f"no stored 1D histograms ({seen.stored_left_out})")
             if inventory.left_out:
                 held.append(f"not plottable {_listed(inventory.left_out)}")
             lines.append(f"{label!r} ({described}): {'; '.join(held)}")

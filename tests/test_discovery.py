@@ -54,8 +54,7 @@ def _write_tree(path: Path, columns: dict[str, Any], *, rntuple: bool) -> None:
         if rntuple:
             file["events"] = arrays
         else:
-            types = {k: str(v.type).split(" * ", 1)[1] for k, v in arrays.items()}
-            file.mktree("events", types).extend(arrays)
+            file.mktree("events", arrays)  # the branch types are inferred from the arrays
 
 
 @pytest.fixture(scope="module")
@@ -996,3 +995,93 @@ class TestPublicFunction:
         assert [v.expression for v in rf.discover_variables(path)] == ["mz", "pt"]
         stats = rf.discover_variables(path, variants={"a": {}, "b": {"stats": True}})
         assert [v.expression for v in stats] == ["pt"]
+
+
+class TestSampleVariations:
+    """``Systematic.samples`` variations are filled or read like samples, so they take part."""
+
+    def test_branch_missing_from_a_variation(self) -> None:
+        sample = rf.Sample(
+            {"x": [1.0, 2.0], "y": [2.0, 3.0]},
+            label="A",
+            systematics={"alt": rf.Systematic.samples({"x": [1.1, 2.1]})},
+        )
+        book = rf.PlotBook(sample, rf.ALL)
+        assert _names(book) == ["x"]
+        ((_, result),) = list(book.plots())
+        assert list(result.histograms[0].variations) == ["alt"]
+        result.close()
+        # y would fail when the variation is loaded, as the explicit call does
+        with pytest.raises(rf.MissingBranchError):
+            rf.plot(sample, "y")
+        # the down variation counts too, and the message names the variation
+        both = rf.Sample(
+            {"x": [1.0], "y": [2.0]},
+            label="A",
+            systematics={"alt": rf.Systematic.samples({"x": [1.1], "y": [2.0]}, {"x": [0.9]})},
+        )
+        assert _names(rf.PlotBook(both, rf.ALL)) == ["x"]
+        only = rf.Sample(
+            {"y": [2.0]}, label="A", systematics={"alt": rf.Systematic.samples({"x": [1.1]})}
+        )
+        with pytest.raises(rf.SourceError, match=re.escape("['y'] missing from ['A [alt up]']")):
+            rf.PlotBook(only, rf.ALL)
+
+    def test_file_variation_lacking_branches(self, signal_file: Path, tmp_path: Path) -> None:
+        alt = tmp_path / "alt.root"
+        _write_tree(
+            alt, {"MET": np.array([1.0, 2.0]), "weight": np.array([1.0, 1.0])}, rntuple=False
+        )
+        sample = rf.Sample(
+            signal_file,
+            tree="events",
+            label="S",
+            weight="weight",
+            systematics={"alt": rf.Systematic.samples(str(alt))},
+        )
+        book = rf.PlotBook(sample, rf.ALL)
+        assert _names(book) == ["MET", "weight"]
+        results = list(book.plots())
+        assert [list(r.histograms[0].variations) for _, r in results] == [["alt"], ["alt"]]
+        for _, result in results:
+            result.close()
+        # the plot-level form applies to every simulated sample alike
+        plain = rf.Sample(signal_file, tree="events", label="S")
+        book = rf.PlotBook(
+            plain, rf.ALL, plot_kwargs={"systematics": {"alt": rf.Systematic.samples(str(alt))}}
+        )
+        assert _names(book) == ["MET", "weight"]
+
+    def test_stored_histogram_missing_from_a_variation(self, stored_dir: Path) -> None:
+        zh = stored_dir / "ZH_sel0_histo.root"
+        # the variation file holds mz only, next to a tree, which does not matter for a variation
+        alt = str(stored_dir / "tree_without_branch.root")
+        sample = rf.Sample(zh, label="ZH", systematics={"alt": rf.Systematic.samples(alt)})
+        book = rf.PlotBook(sample, rf.ALL)
+        assert _names(book) == ["mz"]
+        ((_, result),) = list(book.plots())
+        assert list(result.histograms[0].variations) == ["alt"]
+        result.close()
+        with pytest.raises(rf.SourceError, match="not found"):
+            rf.plot(sample, "mz_raw")
+        # in-memory data holds no stored histograms, so such a variation rules them out
+        arrays = rf.Sample(
+            zh, label="ZH", systematics={"alt": rf.Systematic.samples({"mz": [1.0]})}
+        )
+        with pytest.raises(
+            rf.SourceError,
+            match=re.escape("no stored 1D histograms (in-memory data holds no stored histograms)"),
+        ):
+            rf.PlotBook(arrays, rf.ALL)
+        with pytest.raises(rf.SystematicError):
+            rf.plot(arrays, "mz")
+
+    def test_variation_that_cannot_be_built_is_left_to_the_task(self, tmp_path: Path) -> None:
+        missing = str(tmp_path / "missing.root")
+        sample = rf.Sample(
+            {"x": [1.0]}, label="A", systematics={"alt": rf.Systematic.samples(missing)}
+        )
+        book = rf.PlotBook(sample, rf.ALL)
+        assert _names(book) == ["x"]
+        with pytest.raises(rf.SystematicError, match="cannot use"):
+            list(book.plots())
