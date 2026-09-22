@@ -156,8 +156,9 @@ def compare(
     different sources then combine like those of one histogram (see
     :mod:`rootfig.histograms.systematics`). With ``uncertainty="numerator"``
     only the numerator's sources enter the error bars; the reference's are the
-    band. A variation that empties a reference bin of a ratio leaves that bin's
-    systematic uncertainty ``nan``, with a :class:`~rootfig.errors.RootfigWarning`.
+    band. In a ratio or a relative difference, a variation that empties a
+    reference bin leaves that bin's systematic uncertainty ``nan``, with a
+    :class:`~rootfig.errors.RootfigWarning`.
 
     Raises
     ------

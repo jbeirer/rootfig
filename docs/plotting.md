@@ -106,9 +106,10 @@ unc.`), overlaid samples with variations get a light band in their own colour,
 and the [lower panel](#lower-panel) includes the systematics in its band
 around the baseline (`split_ratio`, data/MC) or in the error bars of the points
 (`propagate`: statistical uncertainties uncorrelated, systematic ones
-propagated source by source through the varied ratio or difference; a
-variation that empties a denominator bin leaves that bin's systematic
-uncertainty undefined, with a warning), and a pull divides by them. The
+propagated source by source through the varied comparison; in a ratio or a
+relative difference, a variation that empties a reference bin leaves that
+bin's systematic uncertainty undefined, with a warning), and a pull divides
+by them. The
 automatic range covers the bulk of the band and of the systematic error bars
 (robust percentiles, like the points, so a single bin with a huge uncertainty
 runs off the panel instead of squashing it; pass `panel_ylim` to show it in
@@ -212,9 +213,11 @@ significance is the exception, its upper limit following the highest point
 plus its error.
 
 `σ_syst` of a pull is the combined [systematic
-uncertainty](#systematic-uncertainties) of `n − d`, every source varying both
-sides together, taken on the side facing the other histogram: the lower one
-where `n > d`, the upper one elsewhere (mplhep's rule for Poisson pulls).
+uncertainty](#systematic-uncertainties) of `n − d`: a source carried by both
+histograms varies them together, and one carried by a single histogram varies
+it against the other's nominal contents. The combination is taken on the side
+facing the other histogram: the lower one where `n > d`, the upper one
+elsewhere (mplhep's rule for Poisson pulls).
 Significance panels use statistical uncertainties only.
 
 **Roles.** Without `reference=`:
@@ -230,9 +233,10 @@ Significance panels use statistical uncertainties only.
 With the signal last, drawing it inside the stack or over it shows the same
 significance panel, and stacking the backgrounds (`stack=["WW", "ZZ"]`)
 compares every overlaid signal with them. `reference="Background"` names one
-histogram (a group's label counts), for every kind the denominator: every
-other histogram, data included, is compared with it, and for a significance
-every other non-data histogram is a signal over it as background. A label
+histogram (a group's label counts): the denominator of a ratio or a relative
+difference, the `d` of `n − d` for a difference and a pull, and the background
+of a significance. Every other histogram, data included, is compared with it;
+for a significance every other non-data histogram is a signal over it. A label
 that no drawn histogram or several carry raises `ValueError`, as does observed
 data as a background, or `reference=` without `panel=`.
 
