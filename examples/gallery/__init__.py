@@ -158,7 +158,7 @@ def quick(style: rf.Style) -> rf.Plot:
 def overlay_ratio(style: rf.Style) -> rf.Plot:
     """A ``{label: file}`` mapping gives one histogram per sample with a binning shared by
     all. An integer ``bins`` infers the range from every sample at once, cutting the thin
-    end of the tail. ``normalize=True`` scales each to unit area and ``ratio=True`` adds a
+    end of the tail. ``normalize=True`` scales each to unit area and ``panel="ratio"`` adds a
     panel with every sample divided by the first, uncertainties propagated."""
     return rf.plot(
         {"Signal": "signal.root", "Z + jets": "background.root"},
@@ -169,7 +169,7 @@ def overlay_ratio(style: rf.Style) -> rf.Plot:
         bins=40,
         unit="GeV",
         normalize=True,
-        ratio=True,
+        panel="ratio",
         style=style,
     )
 
@@ -204,7 +204,7 @@ def many_plots(mc: list[rf.Sample], data: rf.Sample) -> rf.Plot:
         rf.Variable("Muon_phi", bins=(32, -3.2, 3.2), label=r"$\phi^{\mu}$", unit="rad"),
     ]
     for variable in variables:
-        p = rf.plot(mc, variable, observed=data, selection=selection, stack=True, ratio=True)
+        p = rf.plot(mc, variable, observed=data, selection=selection, stack=True, panel="ratio")
         p.save("plots/", formats=["pdf", "png"])  # plots/MET.pdf, plots/MET.png, ...
     return p
 
@@ -215,15 +215,28 @@ def many_plots(mc: list[rf.Sample], data: rf.Sample) -> rf.Plot:
 def stack_data(mc: list[rf.Sample], data: rf.Sample, pt: rf.Variable, style: rf.Style) -> rf.Plot:
     """A ``Cut`` combines selection strings with ``&`` and carries a label for the plot.
     Simulation is stacked bottom to top in the given order with a hatched
-    statistical-uncertainty band, data is drawn as points, and the ratio panel shows data
+    statistical-uncertainty band, data is drawn as points, and ``panel="ratio"`` shows data
     over the total prediction. The returned ``Plot`` holds plain matplotlib objects, so any
     further customisation is ordinary matplotlib code."""
     tight = rf.Cut("Muon_isTight", label="tight") & "abs(Muon_eta) < 2.5"
     p = rf.plot(
-        mc, pt, observed=data, selection=tight, stack=True, ratio=True, logy=True, style=style
+        mc, pt, observed=data, selection=tight, stack=True, panel="ratio", logy=True, style=style
     )
     p.ax.axvline(100, color="gray", linestyle="--", linewidth=1)
     return p
+
+
+@example(
+    "pull",
+    "A pull panel: data minus the prediction, in units of the uncertainty",
+    section=SIMULATION_AND_DATA,
+)
+def pull(mc: list[rf.Sample], data: rf.Sample, met: rf.Variable, style: rf.Style) -> rf.Plot:
+    """``panel=`` chooses what the lower panel shows: ``"ratio"``, ``"difference"``,
+    ``"relative_difference"``, ``"pull"`` or a significance, and ``reference=`` what it
+    compares with. A pull is the difference between the data and the stacked prediction
+    divided by their combined statistical and systematic uncertainty, drawn as bars."""
+    return rf.plot(mc, met, observed=data, stack=True, panel="pull", logy=True, style=style)
 
 
 @example(
@@ -236,15 +249,15 @@ def selective_stack(
 ) -> rf.Plot:
     """``stack=`` selects the backgrounds by their legend labels. The signal is
     drawn as an outline over the stack in the text colour, like data points, so
-    it stands out from the filled backgrounds on light and dark pages; the
-    significance panel compares it with the background total, in the same
+    it stands out from the filled backgrounds on light and dark pages;
+    ``panel="s/sqrt(b)"`` compares it with the background total, in the same
     colour. The hatched band belongs to the backgrounds; the signal's
     uncertainty is a light band in its own colour."""
     return rf.plot(
         [zjets, diboson, signal.replace(color=plt.rcParams["text.color"])],
         mll,
         stack=["Z + jets", "Diboson"],
-        ratio="significance",
+        panel="s/sqrt(b)",
         logy=True,
         systematics={"lumi": 0.02},
         style=style,
@@ -285,7 +298,7 @@ def systematics(signal: rf.Sample, data: rf.Sample, met: rf.Variable, style: rf.
         met,
         observed=data,
         stack=True,
-        ratio=True,
+        panel="ratio",
         logy=True,
         systematics={"lumi": 0.02},
         style=style,
@@ -300,8 +313,8 @@ def systematics(signal: rf.Sample, data: rf.Sample, met: rf.Variable, style: rf.
 def ratio_reference(
     signal: rf.Sample, zjets: rf.Sample, diboson: rf.Sample, style: rf.Style
 ) -> rf.Plot:
-    """``ratio="Z + jets"`` picks the reference sample by label; ``ratio_ylim`` and
-    ``ratio_label`` override the automatic range and label. A ``Sample`` can carry its own
+    """``reference="Z + jets"`` picks the sample the ratio panel divides by; ``panel_ylim``
+    and ``panel_label`` override the automatic range and label. A ``Sample`` can carry its own
     ``color`` and ``histtype``; the reference takes the text colour, like data points, so it
     stays visible on light and dark pages."""
     return rf.plot(
@@ -312,9 +325,10 @@ def ratio_reference(
         ],
         rf.Variable("nJet", bins=(9, -0.5, 8.5), label="Jet multiplicity"),
         normalize=True,
-        ratio="Z + jets",
-        ratio_ylim=(0, 3),
-        ratio_label="Ratio to Z + jets",
+        panel="ratio",
+        reference="Z + jets",
+        panel_ylim=(0, 3),
+        panel_label="Ratio to Z + jets",
         style=style,
     )
 
@@ -328,14 +342,14 @@ def xbreak_ratio(
     mc: list[rf.Sample], data: rf.Sample, mll: rf.Variable, style: rf.Style
 ) -> rf.Plot:
     """``xbreak=(a, b)`` removes the range between ``a`` and ``b`` from the x axis and draws
-    the two segments side by side with break marks; the ratio panel follows. Here the Z peak
+    the two segments side by side with break marks; the lower panel follows. Here the Z peak
     and a high-mass resonance share one figure."""
     return rf.plot(
         mc,
         mll,
         observed=data,
         stack=True,
-        ratio=True,
+        panel="ratio",
         logy=True,
         xbreak=(125, 195),
         style=style,
@@ -364,7 +378,7 @@ def luminosity(mll: rf.Variable) -> rf.Plot:
         lumi="10.8 ab^-1",
         stack=True,
         logy=True,
-        ratio="significance",
+        panel="s/sqrt(b)",
         style=fcc,
     )
 
@@ -408,7 +422,7 @@ def variable_bins(mc: list[rf.Sample], data: rf.Sample, style: rf.Style) -> rf.P
         rf.Variable("MET", bins=edges, label=r"$E_T^{miss}$", unit="GeV"),
         observed=data,
         stack=True,
-        ratio=True,
+        panel="ratio",
         normalize="width",
         flow="show",
         logy=True,

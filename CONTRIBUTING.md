@@ -50,7 +50,7 @@ src/rootfig/
   io/             file and in-memory data sources
   model/          Sample, Group, Variable, Cut, Style, binning
   selection/      per-event / per-object semantics -> flat columns
-  histograms/     filling, normalisation, ratios, statistics, groups, pipeline
+  histograms/     filling, normalisation, comparisons, statistics, groups, pipeline
   plotting/       matplotlib/mplhep rendering, styles, annotations
 tests/            one module per layer plus end-to-end API tests
 docs/             MkDocs sources

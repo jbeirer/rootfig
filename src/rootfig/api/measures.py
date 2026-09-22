@@ -121,7 +121,7 @@ def efficiency(
     if legend is not None:
         resolved_style = resolved_style.replace(legend=legend)
     with style_context(resolved_style) as st:
-        layout = make_figure(st, ratio=False, ax=ax, figsize=figsize)
+        layout = make_figure(st, panel=False, ax=ax, figsize=figsize)
         cycle = iter(color_cycle(len(samples), st))
         colors = [s.color or next(cycle) for s in samples]
         low, high = draw_efficiencies(efficiencies, layout.main, style=st, colors=colors)
@@ -257,7 +257,7 @@ def profile(
     if ylabel is None:
         ylabel = var_y.axis_label if statistic == "mean" else f"Std. dev. of {var_y.axis_label}"
     with style_context(resolved_style) as st:
-        layout = make_figure(st, ratio=False, ax=ax, figsize=figsize)
+        layout = make_figure(st, panel=False, ax=ax, figsize=figsize)
         cycle = iter(color_cycle(len(samples), st))
         colors = [s.color or next(cycle) for s in samples]
         low, high = draw_profiles(profiles, layout.main, style=st, colors=colors)

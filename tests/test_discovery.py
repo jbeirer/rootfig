@@ -562,11 +562,13 @@ class TestSamples:
     def test_observed_takes_part(self) -> None:
         mc = rf.Sample({"x": [1.0], "y": [1.0], "z": [1.0]}, label="MC")
         data = {"x": [1.0, 2.0], "y": [1.0, 2.0]}
-        book = rf.PlotBook(mc, rf.ALL, plot_kwargs={"observed": data, "stack": True, "ratio": True})
+        book = rf.PlotBook(
+            mc, rf.ALL, plot_kwargs={"observed": data, "stack": True, "panel": "ratio"}
+        )
         assert _names(book) == ["x", "y"]
         for _, result in book.plots():
             assert [h.is_data for h in result.histograms] == [False, True]
-            assert result.ratio_ax is not None
+            assert result.panel_ax is not None
             result.close()
         group = rf.Group([rf.Sample(data, label="D", is_data=True)], label="Data")
         assert _names(rf.PlotBook(mc, rf.ALL, plot_kwargs={"observed": group})) == ["x", "y"]

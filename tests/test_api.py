@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
 import io
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import awkward as ak
 import hist
@@ -14,6 +15,7 @@ import mplhep as hep
 import numpy as np
 import pytest
 import uproot
+from matplotlib.collections import PolyCollection
 from matplotlib.colors import to_rgba
 from matplotlib.font_manager import FontProperties
 from matplotlib.transforms import ScaledTranslation
@@ -39,9 +41,9 @@ from rootfig.plotting import (
 from rootfig.plotting.style import LABEL_MIN_SCALE
 
 
-def ratio_ylabel(plot: Any) -> str:
-    """The ratio panel's y label, ignoring the wrapping that makes it fit the panel."""
-    return plot.ratio_ax.get_ylabel().replace("\n", " ")
+def panel_ylabel(plot: Any) -> str:
+    """The lower panel's y label, ignoring the wrapping that makes it fit the panel."""
+    return plot.panel_ax.get_ylabel().replace("\n", " ")
 
 
 class TestLoad:
@@ -251,7 +253,7 @@ class TestPlot:
         )
         assert isinstance(p, rf.Plot)
         assert isinstance(p.fig, plt.Figure)
-        assert p.ratio_ax is None
+        assert p.panel_ax is None
         assert len(p.histograms) == 1
         assert p.histograms[0].label == "signal" or p.histograms[0].label == "signal_rntuple"
         assert p.ax.get_xlabel() == "Muon_pt"
@@ -270,18 +272,18 @@ class TestPlot:
             weight="weight",
             bins=(50, 0, 200),
             normalize=True,
-            ratio=True,
+            panel="ratio",
             label=["Signal", "Background"],
             unit="GeV",
         )
-        assert p.ratio_ax is not None
-        assert len(p.ratios) == 1
+        assert p.panel_ax is not None
+        assert len(p.comparisons) == 1
         assert p.ax.get_ylabel() == "Normalised to unity"
-        assert p.ratio_ax.get_xlabel() == "Muon_pt [GeV]"
-        assert ratio_ylabel(p) == "Ratio to Signal"
+        assert p.panel_ax.get_xlabel() == "Muon_pt [GeV]"
+        assert panel_ylabel(p) == "Ratio to Signal"
         for h in p.histograms:
             assert h.integral == pytest.approx(1.0)
-        ratio = p.ratios[0]
+        ratio = p.comparisons[0]
         with np.errstate(divide="ignore", invalid="ignore"):
             expected = p.histograms[1].values() / p.histograms[0].values()
         ok = np.isfinite(ratio.values)
@@ -289,12 +291,24 @@ class TestPlot:
 
     def test_ratio_reference_by_label(self, signal_file: Path, background_file: Path) -> None:
         p = rf.plot(
-            [signal_file, background_file], "MET", tree="events", bins=10, ratio="background"
+            [signal_file, background_file],
+            "MET",
+            tree="events",
+            bins=10,
+            panel="ratio",
+            reference="background",
         )
-        assert p.ratio_ax is not None
-        assert ratio_ylabel(p) == "Ratio to background"
-        with pytest.raises(ValueError, match="not one of"):
-            rf.plot([signal_file, background_file], "MET", tree="events", bins=10, ratio="nope")
+        assert p.panel_ax is not None
+        assert panel_ylabel(p) == "Ratio to background"
+        with pytest.raises(ValueError, match="not the label of a drawn histogram"):
+            rf.plot(
+                [signal_file, background_file],
+                "MET",
+                tree="events",
+                bins=10,
+                panel="ratio",
+                reference="nope",
+            )
 
     def test_stack_with_observed_data(self, signal_file: Path, background_file: Path) -> None:
         mc = [
@@ -308,26 +322,26 @@ class TestPlot:
             observed=observed,
             bins=(20, 0, 200),
             stack=True,
-            ratio=True,
+            panel="ratio",
             logy=True,
             style="ATLAS",
         )
         assert [h.label for h in p.histograms] == ["Signal", "Background", "Data"]
         assert p.histograms[2].is_data
         assert p.ax.get_yscale() == "log"
-        assert p.ratio_ax is not None
-        assert ratio_ylabel(p) == "Data / MC"
+        assert p.panel_ax is not None
+        assert panel_ylabel(p) == "Data / MC"
         legend_texts = [t.get_text() for t in p.ax.get_legend().get_texts()]
         assert legend_texts == ["Data", "Background", "Signal", "Stat. unc."]
         total = p.histograms[0].values() + p.histograms[1].values()
         with np.errstate(divide="ignore", invalid="ignore"):
             expected = np.where(total > 0, p.histograms[2].values() / total, np.nan)
         ok = np.isfinite(expected)
-        assert p.ratios[0].values[ok].tolist() == pytest.approx(expected[ok].tolist())
+        assert p.comparisons[0].values[ok].tolist() == pytest.approx(expected[ok].tolist())
 
     @staticmethod
     def _marker_colors(p: rf.Plot) -> set[tuple[float, ...]]:
-        lines = [*p.ax.lines, *(p.ratio_ax.lines if p.ratio_ax else [])]
+        lines = [*p.ax.lines, *(p.panel_ax.lines if p.panel_ax else [])]
         return {to_rgba(line.get_color()) for line in lines if line.get_marker() == "o"}
 
     def test_dark_theme_overrides_experiment_style(
@@ -335,7 +349,7 @@ class TestPlot:
     ) -> None:
         mc = [rf.Sample(signal_file, tree="events", label="Signal")]
         observed = rf.Sample(background_file, tree="events", label="Data", entry_stop=1000)
-        kwargs: dict[str, Any] = {"observed": observed, "bins": (20, 0, 200), "ratio": True}
+        kwargs: dict[str, Any] = {"observed": observed, "bins": (20, 0, 200), "panel": "ratio"}
         with rf.dark_theme():
             dark = rf.plot(mc, "MET", style="ATLAS", stack=True, **kwargs)
         ink = to_rgba(rf.plotting.DARK_THEME["text.color"])
@@ -359,7 +373,7 @@ class TestPlot:
             observed=rf.Sample(background_file, tree="events", label="Data", entry_stop=1000),
             bins=(20, 0, 200),
             stack=True,
-            ratio=True,
+            panel="ratio",
             style=rf.Style(rc={"text.color": grey}),
         )
         assert self._marker_colors(p) == {grey}
@@ -393,12 +407,12 @@ class TestPlot:
                 tree="events",
                 bins=10,
                 stack=True,
-                ratio=True,
+                panel="ratio",
             )
 
     def test_ratio_needs_two(self, signal_file: Path) -> None:
         with pytest.raises(ValueError, match="at least two"):
-            rf.plot(signal_file, "MET", tree="events", bins=10, ratio=True)
+            rf.plot(signal_file, "MET", tree="events", bins=10, panel="ratio")
 
     def test_label_mapping_and_variable_object(
         self, signal_file: Path, background_file: Path
@@ -454,22 +468,28 @@ class TestPlot:
         sig = rf.Sample(signal_file, tree="events", label="S")
         bkg = rf.Sample(background_file, tree="events", label="B", selection="MET < 100")
         p = rf.plot(
-            [bkg, sig], "MET", observed=sig, bins=(10, 0, 100), stack=True, ratio=True, flow="show"
+            [bkg, sig],
+            "MET",
+            observed=sig,
+            bins=(10, 0, 100),
+            stack=True,
+            panel="ratio",
+            flow="show",
         )
         edges = p.histograms[0].edges
         assert len(edges) == 12  # 10 bins plus the overflow bin
         assert all(len(h.edges) == 12 for h in p.histograms)
         assert p.ax.get_xlim()[1] == pytest.approx(edges[-1])
-        assert p.ratios[0].edges[-1] == pytest.approx(edges[-1])
-        assert p.ratio_ax is not None
-        assert ">100" in [t.get_text() for t in p.ratio_ax.get_xticklabels()]
+        assert p.comparisons[0].edges[-1] == pytest.approx(edges[-1])
+        assert p.panel_ax is not None
+        assert ">100" in [t.get_text() for t in p.panel_ax.get_xticklabels()]
         assert p.ax.get_ylabel().startswith("Events / 10")  # width of the bins as filled
         with pytest.raises(ValueError, match="flow='show'"):
             rf.plot(
                 signal_file, "MET", tree="events", bins=(10, 0, 100), xbreak=(20, 80), flow="show"
             )
 
-    def test_existing_axes(self, signal_file: Path) -> None:
+    def test_existing_axes(self, signal_file: Path, background_file: Path) -> None:
         fig, axes = plt.subplots(1, 2)
         p = rf.plot(signal_file, "MET", tree="events", bins=10, ax=axes[1], legend=False, title="t")
         assert p.ax is axes[1]
@@ -477,8 +497,18 @@ class TestPlot:
         assert p.ax.get_legend() is None
         assert p.ax.get_title() == "t"
         fig, (main, lower) = plt.subplots(2)
-        p = rf.plot(signal_file, "MET", tree="events", bins=10, ax=(main, lower), ratio="signal")
-        assert p.ratio_ax is lower
+        p = rf.plot(
+            [signal_file, background_file],
+            "MET",
+            tree="events",
+            bins=10,
+            ax=(main, lower),
+            panel="ratio",
+            reference="signal",
+        )
+        assert p.panel_ax is lower
+        with pytest.raises(ValueError, match="at least two histograms"):
+            rf.plot(signal_file, "MET", tree="events", panel="ratio", reference="signal")
 
     def test_style_object_and_figsize(self, signal_file: Path) -> None:
         style = rf.Style(
@@ -550,18 +580,191 @@ class TestRatioReference:
             return rf.Histogram(h, label=label, is_data=is_data)
 
         data = make(20.0, "Data", is_data=True)
-        p = rf.plot([data, make(10.0, "A"), make(30.0, "B")], ratio=True)
-        assert len(p.ratios) == 1  # only the data appears in the panel
-        np.testing.assert_allclose(p.ratios[0].values, [2.0, 2.0])  # data / A, not data / total
-        assert p.ratio_ax is not None
-        assert ratio_ylabel(p) == "Data / A"
-        stacked = rf.plot([data, make(10.0, "A"), make(30.0, "B")], ratio=True, stack=True)
-        np.testing.assert_allclose(stacked.ratios[0].values, [0.5, 0.5])  # data / total
-        partial_stack = rf.plot([data, make(10.0, "A"), make(30.0, "B")], ratio=True, stack=["A"])
-        np.testing.assert_allclose(partial_stack.ratios[0].values, [2.0, 2.0])
-        without_data = rf.plot([make(10.0, "A"), make(30.0, "B")], ratio=True, stack=["A"])
-        np.testing.assert_allclose(without_data.ratios[0].values, [3.0, 3.0])
-        np.testing.assert_allclose(without_data.ratios[0].errors, np.sqrt([18.0, 18.0]))
+        p = rf.plot([data, make(10.0, "A"), make(30.0, "B")], panel="ratio")
+        assert len(p.comparisons) == 1  # only the data appears in the panel
+        # data / A, not data / total
+        np.testing.assert_allclose(p.comparisons[0].values, [2.0, 2.0])
+        assert p.panel_ax is not None
+        assert panel_ylabel(p) == "Data / A"
+        stacked = rf.plot([data, make(10.0, "A"), make(30.0, "B")], panel="ratio", stack=True)
+        np.testing.assert_allclose(stacked.comparisons[0].values, [0.5, 0.5])  # data / total
+        partial_stack = rf.plot(
+            [data, make(10.0, "A"), make(30.0, "B")], panel="ratio", stack=["A"]
+        )
+        np.testing.assert_allclose(partial_stack.comparisons[0].values, [2.0, 2.0])
+        without_data = rf.plot([make(10.0, "A"), make(30.0, "B")], panel="ratio", stack=["A"])
+        np.testing.assert_allclose(without_data.comparisons[0].values, [3.0, 3.0])
+        np.testing.assert_allclose(without_data.comparisons[0].errors, np.sqrt([18.0, 18.0]))
+
+
+class TestPanelRoles:
+    """Who is compared with what in the lower panel, and what a bad request raises."""
+
+    CONTENTS: ClassVar[dict[str, float]] = {
+        "A": 10.0,
+        "B": 30.0,
+        "C": 5.0,
+        "Data": 20.0,
+        "Background": 40.0,  # the sum of the others for C: A + B
+    }
+
+    def _hists(
+        self, *, data: bool, labels: tuple[str, ...] = ("A", "B", "C"), start: float = 0.0
+    ) -> list[Any]:
+        axis = hist.axis.Regular(2, start, start + 2, name="x", label="x")
+        hists = []
+        for label in (*labels, "Data") if data else labels:
+            h = hist.Hist(axis, storage=hist.storage.Weight())
+            h.view().value = self.CONTENTS[label]
+            h.view().variance = self.CONTENTS[label]
+            hists.append(rf.Histogram(h, label=label, is_data=label == "Data"))
+        return hists
+
+    # (stack, data) -> {kind: (numerators, reference)}; None: the roles cannot be filled
+    ROLES: ClassVar[list[Any]] = [
+        (["A", "B"], True, {"ratio": (["Data"], "Total"), "s/sqrt(b)": (["C"], "Total")}),
+        (True, True, {"ratio": (["Data"], "Total"), "s/sqrt(b)": (["C"], "Background")}),
+        (["A", "B"], False, {"ratio": (["C"], "Total"), "s/sqrt(b)": (["C"], "Total")}),
+        (True, False, {"ratio": None, "s/sqrt(b)": (["C"], "Background")}),
+        (False, True, {"ratio": (["Data"], "A"), "s/sqrt(b)": (["C"], "Background")}),
+        (False, False, {"ratio": (["B", "C"], "A"), "s/sqrt(b)": (["C"], "Background")}),
+    ]
+
+    @pytest.mark.parametrize("kind", ["ratio", "s/sqrt(b)"])
+    @pytest.mark.parametrize(("stack", "data", "expected"), ROLES)
+    def test_automatic_roles(self, kind: Any, stack: Any, data: bool, expected: Any) -> None:
+        before = plt.get_fignums()
+        roles = expected[kind]
+        if roles is None:
+            with pytest.raises(ValueError, match="observed"):
+                rf.plot(self._hists(data=data), stack=stack, panel=kind)
+            assert plt.get_fignums() == before
+            return
+        p = rf.plot(self._hists(data=data), stack=stack, panel=kind)
+        numerators, reference = roles
+        assert [c.label for c in p.comparisons] == numerators
+        assert {c.reference for c in p.comparisons} == {reference}
+        assert {c.kind for c in p.comparisons} == {kind}
+        if reference == "Total":  # the panel compares with the very stack drawn
+            assert p.stack is not None
+            d = float(p.stack.values()[0])
+            stacked = ["A", "B", "C"] if stack is True else stack
+            assert d == sum(self.CONTENTS[label] for label in stacked)
+        else:
+            d = self.CONTENTS[reference]
+        for comparison in p.comparisons:
+            n = self.CONTENTS[comparison.label]
+            np.testing.assert_allclose(
+                comparison.values, n / d if kind == "ratio" else n / np.sqrt(d)
+            )
+        p.close()
+
+    def test_a_named_reference(self) -> None:
+        p = rf.plot(self._hists(data=True), panel="ratio", reference="B")
+        assert [c.label for c in p.comparisons] == ["A", "C", "Data"]  # data included
+        np.testing.assert_allclose(p.comparisons[0].values, 10 / 30)
+        assert panel_ylabel(p) == "Data / B"
+        stacked = rf.plot(self._hists(data=True), stack=True, panel="difference", reference="A")
+        assert [c.label for c in stacked.comparisons] == ["B", "C", "Data"]
+        np.testing.assert_allclose(stacked.comparisons[0].values, 20.0)
+        significance = rf.plot(self._hists(data=True), panel="s/sqrt(s+b)", reference="B")
+        assert [c.label for c in significance.comparisons] == ["A", "C"]  # signals: no data
+        np.testing.assert_allclose(significance.comparisons[0].values, 10 / np.sqrt(40))
+        for plot in (p, stacked, significance):
+            plot.close()
+
+    def test_every_kind_through_plot(self) -> None:
+        for kind, expected in (
+            ("ratio", 0.5),
+            ("relative_difference", -0.5),
+            ("difference", -20.0),
+            ("pull", -20.0 / np.sqrt(60.0)),
+        ):
+            # data over the stack of A and B, 40: C is overlaid and not compared
+            p = rf.plot(self._hists(data=True), stack=["A", "B"], panel=kind)  # type: ignore[arg-type]
+            (comparison,) = p.comparisons
+            np.testing.assert_allclose(comparison.values, expected)
+            p.close()
+
+    @pytest.mark.parametrize(
+        ("kind", "over_stack", "mc_over_mc"),
+        [
+            ("ratio", "Data / MC", "Ratio to A"),
+            ("relative_difference", "(Data \N{MINUS SIGN} MC) / MC", "Rel. difference to A"),
+            ("difference", "Data \N{MINUS SIGN} MC", "Difference to A"),
+            ("pull", "Pull", "Pull"),
+        ],
+    )
+    def test_default_labels(self, kind: Any, over_stack: str, mc_over_mc: str) -> None:
+        p = rf.plot(self._hists(data=True), stack=True, panel=kind)
+        assert panel_ylabel(p) == over_stack
+        simulated = rf.plot(self._hists(data=False), panel=kind)
+        assert panel_ylabel(simulated) == mc_over_mc
+        custom = rf.plot(self._hists(data=False), panel=kind, panel_label="Custom")
+        assert panel_ylabel(custom) == "Custom"
+        for plot in (p, simulated, custom):
+            plot.close()
+
+    def test_uncertainty_modes(self) -> None:
+        p = rf.plot(self._hists(data=True), panel="difference", reference="A")
+        by_label = {c.label: c for c in p.comparisons}
+        # data over simulation: the reference is the band; simulation: both propagated
+        np.testing.assert_allclose(by_label["Data"].errors, np.sqrt(20.0))
+        np.testing.assert_allclose(by_label["B"].errors, np.sqrt(40.0))
+        assert p.panel_ax is not None
+        assert len([c for c in p.panel_ax.collections if isinstance(c, PolyCollection)]) == 1
+        both = rf.plot(
+            self._hists(data=True),
+            panel="difference",
+            reference="A",
+            panel_uncertainty="propagate",
+        )
+        np.testing.assert_allclose(both.comparisons[-1].errors, np.sqrt(30.0))
+        assert both.panel_ax is not None
+        assert not [c for c in both.panel_ax.collections if isinstance(c, PolyCollection)]
+        for plot in (p, both):
+            plot.close()
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"panel": "ratio", "reference": "nope"}, "is not the label of a drawn histogram"),
+            ({"panel": "s/sqrt(b)", "reference": "Data"}, "observed data"),
+            ({"reference": "A"}, "choose the panel too"),
+            ({"panel": True}, r"is not one of .* panel='ratio'"),
+            ({"panel": False}, "is not one of"),
+            ({"panel": "significance"}, r"is not one of .*panel='s/sqrt\(b\)'"),
+            ({"panel": "bogus"}, "is not one of"),
+            ({"panel": "pull", "panel_uncertainty": "numerator"}, "does not have"),
+            ({"panel": "s/sqrt(b)", "panel_uncertainty": "propagate"}, "does not have"),
+            ({"panel": "ratio", "panel_uncertainty": "both"}, "'propagate' or 'numerator'"),
+        ],
+    )
+    def test_bad_requests_raise_before_a_figure_exists(
+        self, kwargs: dict[str, Any], match: str
+    ) -> None:
+        before = plt.get_fignums()
+        with pytest.raises(ValueError, match=match):
+            rf.plot(self._hists(data=True), stack=["A"], **kwargs)
+        assert plt.get_fignums() == before
+
+    def test_a_reference_is_one_histogram(self) -> None:
+        before = plt.get_fignums()
+        hists = self._hists(data=False, labels=("A", "B", "A"))
+        with pytest.raises(ValueError, match="label of 2 drawn histograms"):
+            rf.plot(hists, panel="ratio", reference="A")
+        with pytest.raises(ValueError, match="at least two non-data"):
+            rf.plot(self._hists(data=True, labels=("A",)), panel="s/sqrt(b)")
+        with pytest.raises(ValueError, match="besides the background"):
+            rf.plot(self._hists(data=True, labels=("A",)), panel="s/sqrt(b)", reference="A")
+        assert plt.get_fignums() == before
+
+    def test_the_panel_follows_a_log_x_axis(self) -> None:
+        p = rf.plot(self._hists(data=False, start=1.0), panel="pull", logx=True)
+        assert p.panel_ax is not None
+        assert p.panel_ax.get_xscale() == "log"
+        assert p.panel_ax.get_xlim() == p.ax.get_xlim()
+        p.close()
 
 
 class TestBrokenAxis:
@@ -576,7 +779,7 @@ class TestBrokenAxis:
             stats=True,
         )
         assert p.ax_right is not None
-        assert p.ratio_ax is None
+        assert p.panel_ax is None
         assert p.axes == (p.ax, p.ax_right)
         assert p.ax.get_xlim() == (0.0, 60.0)
         assert p.ax_right.get_xlim() == (200.0, 250.0)
@@ -600,20 +803,20 @@ class TestBrokenAxis:
             bins=(50, 0, 250),
             xlim=(10, 240),
             xbreak=(50, 150),
-            ratio=True,
+            panel="ratio",
             logy=True,
         )
-        assert p.ratio_ax is not None
-        assert p.ratio_ax_right is not None
+        assert p.panel_ax is not None
+        assert p.panel_ax_right is not None
         assert len(p.axes) == 4
-        assert p.ratio_ax.get_xlim() == (10.0, 50.0)
-        assert p.ratio_ax_right.get_xlim() == (150.0, 240.0)
-        assert ratio_ylabel(p) == "Ratio to signal"
-        assert p.ratio_ax_right.get_ylabel() == ""
-        assert p.ratio_ax_right.get_xlabel() == "MET"
+        assert p.panel_ax.get_xlim() == (10.0, 50.0)
+        assert p.panel_ax_right.get_xlim() == (150.0, 240.0)
+        assert panel_ylabel(p) == "Ratio to signal"
+        assert p.panel_ax_right.get_ylabel() == ""
+        assert p.panel_ax_right.get_xlabel() == "MET"
         assert p.ax.get_xlabel() == p.ax_right.get_xlabel() == ""  # type: ignore[union-attr]
         assert p.ax.get_yscale() == "log"
-        assert len(p.ratios) == 1
+        assert len(p.comparisons) == 1
 
     def test_invalid(self, signal_file: Path) -> None:
         with pytest.raises(ValueError, match="xbreak must satisfy"):
@@ -659,12 +862,12 @@ class TestPlotHistograms:
         )
         h1.fill([0.5, 1.5, 2.5])
         h2 = h1 * 2
-        p = rf.plot([h1, h2], label=["one", "two"], ratio=True, normalize=True)
+        p = rf.plot([h1, h2], label=["one", "two"], panel="ratio", normalize=True)
         assert [h.label for h in p.histograms] == ["one", "two"]
         assert p.ax.get_xlabel() == ""
-        assert p.ratio_ax is not None
-        assert p.ratio_ax.get_xlabel() == "x"
-        assert p.ratios[0].values[:3].tolist() == pytest.approx([1.0, 1.0, 1.0])
+        assert p.panel_ax is not None
+        assert p.panel_ax.get_xlabel() == "x"
+        assert p.comparisons[0].values[:3].tolist() == pytest.approx([1.0, 1.0, 1.0])
         p = rf.plot([h1], xlabel="custom")
         assert p.ax.get_xlabel() == "custom"
         assert p.histograms[0].label == "x"
@@ -858,12 +1061,12 @@ class TestFigureShape:
     def test_content_fits(self, signal_file: Path, background_file: Path) -> None:
         plots = [
             rf.plot(signal_file, "MET", tree="events", text=["a line", "another"]),
-            rf.plot([signal_file, background_file], "MET", tree="events", ratio=True),
+            rf.plot([signal_file, background_file], "MET", tree="events", panel="ratio"),
             rf.plot(
                 [signal_file, background_file],
                 "MET",
                 tree="events",
-                ratio=True,
+                panel="ratio",
                 xbreak=(40, 60),
                 style=rf.Style(experiment="ATLAS", status="Internal", lumi="140 fb^-1"),
             ),
@@ -892,7 +1095,9 @@ class TestFigureShape:
         self._check_label(p, flush=True)
         # Inside label (ATLAS style), with a ratio panel that changes the layout afterwards.
         atlas = rf.Style(experiment="ATLAS", status="Internal")
-        p = rf.plot([signal_file, background_file], "MET", tree="events", ratio=True, style=atlas)
+        p = rf.plot(
+            [signal_file, background_file], "MET", tree="events", panel="ratio", style=atlas
+        )
         self._check_label(p, flush=False)
 
     @staticmethod
@@ -972,7 +1177,9 @@ class TestFigureShape:
         # Text must render in the style's font after the style context has ended, or the
         # layout computed inside it no longer matches what is painted (clipped labels).
         atlas = rf.Style(experiment="ATLAS", status="Internal")
-        p = rf.plot([signal_file, background_file], "MET", tree="events", ratio=True, style=atlas)
+        p = rf.plot(
+            [signal_file, background_file], "MET", tree="events", panel="ratio", style=atlas
+        )
         p.fig.canvas.draw()
         assert "sans-serif" not in p.ax.yaxis.label.get_fontfamily()
         assert p.ax.yaxis.label.get_fontname() != "DejaVu Sans"
@@ -995,7 +1202,7 @@ class TestFigureShape:
         plots = [
             rf.plot2d(signal_file, "MET", "nMuon", tree="events", style=style),
             rf.correlation(signal_file, ["MET", "nMuon", "event"], tree="events", style=style),
-            rf.plot(samples, "MET", tree="events", ratio=True, xbreak=(40, 60), style=style),
+            rf.plot(samples, "MET", tree="events", panel="ratio", xbreak=(40, 60), style=style),
         ]
         for p in plots:
             p.fig.canvas.draw()
@@ -1271,10 +1478,36 @@ class TestPublicSurface:
     def test_evaluate_reexport(self) -> None:
         assert rf.evaluate("a + 1", {"a": ak.Array([1, 2])}).tolist() == [2, 3]
 
-    def test_ratio_reexport(self) -> None:
+    def test_comparison_names(self) -> None:
+        # rf.histograms is the function; the subpackages are imported by name
+        histograms = importlib.import_module("rootfig.histograms")
+        plotting = importlib.import_module("rootfig.plotting")
+
+        assert {"Comparison", "compare"} <= set(rf.__all__)
+        assert not {"Ratio", "ratio", "significance"} & set(rf.__all__)
+        assert {"COMPARISON_KINDS", "Comparison", "ComparisonKind", "UncertaintyMode"} <= set(
+            histograms.__all__
+        )
+        assert histograms.COMPARISON_KINDS == (
+            "ratio",
+            "difference",
+            "relative_difference",
+            "pull",
+            "s/sqrt(b)",
+            "s/sqrt(s+b)",
+        )
+        removed = {"SIGNIFICANCE_KINDS", "Ratio", "RatioUncertainty", "SignificanceKind", "ratio"}
+        assert not removed & set(histograms.__all__)
+        assert {"draw_panel", "panel_ylim"} <= set(plotting.__all__)
+        assert not {"draw_ratio_panel", "draw_significance_panel", "ratio_ylim"} & set(
+            plotting.__all__
+        )
+
+    def test_compare_reexport(self) -> None:
         h = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
         h.fill([0.5, 0.5, 1.5])
-        r = rf.ratio(h, h)
+        r = rf.compare(h, h, kind="ratio")
+        assert isinstance(r, rf.Comparison)
         assert r.values.tolist() == [1.0, 1.0]
 
     def test_use_style_reexport(self) -> None:
@@ -1398,30 +1631,39 @@ class TestEfficiencyProfileSignificance:
     def test_significance_panel(self, signal_file: Path, background_file: Path) -> None:
         sig = rf.Sample(signal_file, tree="events", label="S", scale=0.1)
         bkg = rf.Sample(background_file, tree="events", label="B")
-        p = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack=True, ratio="significance")
-        assert p.ratio_ax is not None
-        assert ratio_ylabel(p) == r"$S/\sqrt{B}$"
-        assert len(p.ratios) == 1
-        result = p.ratios[0]
+        p = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack=True, panel="s/sqrt(b)")
+        assert p.panel_ax is not None
+        assert panel_ylabel(p) == r"$S/\sqrt{B}$"
+        assert len(p.comparisons) == 1
+        result = p.comparisons[0]
         s = p.histograms[1].values()
         b = p.histograms[0].values()
         ok = b > 0
         np.testing.assert_allclose(result.values[ok], s[ok] / np.sqrt(b[ok]))
         p = rf.plot(
-            [sig, bkg], "MET", bins=(10, 0, 200), ratio=("s/sqrt(s+b)", "S"), ratio_label="Z"
+            [sig, bkg],
+            "MET",
+            bins=(10, 0, 200),
+            panel="s/sqrt(s+b)",
+            reference="B",
+            panel_label="Z",
         )
-        assert p.ratio_ax is not None
-        assert ratio_ylabel(p) == "Z"
+        assert p.panel_ax is not None
+        assert panel_ylabel(p) == "Z"
+        (named,) = p.comparisons
+        assert (named.kind, named.label, named.reference) == ("s/sqrt(s+b)", "S", "B")
+        s, b = p.histograms[0].values(), p.histograms[1].values()
+        np.testing.assert_allclose(named.values[ok], s[ok] / np.sqrt(s[ok] + b[ok]))
         # the signal inside the stack or drawn over it: the same panel
-        overlaid = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack="B", ratio="significance")
-        np.testing.assert_allclose(overlaid.ratios[0].values, result.values)
-        np.testing.assert_allclose(overlaid.ratios[0].errors, result.errors)
+        overlaid = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack="B", panel="s/sqrt(b)")
+        np.testing.assert_allclose(overlaid.comparisons[0].values, result.values)
+        np.testing.assert_allclose(overlaid.comparisons[0].errors, result.errors)
         with pytest.raises(ValueError, match="at least two"):
-            rf.plot([sig], "MET", bins=(10, 0, 200), ratio="s/sqrt(b)")
+            rf.plot([sig], "MET", bins=(10, 0, 200), panel="s/sqrt(b)")
+        with pytest.raises(ValueError, match="is not the label of a drawn histogram"):
+            rf.plot([sig, bkg], "MET", bins=(10, 0, 200), panel="s/sqrt(b)", reference="X")
         with pytest.raises(ValueError, match="is not one of"):
-            rf.plot([sig, bkg], "MET", bins=(10, 0, 200), ratio=("s/sqrt(b)", "X"))
-        with pytest.raises(ValueError, match="must use one of"):
-            rf.plot([sig, bkg], "MET", bins=(10, 0, 200), ratio=("bogus", "S"))
+            rf.plot([sig, bkg], "MET", bins=(10, 0, 200), panel="bogus")  # type: ignore[arg-type]
 
     def test_split_collection_end_to_end(self) -> None:
         path = Path(__file__).parent / "data" / "split_collection.root"
@@ -1505,14 +1747,14 @@ class TestReviewRegressions:
     def test_flow_sum_is_consistent_everywhere(self) -> None:
         ref = self._hist([0.5, 1.5])
         num = self._hist([0.5, 1.5] + [3.0] * 20)
-        p = rf.plot([ref, num], label=["ref", "num"], flow="sum", ratio=True)
-        np.testing.assert_allclose(p.ratios[0].values, [1.0, 21.0])
+        p = rf.plot([ref, num], label=["ref", "num"], flow="sum", panel="ratio")
+        np.testing.assert_allclose(p.comparisons[0].values, [1.0, 21.0])
         assert p.ax.get_ylim()[1] > 21
         np.testing.assert_allclose(p.histograms[1].values(), [1.0, 21.0])
         stacked = rf.plot(
-            [ref, num], label=["ref", "num"], flow="sum", stack=True, ratio="s/sqrt(b)"
+            [ref, num], label=["ref", "num"], flow="sum", stack=True, panel="s/sqrt(b)"
         )
-        np.testing.assert_allclose(stacked.ratios[0].values, [1.0, 21.0])
+        np.testing.assert_allclose(stacked.comparisons[0].values, [1.0, 21.0])
 
     def test_profile_offset_and_unit(self) -> None:
         p = rf.profile(
@@ -1553,27 +1795,27 @@ class TestReviewRegressions:
         assert len(overlay.hists) == 2
         assert overlay.ax.get_ylim()[1] > 1.0
         with pytest.raises(BinningError, match="identical"):
-            rf.plot(overlay.hists, ratio=True)
+            rf.plot(overlay.hists, panel="ratio")
 
     def test_ratio_colors_follow_the_main_panel(self) -> None:
         from matplotlib.colors import to_rgba
         from matplotlib.container import ErrorbarContainer
 
         hists = [self._hist([0.5]), self._hist([0.5] * 2), self._hist([0.5] * 3)]
-        p = rf.plot(hists, label=["A", "B", "C"], ratio=True)
-        assert p.ratio_ax is not None
+        p = rf.plot(hists, label=["A", "B", "C"], panel="ratio")
+        assert p.panel_ax is not None
         ratio_colors = [
             to_rgba(c.lines[0].get_color())
-            for c in p.ratio_ax.containers
+            for c in p.panel_ax.containers
             if isinstance(c, ErrorbarContainer)
         ]
         main_colors = [to_rgba(c) for c in rf.plotting.color_cycle(3, rf.Style())[1:]]
         assert ratio_colors == main_colors
-        named = rf.plot(hists, label=["A", "B", "C"], ratio="C")
-        assert named.ratio_ax is not None
+        named = rf.plot(hists, label=["A", "B", "C"], panel="ratio", reference="C")
+        assert named.panel_ax is not None
         named_colors = [
             to_rgba(c.lines[0].get_color())
-            for c in named.ratio_ax.containers
+            for c in named.panel_ax.containers
             if isinstance(c, ErrorbarContainer)
         ]
         assert named_colors == [to_rgba(c) for c in rf.plotting.color_cycle(2, rf.Style())]
@@ -1709,7 +1951,7 @@ class TestOffsetText:
 
     @staticmethod
     def _boxes(p: rf.Plot) -> tuple[Any, Any]:
-        axis = (p.ratio_ax or p.ax).xaxis
+        axis = (p.panel_ax or p.ax).xaxis
         p.fig.canvas.draw()
         renderer = p.fig.canvas.get_renderer()
         offset = axis.get_offset_text()
@@ -1717,8 +1959,8 @@ class TestOffsetText:
         return axis.label.get_window_extent(renderer), offset.get_window_extent(renderer)
 
     @pytest.mark.parametrize("use_offset", [True, False], ids=["offset", "no-offset"])
-    @pytest.mark.parametrize("ratio", [False, True])
-    def test_label_and_offset_text_do_not_overlap(self, ratio: bool, use_offset: bool) -> None:
+    @pytest.mark.parametrize("panel", [None, "ratio"])
+    def test_label_and_offset_text_do_not_overlap(self, panel: Any, use_offset: bool) -> None:
         # without an additive offset matplotlib still shows the order of magnitude
         values = np.random.default_rng(0).normal(2e-6, 1e-6, 5_000)
         samples = [
@@ -1726,7 +1968,7 @@ class TestOffsetText:
             rf.Sample({"x": values * 1.1}, label="B"),
         ]
         style = rf.Style(rc={"axes.formatter.useoffset": use_offset})
-        p = rf.plot(samples, "x", bins=20, ratio=ratio, style=style)
+        p = rf.plot(samples, "x", bins=20, panel=panel, style=style)
         label, offset = self._boxes(p)
         assert not label.overlaps(offset)
         assert label.x1 <= offset.x0  # beside it, on the same line
@@ -1904,7 +2146,7 @@ class TestSystematics:
             observed=data,
             bins=(20, 0, 200),
             stack=True,
-            ratio=True,
+            panel="ratio",
             systematics={"lumi": 0.02},
         )
         legend_texts = [t.get_text() for t in p.ax.get_legend().get_texts()]
@@ -1916,10 +2158,10 @@ class TestSystematics:
             0.02 * (p.histograms[0].values() + p.histograms[1].values()),
         )
         assert np.all(total.total_up >= total.stat)
-        assert p.ratios[0].syst_band is not None
+        assert p.comparisons[0].syst_band is not None
         filled = total.nominal > 0
         np.testing.assert_allclose(
-            p.ratios[0].syst_band[1][filled], total.syst_up[filled] / total.nominal[filled]
+            p.comparisons[0].syst_band[1][filled], total.syst_up[filled] / total.nominal[filled]
         )
         signal = p.uncertainty("Signal")
         assert set(signal.components) == {"lumi", "xsec"}
@@ -1950,7 +2192,7 @@ class TestSystematics:
         nominal = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
         nominal.fill([0.5, 1.5, 1.5, 2.5])
         h = rf.Histogram(nominal, label="MC", variations={"s": (nominal * 1.1, nominal * 0.8)})
-        p = rf.plot([h], ratio=False)
+        p = rf.plot([h], panel=None)
         np.testing.assert_allclose(p.uncertainty().syst_down, 0.2 * nominal.values())
         data = rf.Histogram(nominal, label="Data", is_data=True)
         with pytest.raises(ValueError, match="no non-data histograms"):
@@ -1963,8 +2205,10 @@ class TestSystematics:
         )
         other = rf.Sample({"x": rng.uniform(0, 2, 500)}, label="Other", systematics={"lumi": 0.10})
         data = rf.Sample({"x": rng.uniform(0, 2, 500)}, label="Data", is_data=True)
-        p = rf.plot([reference, other, data], "x", bins=(2, 0, 2), ratio="Reference")
-        other_ratio, data_ratio = p.ratios
+        p = rf.plot(
+            [reference, other, data], "x", bins=(2, 0, 2), panel="ratio", reference="Reference"
+        )
+        other_ratio, data_ratio = p.comparisons
         assert other_ratio.syst_errors is not None  # simulation / simulation: lumi cancels
         np.testing.assert_allclose(other_ratio.syst_errors, 0.0, atol=1e-12)
         np.testing.assert_allclose(other_ratio.errors**2, _propagated_variance(p))
@@ -1975,12 +2219,15 @@ class TestSystematics:
             [reference, other, data],
             "x",
             bins=(2, 0, 2),
-            ratio="Reference",
-            ratio_uncertainty="numerator",
+            panel="ratio",
+            reference="Reference",
+            panel_uncertainty="numerator",
         )
-        assert explicit.ratios[0].syst_errors is not None
-        for side in explicit.ratios[0].syst_errors:  # its own lumi against the nominal reference
-            np.testing.assert_allclose(side, 0.1 * explicit.ratios[0].values)
+        assert explicit.comparisons[0].syst_errors is not None
+        for side in explicit.comparisons[
+            0
+        ].syst_errors:  # its own lumi against the nominal reference
+            np.testing.assert_allclose(side, 0.1 * explicit.comparisons[0].values)
 
     def test_efficiency_ignores_systematics(self) -> None:
         sample = rf.Sample({"x": [0.5, 1.5]}, systematics={"unused": "missing_weight"})
@@ -2277,7 +2524,7 @@ class TestStoredHistogramPlots:
         with pytest.raises(BinningError, match="a stack"):
             rf.plot([a, b], label=["A", "B"], stack=True)
         with pytest.raises(BinningError):
-            rf.plot([a, b], label=["A", "B"], ratio=True)
+            rf.plot([a, b], label=["A", "B"], panel="ratio")
 
     def test_significance_sums_backgrounds_whatever_their_axis_labels(
         self, stored_dir: Path
@@ -2288,16 +2535,18 @@ class TestStoredHistogramPlots:
             "M": stored_dir / "mixed_storage.root",
             "S": stored_dir / "WW_sel0_histo.root",
         }
-        p = rf.plot(samples, "mz", stack=True, ratio="s/sqrt(b)")
-        assert p.ratio_ax is not None
-        assert np.nansum(p.ratios[0].values) > 0
+        p = rf.plot(samples, "mz", stack=True, panel="s/sqrt(b)")
+        assert p.panel_ax is not None
+        assert np.nansum(p.comparisons[0].values) > 0
         axis = hist.axis.Regular(4, 0, 4, name="x", label="A")
         other = hist.axis.Regular(4, 0, 4, name="y", label="B")
         a = hist.Hist(axis, storage=hist.storage.Weight()).fill([0.5, 1.5])
         b = hist.Hist(other, storage=hist.storage.Weight()).fill([1.5, 2.5])
         s = hist.Hist(axis, storage=hist.storage.Weight()).fill([2.5, 3.5])
-        p = rf.plot([a, b, s], label=["A", "B", "S"], ratio=("s/sqrt(b)", "S"))
-        np.testing.assert_allclose(p.ratios[0].values, [0.0, 0.0, 1.0, np.nan])
+        # the last non-data histogram over the sum of the others, whose axes differ in name
+        p = rf.plot([a, b, s], label=["A", "B", "S"], panel="s/sqrt(b)")
+        assert (p.comparisons[0].label, p.comparisons[0].reference) == ("S", "Background")
+        np.testing.assert_allclose(p.comparisons[0].values, [0.0, 0.0, 1.0, np.nan])
 
     def test_category_axes_and_flow(self) -> None:
         axis = hist.axis.StrCategory(["all", "sel0"], name="cut")
@@ -2331,14 +2580,14 @@ class TestStoredHistogramPlots:
         axis = hist.axis.Regular(4, 0, 4, name="x", label="$x$ [cm]")
         mc = hist.Hist(axis, storage=hist.storage.Weight()).fill([0.5, 1.5, 2.5], weight=2.0)
         data = hist.Hist(axis, storage=hist.storage.Weight()).fill([0.5, 1.5, 1.5, 3.5])
-        p = rf.plot(mc, label="MC", observed=data, ratio=True)
+        p = rf.plot(mc, label="MC", observed=data, panel="ratio")
         assert [h.label for h in p.histograms] == ["MC", "x"]
         assert p.histograms[1].is_data
         assert p.ax.get_ylabel() == "Events / 1 cm"
-        assert p.ratio_ax is not None
+        assert p.panel_ax is not None
         p = rf.plot([mc], rf.Variable("x", label="$x$", unit="cm", log=True))
         assert p.ax.get_xscale() == "log"
-        assert p.ratio_ax is None
+        assert p.panel_ax is None
         assert p.ax.get_xlabel() == "$x$ [cm]"
         with pytest.raises(ValueError, match="selection applies when filling"):
             rf.plot([mc], selection="x > 1")
@@ -2424,31 +2673,32 @@ class TestGroups:
             bins=(20, -4, 6),
             lumi="5 ab^-1",
             stack=True,
-            ratio=("s/sqrt(b)", "Signal"),
+            panel="s/sqrt(b)",
+            reference="Background",
         )
         assert [h.label for h in p.histograms] == ["Background", "Signal"]
         legend = [t.get_text() for t in p.ax.get_legend().get_texts()]
         assert legend[:2] == ["Signal", "Background"]
-        assert len(p.ratios) == 1
+        assert len(p.comparisons) == 1
         partial_stack = rf.plot(
             [background, signal],
             "x",
             bins=(20, -4, 6),
             lumi="5 ab^-1",
             stack=["Background"],
-            ratio="s/sqrt(b)",
+            panel="s/sqrt(b)",
         )
-        assert len(partial_stack.ratios) == 1
+        assert len(partial_stack.comparisons) == 1
         assert partial_stack.stack is not None
         np.testing.assert_allclose(partial_stack.stack.values(), p.histograms[0].values())
-        np.testing.assert_allclose(partial_stack.ratios[0].values, p.ratios[0].values)
+        np.testing.assert_allclose(partial_stack.comparisons[0].values, p.comparisons[0].values)
         with pytest.raises(ValueError, match=r"labels: \['Background', 'Signal'\].*Group"):
             rf.plot([background, signal], "x", bins=10, lumi=1.0, stack=["VV"])
         assert len(rf.plot(background.components, "x", bins=10, lumi=1.0).histograms) == 2
         assert len(rf.plot(background.samples, "x", bins=10, lumi=1.0).histograms) == 4
-        p = rf.plot([vv, signal], "x", bins=(20, -4, 6), lumi=1.0, ratio="VV")
-        assert len(p.ratios) == 1
-        assert "VV" in ratio_ylabel(p)
+        p = rf.plot([vv, signal], "x", bins=(20, -4, 6), lumi=1.0, panel="ratio", reference="VV")
+        assert len(p.comparisons) == 1
+        assert "VV" in panel_ylabel(p)
 
     def test_observed_group_and_normalisation(self) -> None:
         mc = rf.Group(
@@ -2465,7 +2715,7 @@ class TestGroups:
             ],
             label="Data",
         )
-        p = rf.plot(mc, "x", bins=(10, -4, 5), observed=data, stack=True, ratio=True)
+        p = rf.plot(mc, "x", bins=(10, -4, 5), observed=data, stack=True, panel="ratio")
         assert [(h.label, h.is_data) for h in p.histograms] == [("MC", False), ("Data", True)]
         assert p.histograms[1].sum_weights == 300
         assert p.uncertainty("MC").has_systematics
@@ -2623,19 +2873,19 @@ class TestSelectiveStacking:
     def _panel_colors(p: rf.Plot) -> list[str]:
         from matplotlib.container import ErrorbarContainer
 
-        assert p.ratio_ax is not None
+        assert p.panel_ax is not None
         return [
             c.lines[0].get_color()
-            for c in p.ratio_ax.containers
+            for c in p.panel_ax.containers
             if isinstance(c, ErrorbarContainer)
         ]
 
     @pytest.mark.parametrize("observed", [False, True])
     def test_multiple_signals(self, observed: bool) -> None:
-        p = rf.plot(self._signals(observed), stack=["B"], ratio="significance")
-        assert len(p.ratios) == 2
-        np.testing.assert_allclose(p.ratios[0].values, [3, 3])
-        np.testing.assert_allclose(p.ratios[1].values, [5, 5])
+        p = rf.plot(self._signals(observed), stack=["B"], panel="s/sqrt(b)")
+        assert len(p.comparisons) == 2
+        np.testing.assert_allclose(p.comparisons[0].values, [3, 3])
+        np.testing.assert_allclose(p.comparisons[1].values, [5, 5])
         assert self._panel_colors(p) == ["red", "blue"]
 
     @pytest.mark.parametrize("stack", [False, True])
@@ -2644,12 +2894,13 @@ class TestSelectiveStacking:
         self, stack: bool, observed: bool
     ) -> None:
         hists = self._signals(observed)
-        p = rf.plot(hists, stack=stack, ratio="significance")
-        named = rf.plot(hists, stack=stack, ratio=("s/sqrt(b)", "S2"))
-        assert len(p.ratios) == 1
-        np.testing.assert_allclose(p.ratios[0].values, np.sqrt([10, 10]))  # 10 / sqrt(4 + 6)
-        np.testing.assert_allclose(p.ratios[0].values, named.ratios[0].values)
-        np.testing.assert_allclose(p.ratios[0].errors, named.ratios[0].errors)
+        p = rf.plot(hists, stack=stack, panel="s/sqrt(b)")
+        # the same roles spelled out: S2 overlaid on a stack of the others
+        named = rf.plot(hists, stack=["B", "S1"], panel="s/sqrt(b)")
+        assert len(p.comparisons) == 1
+        np.testing.assert_allclose(p.comparisons[0].values, np.sqrt([10, 10]))  # 10 / sqrt(4 + 6)
+        np.testing.assert_allclose(p.comparisons[0].values, named.comparisons[0].values)
+        np.testing.assert_allclose(p.comparisons[0].errors, named.comparisons[0].errors)
         assert self._panel_colors(p) == ["blue"]
 
     def test_stack_uncertainty(self) -> None:
@@ -2727,9 +2978,9 @@ def test_y_limits_follow_visible_bins(kind: str, logy: bool, broken: bool) -> No
     p.close()
 
 
-@pytest.mark.parametrize("panel", [True, "significance"])
+@pytest.mark.parametrize("panel", ["ratio", "s/sqrt(b)"])
 @pytest.mark.parametrize("broken", [False, True])
-def test_lower_panel_limits_follow_visible_bins(panel: bool | str, broken: bool) -> None:
+def test_lower_panel_limits_follow_visible_bins(panel: Any, broken: bool) -> None:
     background = hist.Hist(hist.axis.Regular(6, 0, 6), storage=hist.storage.Weight())
     background.view().value = 1
     background.view().variance = 0
@@ -2738,9 +2989,10 @@ def test_lower_panel_limits_follow_visible_bins(panel: bool | str, broken: bool)
     window = {"xlim": (0, 6), "xbreak": (1, 5)} if broken else {"xlim": (2, 4)}
     if broken:
         signal.view().value = [1, 100, 100, 100, 100, 1]
-    p = rf.plot([background, signal], ratio=panel, style=rf.Style(legend=False), **window)
-    assert p.ratio_ax is not None
-    np.testing.assert_allclose(p.ratio_ax.get_ylim(), (0.5, 1.5) if panel is True else (0, 1.25))
+    p = rf.plot([background, signal], panel=panel, style=rf.Style(legend=False), **window)
+    assert p.panel_ax is not None
+    expected = (0.5, 1.5) if panel == "ratio" else (0, 1.25)
+    np.testing.assert_allclose(p.panel_ax.get_ylim(), expected)
     p.close()
 
 

@@ -65,7 +65,7 @@ class Style:
         Additional rcParams overrides applied on top of ``base``.
     figsize
         Figure size in inches. Defaults to the style's ``figure.figsize``,
-        enlarged vertically when a ratio panel is present.
+        enlarged vertically when a lower panel is present.
     colors
         Colour cycle for samples without an explicit colour.
     legend

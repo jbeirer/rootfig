@@ -177,7 +177,7 @@ def plot2d(
     with style_context(resolved_style) as st:
         # Same canvas as a 1D plot; the colour bar takes its space from the main axes
         # (draw_hist2d stops mplhep from widening the figure).
-        layout = make_figure(st, ratio=False, ax=ax, figsize=figsize or st.figsize)
+        layout = make_figure(st, panel=False, ax=ax, figsize=figsize or st.figsize)
         fig, main_ax = layout.fig, layout.main
         draw_hist2d(
             histogram_,
@@ -245,7 +245,7 @@ def correlation(
     )
     with style_context(style) as st:
         size = figsize or st.figsize or correlation_figsize(len(var_list))
-        layout = make_figure(st, ratio=False, ax=ax, figsize=size)
+        layout = make_figure(st, panel=False, ax=ax, figsize=size)
         fig, main_ax = layout.fig, layout.main
         draw_correlation(
             matrix, tick_labels, main_ax, cmap=cmap, annotate=annotate, percent=percent

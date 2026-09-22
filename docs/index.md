@@ -12,7 +12,7 @@ rootfig is the `TTree::Draw` workflow for the Scientific Python HEP stack. It
 reads with uproot, computes with Awkward Array, fills hist histograms and
 draws with mplhep, and adds the glue those libraries leave to you: predictable
 per-event/per-object selection semantics, weights, shared binning across
-samples, normalisation, ratio panels and good defaults.
+samples, normalisation, comparison panels and good defaults.
 
 ![Stacked simulation with data and a ratio panel](images/gallery/stack_data-atlas.png#only-light){ width="60%" }
 ![Stacked simulation with data and a ratio panel](images/gallery/stack_data-atlas-dark.png#only-dark){ width="60%" }

@@ -39,19 +39,19 @@ __all__ = [
 ]
 
 AxesLike: TypeAlias = Axes | tuple[Axes, Axes] | Sequence[Axes] | None
-"""Where to draw: nothing (new figure), one axes, or ``(main, ratio)`` axes."""
+"""Where to draw: nothing (new figure), one axes, or ``(main, panel)`` axes."""
 
-RATIO_HEIGHT_FRACTION = 0.3
-"""Height of the ratio panel relative to the main panel."""
+PANEL_HEIGHT_FRACTION = 0.3
+"""Height of the lower panel relative to the main panel."""
 
-RATIO_LABEL_MIN_SCALE = 0.6
+PANEL_LABEL_MIN_SCALE = 0.6
 """Smallest y label size of a lower panel, relative to the style's label size."""
 
 BREAK_GAP = 0.04
 """Horizontal gap between the two segments of a broken x axis (figure width fraction)."""
 
 PANEL_GAP = 0.06
-"""Vertical gap between the main panel and the ratio panel (figure height fraction)."""
+"""Vertical gap between the main panel and the lower panel (figure height fraction)."""
 
 LAYOUT_PAD = 0.04
 """Inches between the canvas edge and the outermost artist."""
@@ -59,17 +59,17 @@ LAYOUT_PAD = 0.04
 
 @dataclass
 class Layout:
-    """The axes of a figure: main panel, optional ratio panel, optional right segments.
+    """The axes of a figure: main panel, optional lower panel, optional right segments.
 
     With a broken x axis every panel exists twice: ``main``/``main_right`` and
-    ``ratio``/``ratio_right`` show the left and right segments.
+    ``panel``/``panel_right`` show the left and right segments.
     """
 
     fig: Figure
     main: Axes
-    ratio: Axes | None = None
+    panel: Axes | None = None
     main_right: Axes | None = None
-    ratio_right: Axes | None = None
+    panel_right: Axes | None = None
 
     @property
     def main_axes(self) -> tuple[Axes, ...]:
@@ -77,16 +77,16 @@ class Layout:
         return (self.main,) if self.main_right is None else (self.main, self.main_right)
 
     @property
-    def ratio_axes(self) -> tuple[Axes, ...]:
-        """The ratio-panel axes, left to right (empty without a ratio panel)."""
-        if self.ratio is None:
+    def panel_axes(self) -> tuple[Axes, ...]:
+        """The lower-panel axes, left to right (empty without a lower panel)."""
+        if self.panel is None:
             return ()
-        return (self.ratio,) if self.ratio_right is None else (self.ratio, self.ratio_right)
+        return (self.panel,) if self.panel_right is None else (self.panel, self.panel_right)
 
     @property
     def axes(self) -> tuple[Axes, ...]:
-        """Every axes of the layout: main (left, right), then ratio (left, right)."""
-        return (*self.main_axes, *self.ratio_axes)
+        """Every axes of the layout: main (left, right), then the lower panel (left, right)."""
+        return (*self.main_axes, *self.panel_axes)
 
     @property
     def is_broken(self) -> bool:
@@ -101,30 +101,30 @@ class Layout:
     @property
     def xlabel_axes(self) -> Axes:
         """Where the x label goes: the bottom right axes."""
-        bottom = self.ratio_axes or self.main_axes
+        bottom = self.panel_axes or self.main_axes
         return bottom[-1]
 
 
 def figure_size(
-    style: Style, *, ratio: bool, figsize: tuple[float, float] | None = None
+    style: Style, *, panel: bool, figsize: tuple[float, float] | None = None
 ) -> tuple[float, float]:
     """Return the size in inches of a figure drawn on its own under ``style``.
 
     ``figsize`` wins, then the style's own size; otherwise the active
-    ``figure.figsize``, made taller for a ratio panel so the main panel keeps
+    ``figure.figsize``, made taller for a lower panel so the main panel keeps
     its shape. Read inside the style context, since the rcParams are the style's.
     """
     size = figsize or style.figsize
     if size is None:
         width, height = plt.rcParams["figure.figsize"]
-        size = (width, height * (1 + RATIO_HEIGHT_FRACTION * 0.85)) if ratio else (width, height)
+        size = (width, height * (1 + PANEL_HEIGHT_FRACTION * 0.85)) if panel else (width, height)
     return size
 
 
 def make_figure(
     style: Style,
     *,
-    ratio: bool,
+    panel: bool,
     ax: AxesLike = None,
     figsize: tuple[float, float] | None = None,
     break_widths: tuple[float, float] | None = None,
@@ -136,13 +136,13 @@ def make_figure(
     ----------
     style
         Provides the default figure size.
-    ratio
-        Add a ratio panel below the main panel, sharing the x axis.
+    panel
+        Add a lower panel below the main panel, sharing the x axis.
     ax
-        Existing axes to draw into: one ``Axes``, or ``(main, ratio)``. Not
+        Existing axes to draw into: one ``Axes``, or ``(main, panel)``. Not
         supported together with ``break_widths`` or ``cell``.
     figsize
-        Figure size in inches; defaults to the style's, enlarged for a ratio panel.
+        Figure size in inches; defaults to the style's, enlarged for a lower panel.
         Not supported together with ``cell``, whose figure exists already.
     break_widths
         Relative widths of the left and right segments of a broken x axis.
@@ -160,21 +160,21 @@ def make_figure(
             msg = "ax= and cell= both name where to draw; pass one of them"
             raise ValueError(msg)
         if isinstance(ax, Axes):
-            if ratio:
-                msg = "a ratio panel needs two axes: pass ax=(main_ax, ratio_ax)"
+            if panel:
+                msg = "a lower panel needs two axes: pass ax=(main_ax, panel_ax)"
                 raise ValueError(msg)
             return Layout(_figure_of(ax), ax)
         axes = tuple(ax)
         if len(axes) != 2 or not all(isinstance(a, Axes) for a in axes):
-            msg = "ax must be a single Axes or a pair (main_ax, ratio_ax)"
+            msg = "ax must be a single Axes or a pair (main_ax, panel_ax)"
             raise ValueError(msg)
         main, lower = axes
-        return Layout(_figure_of(main), main, lower if ratio else None)
+        return Layout(_figure_of(main), main, lower if panel else None)
 
-    rows = 2 if ratio else 1
+    rows = 2 if panel else 1
     columns = 2 if break_widths is not None else 1
     grid_options: dict[str, Any] = {
-        "height_ratios": [1.0, RATIO_HEIGHT_FRACTION] if ratio else None,
+        "height_ratios": [1.0, PANEL_HEIGHT_FRACTION] if panel else None,
         "width_ratios": list(break_widths) if break_widths is not None else None,
         "hspace": PANEL_GAP,
         "wspace": BREAK_GAP,
@@ -210,7 +210,7 @@ def make_figure(
         # saved figure has exactly the requested size and every plot type shares one shape;
         # rootfig's engine then keeps the x labels clear of the offset texts at every draw.
         engine = PlotLayoutEngine(w_pad=LAYOUT_PAD, h_pad=LAYOUT_PAD)
-        fig = plt.figure(figsize=figure_size(style, ratio=ratio, figsize=figsize), layout=engine)
+        fig = plt.figure(figsize=figure_size(style, panel=panel, figsize=figsize), layout=engine)
         grid = fig.add_gridspec(rows, columns, **grid_options)
     main = fig.add_subplot(grid[0, 0])
     layout = Layout(fig, main)
@@ -218,23 +218,23 @@ def make_figure(
     if columns == 2:
         layout.main_right = fig.add_subplot(grid[0, 1], sharey=main)
         _pin_tick_label_size(layout.main_right)
-    if ratio:
-        layout.ratio = fig.add_subplot(grid[1, 0], sharex=main)
-        _pin_tick_label_size(layout.ratio)
+    if panel:
+        layout.panel = fig.add_subplot(grid[1, 0], sharex=main)
+        _pin_tick_label_size(layout.panel)
         main.tick_params(axis="x", labelbottom=False)
         if columns == 2:
             assert layout.main_right is not None
-            layout.ratio_right = fig.add_subplot(
-                grid[1, 1], sharex=layout.main_right, sharey=layout.ratio
+            layout.panel_right = fig.add_subplot(
+                grid[1, 1], sharex=layout.main_right, sharey=layout.panel
             )
-            _pin_tick_label_size(layout.ratio_right)
+            _pin_tick_label_size(layout.panel_right)
             layout.main_right.tick_params(axis="x", labelbottom=False)
     if own is not None:
-        for panel in layout.axes:
-            spec = panel.get_subplotspec()
+        for axes_ in layout.axes:
+            spec = axes_.get_subplotspec()
             assert spec is not None
-            panel.set_position(own[spec.rowspan.start, spec.colspan.start].get_position(fig))
-            panel.set_in_layout(True)  # set_position takes the axes out of the layout
+            axes_.set_position(own[spec.rowspan.start, spec.colspan.start].get_position(fig))
+            axes_.set_in_layout(True)  # set_position takes the axes out of the layout
     return layout
 
 
@@ -517,14 +517,14 @@ def fit_ylabel(
     ax: Axes,
     *,
     laid_out: bool = False,
-    min_scale: float = RATIO_LABEL_MIN_SCALE,
+    min_scale: float = PANEL_LABEL_MIN_SCALE,
     fraction: float = 0.98,
 ) -> None:
     """Shrink (and if necessary wrap) the y label of ``ax`` until it fits the panel.
 
     A rotated y label is bounded by the *height* of its axes, and a lower panel is
     a fraction of the main one, so a label inherited at the main panel's size —
-    ``"Ratio to <sample>"`` is easily twice as tall as the ratio panel — runs into
+    ``"Ratio to <sample>"`` is easily twice as tall as the lower panel — runs into
     the panel above and off the canvas. Constrained layout does not help: it
     reserves width for a y label, never height.
 

@@ -15,8 +15,7 @@ from matplotlib.axes import Axes
 
 from rootfig._storage import is_category
 from rootfig.errors import BinningError
-from rootfig.histograms.build import Histogram
-from rootfig.histograms.ratio import compatible_binning
+from rootfig.histograms.build import Histogram, compatible_binning
 from rootfig.histograms.systematics import sum_histograms, uncertainty
 from rootfig.model.samples import HistType
 from rootfig.model.style import Style

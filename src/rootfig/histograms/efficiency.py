@@ -11,7 +11,7 @@ import numpy as np
 
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning
-from rootfig.histograms.ratio import compatible_binning
+from rootfig.histograms.build import compatible_binning
 
 __all__ = ["Efficiency", "Profile", "ProfileStatistic", "efficiency", "profile"]
 

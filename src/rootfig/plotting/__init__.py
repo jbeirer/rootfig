@@ -29,8 +29,8 @@ from rootfig.plotting.hist1d import (
 )
 from rootfig.plotting.hist2d import draw_hist2d
 from rootfig.plotting.pages import Page, make_page, multipage_pdf, page_size, plan_pages
+from rootfig.plotting.panel import draw_panel, panel_ylim
 from rootfig.plotting.points import draw_efficiencies, draw_profiles
-from rootfig.plotting.ratio import draw_ratio_panel, draw_significance_panel, ratio_ylim
 from rootfig.plotting.result import Plot
 from rootfig.plotting.style import (
     DARK_THEME,
@@ -77,9 +77,8 @@ __all__ = [
     "draw_efficiencies",
     "draw_hist2d",
     "draw_histograms",
+    "draw_panel",
     "draw_profiles",
-    "draw_ratio_panel",
-    "draw_significance_panel",
     "envelope",
     "figure_size",
     "finish_axes",
@@ -94,10 +93,10 @@ __all__ = [
     "multipage_pdf",
     "overlay_artists",
     "page_size",
+    "panel_ylim",
     "pin_fonts",
     "plan_pages",
     "raise_ylim_above",
-    "ratio_ylim",
     "resolve_rc",
     "show_flow_bins",
     "split_stack",

@@ -25,16 +25,14 @@ from rootfig.api._hists import (
     unit_of,
     wrap_histograms,
 )
+from rootfig.api._panel import resolve as resolve_panel
 from rootfig.histograms import (
-    SIGNIFICANCE_KINDS,
+    ComparisonKind,
     Histogram,
     NormalizeSpec,
-    RatioUncertainty,
     ReadPlan,
-    SignificanceKind,
+    UncertaintyMode,
     build_histograms,
-    significance,
-    sum_histograms,
 )
 from rootfig.io import ReadCache
 from rootfig.model import (
@@ -61,8 +59,7 @@ from rootfig.plotting import (
     apply_xbreak,
     break_segments,
     draw_histograms,
-    draw_ratio_panel,
-    draw_significance_panel,
+    draw_panel,
     envelope,
     finish_axes,
     finish_figure,
@@ -82,9 +79,6 @@ from rootfig.plotting import (
 from rootfig.selection import NonFinitePolicy
 
 __all__ = ["plot"]
-
-RatioSpec = bool | str | tuple[str, str]
-"""What ``ratio=`` accepts: a flag, a reference label, a significance kind, or (kind, signal)."""
 
 
 @dataclass(frozen=True)
@@ -134,10 +128,11 @@ def plot(
     title: str | None = None,
     normalize: NormalizeSpec = None,
     stack: StackSpec = False,
-    ratio: RatioSpec = False,
-    ratio_ylim: tuple[float, float] | None = None,
-    ratio_label: str | None = None,
-    ratio_uncertainty: RatioUncertainty | None = None,
+    panel: ComparisonKind | None = None,
+    reference: str | None = None,
+    panel_ylim: tuple[float, float] | None = None,
+    panel_label: str | None = None,
+    panel_uncertainty: UncertaintyMode | None = None,
     logx: bool | None = None,
     logy: bool = False,
     flow: FlowSpec = "hint",
@@ -228,7 +223,7 @@ def plot(
     observed
         A sample or group of observed data (or the file(s) for one; histogram
         objects when ``data`` are) drawn as points, excluded from stacks and
-        used as numerator of the ratio.
+        compared with the prediction in the lower panel.
     xlabel, ylabel, unit, title
         Axis labels; defaults come from the variable (or the stored axis title),
         the normalisation and the bin width (``Events / 2 GeV``).
@@ -246,25 +241,28 @@ def plot(
         band, overlays in input order, then data. A histogram keeps its colour
         whether it is stacked or overlaid; explicit colours do not use up
         entries in the colour cycle.
-    ratio
-        ``True`` divides data by the stack total, or by the first non-data
-        histogram without a stack. With a stack but no data, every overlaid
-        histogram is divided by the total; with neither, every histogram after
-        the first is divided by the first. A full stack without data raises.
-        A label selects the reference for every other histogram, including data.
-        ``"significance"`` (``S/sqrt(B)``), ``"s/sqrt(b)"`` or ``"s/sqrt(s+b)"``
-        uses the stack as background and every overlaid non-data histogram as a
-        signal. Without a stack, or with everything stacked, the last non-data
-        histogram is the signal and the others are summed into the background.
-        ``("s/sqrt(b)", "Signal")`` names one signal and sums every other
-        non-data histogram into its background.
-    ratio_ylim, ratio_label, ratio_uncertainty
-        Ratio panel range, y label, and uncertainty treatment
-        (``"propagate"`` or ``"numerator"`` with a reference band; by default
-        each numerator uses ``"numerator"`` for data over simulation and
-        ``"propagate"`` otherwise, so shared systematic sources cancel). The label is
-        shrunk, and if needed wrapped onto two lines, to fit the short panel;
-        pass a shorter ``ratio_label`` (``"Ratio"``) to keep it at full size.
+    panel
+        What a lower panel shows: ``"ratio"``, ``"relative_difference"``,
+        ``"difference"``, ``"pull"``, ``"s/sqrt(b)"`` or ``"s/sqrt(s+b)"``, each
+        defined in the plotting guide ("Lower panel"); ``None`` draws none.
+    reference
+        The label of the one histogram the panel compares with, the background
+        of a significance: every other histogram, data included, is compared
+        with it (every other non-data histogram, as a signal, for a
+        significance). By default data is compared with the stack total, or with
+        the first non-data histogram without a stack; with a stack but no data,
+        every overlaid histogram with the total, and with neither, every
+        histogram after the first with the first. A significance takes the
+        overlaid non-data histograms as signals over the stack, or otherwise the
+        last non-data histogram over the sum of the others.
+    panel_ylim, panel_label, panel_uncertainty
+        Lower panel range, y label, and uncertainty treatment of a ratio,
+        relative difference or difference (``"propagate"``, or ``"numerator"``
+        with the reference's uncertainty as a band; by default each numerator
+        uses ``"numerator"`` for data over simulation and ``"propagate"``
+        otherwise, so shared systematic sources cancel). The label is shrunk,
+        and if needed wrapped onto two lines, to fit the short panel; pass a
+        shorter ``panel_label`` (``"Ratio"``) to keep it at full size.
     logx, logy
         Logarithmic axes. ``logx=None`` (default) follows the ``Variable``'s
         ``log`` flag; ``True``/``False`` override it.
@@ -284,7 +282,7 @@ def plot(
         ``(a, b)`` to cut the x axis: the range between ``a`` and ``b`` is
         removed and the two remaining segments are drawn side by side with a
         break mark (e.g. a peak and a far tail, or a sentinel region). Works
-        with ratio panels; not with ``ax=``.
+        with a lower panel; not with ``ax=``.
     legend
         ``False`` to suppress, or a matplotlib location string.
     stats
@@ -299,7 +297,7 @@ def plot(
     figsize
         Figure size in inches.
     ax
-        Draw into existing axes (``Axes`` or ``(main, ratio)`` pair).
+        Draw into existing axes (``Axes``, or a ``(main, panel)`` pair with ``panel=``).
     nonfinite
         ``"drop"`` (warn) or ``"error"`` for ``nan``/``inf`` values.
     systematics
@@ -307,8 +305,9 @@ def plot(
         the forms ``Sample(systematics=...)`` accepts (a sample's own source of
         the same name takes precedence), e.g. ``{"lumi": 0.017}``. Stacks draw
         the statistical and systematic uncertainty as one band, overlaid samples
-        with variations a light band in their colour, and the ratio panel
-        includes them in its band and error bars. Sources of the same name are
+        with variations a light band in their colour, and the lower panel
+        includes them in its band and error bars (in a pull, in its
+        denominator; a significance is statistical only). Sources of the same name are
         fully correlated across samples, different ones added in quadrature;
         ``Plot.uncertainty()`` returns the components. Histogram objects carry
         theirs in :attr:`~rootfig.histograms.Histogram.variations`.
@@ -323,7 +322,7 @@ def plot(
     Returns
     -------
     Plot
-        The figure, axes, histograms and ratios.
+        The figure, axes, histograms and comparisons.
     """
     prepared = prepare_plot(
         data,
@@ -348,10 +347,11 @@ def plot(
         title=title,
         normalize=normalize,
         stack=stack,
-        ratio=ratio,
-        ratio_ylim=ratio_ylim,
-        ratio_label=ratio_label,
-        ratio_uncertainty=ratio_uncertainty,
+        panel=panel,
+        reference=reference,
+        panel_ylim=panel_ylim,
+        panel_label=panel_label,
+        panel_uncertainty=panel_uncertainty,
         logx=logx,
         logy=logy,
         flow=flow,
@@ -507,10 +507,11 @@ def draw_plot(
     title: str | None = None,
     normalize: NormalizeSpec = None,
     stack: StackSpec = False,
-    ratio: RatioSpec = False,
-    ratio_ylim: tuple[float, float] | None = None,
-    ratio_label: str | None = None,
-    ratio_uncertainty: RatioUncertainty | None = None,
+    panel: ComparisonKind | None = None,
+    reference: str | None = None,
+    panel_ylim: tuple[float, float] | None = None,
+    panel_label: str | None = None,
+    panel_uncertainty: UncertaintyMode | None = None,
     logx: bool | None = None,
     logy: bool = False,
     flow: FlowSpec = "hint",
@@ -579,16 +580,27 @@ def draw_plot(
         if xbreak is not None and xlim is None:
             msg = "xbreak cannot be combined with flow='show'; pass xlim as well"
             raise ValueError(msg)
-        # Done here rather than in mplhep so every histogram, the ratio panel and the
+        # Done here rather than in mplhep so every histogram, the lower panel and the
         # x range agree on the extra bins (mplhep adds them per histogram).
         histograms_, flow_shown = show_flow_bins(histograms_)
         flow = "none"
     elif flow == "sum":
-        # Fold once, up front, so ratios, bands and limits see the same bins as the drawing.
+        # Fold once, up front, so comparisons, bands and limits see the same bins as the drawing.
         histograms_ = fold_flow_bins(histograms_)
         flow = "none"
 
     stacked, overlaid, data = split_stack(histograms_, stack)
+    # the roles of the lower panel are checked before a figure exists
+    plan = resolve_panel(
+        histograms_,
+        panel=panel,
+        reference=reference,
+        uncertainty=panel_uncertainty,
+        label=panel_label,
+        stacked=stacked,
+        overlaid=overlaid,
+        data=data,
+    )
     reference_hist = histograms_[0]
     outer: tuple[float, float] | None = xlim or (
         float(reference_hist.edges[0]),
@@ -606,9 +618,8 @@ def draw_plot(
     view = segments if segments is not None else [outer] if outer is not None else None
 
     with style_context(resolved_style) as st:
-        want_ratio = bool(ratio)
         layout = make_figure(
-            st, ratio=want_ratio, ax=ax, figsize=figsize, break_widths=break_widths, cell=cell
+            st, panel=plan is not None, ax=ax, figsize=figsize, break_widths=break_widths, cell=cell
         )
         drawn = None
         for axis in layout.main_axes:
@@ -679,50 +690,19 @@ def draw_plot(
                 floating=[legend_artist] if floating and legend_artist is not None else [],
             )
 
-        ratios = []
-        significance_spec = _significance_spec(ratio)
-        if layout.ratio is not None and significance_spec is not None:
-            kind, signal_label = significance_spec
-            signals, background_h = _significance_setup(
-                histograms_, signal_label, stacked=stacked, overlaid=overlaid, total=drawn.stack
-            )
-            ratios = [significance(s.hist, background_h.hist, kind=kind) for s in signals]
-            for index, axis in enumerate(layout.ratio_axes):
-                draw_significance_panel(
-                    ratios,
+        comparisons = []
+        if plan is not None and layout.panel is not None:
+            comparisons = plan.comparisons(drawn.stack)
+            for index, axis in enumerate(layout.panel_axes):
+                draw_panel(
+                    comparisons,
                     axis,
-                    kind=kind,
-                    colors=[color_of[id(s)] for s in signals],
-                    ylim=ratio_ylim,
+                    colors=[color_of.get(id(h), h.color or foreground()) for h in plan.numerators],
+                    observed=plan.observed,
+                    ylim=panel_ylim,
+                    ylabel=plan.label if index == 0 else "",
+                    band=plan.band,
                     view=view,
-                    ylabel=ratio_label if index == 0 else "",
-                )
-                if logx:
-                    axis.set_xscale("log")
-                if outer is not None:
-                    axis.set_xlim(*outer)
-        elif layout.ratio is not None:
-            assert not isinstance(ratio, tuple)  # tuples are significance specs, handled above
-            numerators, reference, uncertainty = _ratio_setup(
-                histograms_,
-                ratio,
-                stacked=stacked,
-                overlaid=overlaid,
-                data=data,
-                total=drawn.stack,
-                uncertainty=ratio_uncertainty,
-            )
-            for index, axis in enumerate(layout.ratio_axes):
-                ratios = draw_ratio_panel(
-                    numerators,
-                    reference,
-                    axis,
-                    style=st,
-                    uncertainty=uncertainty,
-                    colors=[color_of.get(id(h), h.color or foreground()) for h in numerators],
-                    ylim=ratio_ylim,
-                    view=view,
-                    ylabel=ratio_label if index == 0 else "",
                 )
                 if logx:
                     axis.set_xscale("log")
@@ -736,8 +716,8 @@ def draw_plot(
         if segments is not None:
             assert layout.main_right is not None
             apply_xbreak(layout.main, layout.main_right, *segments)
-            if layout.ratio is not None and layout.ratio_right is not None:
-                apply_xbreak(layout.ratio, layout.ratio_right, *segments)
+            if layout.panel is not None and layout.panel_right is not None:
+                apply_xbreak(layout.panel, layout.panel_right, *segments)
 
         # last: fonts, of this plot's axes only (a page holds others)
         pin_fonts(layout.fig, axes=layout.axes)
@@ -745,7 +725,7 @@ def draw_plot(
     finish = Finish(
         layout.main,
         right=layout.main_right,
-        panels=layout.ratio_axes,
+        panels=layout.panel_axes,
         xlabel=layout.xlabel_axes,
         headroom=headroom,
     )
@@ -753,11 +733,11 @@ def draw_plot(
     result = Plot(
         fig=layout.fig,
         ax=layout.main,
-        ratio_ax=layout.ratio,
+        panel_ax=layout.panel,
         ax_right=layout.main_right,
-        ratio_ax_right=layout.ratio_right,
+        panel_ax_right=layout.panel_right,
         histograms=list(histograms_),
-        ratios=ratios,
+        comparisons=comparisons,
         variable=variable,
         stack=drawn.stack,
     )
@@ -786,95 +766,3 @@ def _axis_labels(
     if unit and not base.endswith(f"[{unit}]"):
         base = f"{base} [{unit}]"
     return base, unit or unit_of(base)
-
-
-def _significance_spec(ratio: RatioSpec) -> tuple[SignificanceKind, str | None] | None:
-    """``(kind, signal label)`` when ``ratio`` asks for a significance panel, else ``None``."""
-    if isinstance(ratio, tuple):
-        kind, label = ratio
-        if kind not in SIGNIFICANCE_KINDS:
-            msg = f"ratio=({kind!r}, ...) must use one of {SIGNIFICANCE_KINDS}"
-            raise ValueError(msg)
-        return ("s/sqrt(b)" if kind == "significance" else kind, label)  # type: ignore[return-value]
-    if isinstance(ratio, str) and ratio in SIGNIFICANCE_KINDS:
-        return ("s/sqrt(b)" if ratio == "significance" else ratio, None)  # type: ignore[return-value]
-    return None
-
-
-def _significance_setup(
-    hists: Sequence[Histogram],
-    signal_label: str | None,
-    *,
-    stacked: list[Histogram],
-    overlaid: list[Histogram],
-    total: Histogram | None,
-) -> tuple[list[Histogram], Histogram]:
-    """Pick signals and their background from stack membership or an explicit label.
-
-    Histograms overlaid on a stack are the signals and the stack is their
-    background. Without that split (no stack, or everything stacked) the last
-    non-data histogram is the signal and the others are summed into the
-    background, as if it had been named.
-    """
-    mc = [h for h in hists if not h.is_data]
-    if signal_label is None and stacked and overlaid:
-        assert total is not None
-        return overlaid, total
-    if len(mc) < 2:
-        msg = "a significance panel needs at least two non-data histograms (signal and background)"
-        raise ValueError(msg)
-    if signal_label is None:
-        signal = mc[-1]
-    else:
-        matches = [h for h in mc if h.label == signal_label]
-        if not matches:
-            msg = f"signal {signal_label!r} is not one of {[h.label for h in mc]}"
-            raise ValueError(msg)
-        signal = matches[0]
-    others = [h for h in mc if h is not signal]
-    # summed like a stack total: bin by bin, whatever the axis names and labels, checked
-    return [signal], sum_histograms(others, label="Background")
-
-
-def _ratio_setup(
-    hists: Sequence[Histogram],
-    ratio: bool | str,
-    *,
-    stacked: list[Histogram],
-    overlaid: list[Histogram],
-    data: list[Histogram],
-    total: Histogram | None,
-    uncertainty: RatioUncertainty | None,
-) -> tuple[list[Histogram], Histogram, RatioUncertainty | list[RatioUncertainty]]:
-    if isinstance(ratio, str):
-        matches = [h for h in hists if h.label == ratio]
-        if not matches:
-            msg = f"ratio reference {ratio!r} is not one of {[h.label for h in hists]}"
-            raise ValueError(msg)
-        reference = matches[0]
-        numerators = [h for h in hists if h is not reference]
-    elif stacked:
-        assert total is not None
-        reference = total
-        numerators = data if data else overlaid
-        if not numerators:
-            msg = (
-                "ratio=True with every non-data histogram stacked needs observed data "
-                "(observed=...) or a histogram outside the stack (stack=[...])"
-            )
-            raise ValueError(msg)
-    elif data and overlaid:
-        numerators, reference = data, overlaid[0]
-    else:
-        if len(hists) < 2:
-            msg = "a ratio panel needs at least two histograms"
-            raise ValueError(msg)
-        numerators, reference = list(hists[1:]), hists[0]
-    if uncertainty is not None:
-        return numerators, reference, uncertainty
-    # Data over simulation keeps the reference as a band; all other ratios
-    # propagate both uncertainties, allowing shared systematic sources to cancel.
-    per_numerator: list[RatioUncertainty] = [
-        "numerator" if h.is_data and not reference.is_data else "propagate" for h in numerators
-    ]
-    return numerators, reference, per_numerator

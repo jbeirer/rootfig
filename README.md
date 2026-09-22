@@ -81,7 +81,8 @@ rf.plot(
     weight="event_weight",
     bins=(50, 0, 200),
     normalize=True,
-    ratio="Background",
+    panel="ratio",
+    reference="Background",
 )
 ```
 
@@ -106,7 +107,7 @@ p = rf.plot(
     observed=data,
     selection=baseline,
     stack=True,
-    ratio=True,
+    panel="ratio",
     logy=True,
     style=style,
 )
@@ -143,15 +144,17 @@ book.save_pdf("zh.pdf")  # rf.ALL in place of the list plots every histogram the
 - **Select events and objects with readable expressions.** Write cuts such as
   `count(Jet_pt) >= 2` or `Muon_pt > 20`; event and object selections have
   explicit rules, and event weights carry through to each selected object.
-- **Compare samples with a few keywords.** Overlays, stacks, data points and
-  ratio panels share binning and propagate histogram uncertainties; bin edges
+- **Compare samples with a few keywords.** Overlays, stacks, data points and a
+  lower panel (ratio, difference, relative difference, pull or significance,
+  against a reference you name) share binning and propagate histogram
+  uncertainties; bin edges
   and `(n, low, high)` are used as given, while a range inferred from the data
   ignores far outliers, so `-999` sentinels do not set the axis. Normalise to
   unity, density, bin width or luminosity; stack some samples and overlay the rest.
   Draw several samples as one histogram with `rf.Group`, each keeping its own
   weights, cross section and systematics.
 - **Show systematic uncertainties.** Attach weight, branch, file or
-  normalisation variations to a sample; stacks and ratio panels draw the
+  normalisation variations to a sample; stacks and lower panels draw the
   combined statistical and systematic band, and every component stays
   accessible.
 - **Style figures for your analysis.** Add experiment labels, units, log axes

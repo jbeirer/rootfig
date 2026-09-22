@@ -45,16 +45,15 @@ from rootfig.errors import (
 )
 from rootfig.expressions import evaluate
 from rootfig.histograms import (
+    Comparison,
     Cutflow,
     CutflowTable,
     Efficiency,
     Histogram,
     Profile,
-    Ratio,
     Summary,
     Uncertainty,
-    ratio,
-    significance,
+    compare,
 )
 from rootfig.model import Cut, Group, Sample, Style, Systematic, Variable, log_bins
 from rootfig.plotting import Plot, dark_theme, use_style
@@ -64,6 +63,7 @@ __version__ = "0.7.1"
 __all__ = [
     "ALL",
     "BinningError",
+    "Comparison",
     "Cut",
     "Cutflow",
     "CutflowTable",
@@ -78,7 +78,6 @@ __all__ = [
     "PlotBook",
     "PlotTask",
     "Profile",
-    "Ratio",
     "RootfigError",
     "RootfigWarning",
     "Sample",
@@ -92,6 +91,7 @@ __all__ = [
     "Uncertainty",
     "Variable",
     "__version__",
+    "compare",
     "correlation",
     "cutflow",
     "dark_theme",
@@ -105,8 +105,6 @@ __all__ = [
     "plot",
     "plot2d",
     "profile",
-    "ratio",
-    "significance",
     "summarize",
     "use_style",
 ]

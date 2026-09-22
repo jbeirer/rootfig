@@ -74,10 +74,10 @@ book = rf.PlotBook(
 draws `lin` with `stack=True, logy=False` and `log` with `stack=True, logy=True`.
 With `variants={"stacked": {"stack": True}, "overlaid": {"stack": ["Background"]}}`,
 every plot is drawn with the signal inside the stack and over it, from one set of
-prepared histograms. With the signal last and `ratio="significance"` in
+prepared histograms. With the signal last and `panel="s/sqrt(b)"` in
 `plot_kwargs`, both show the same significance panel.
 
-Every other keyword of `rf.plot` (`observed=`, `normalize=`, `ratio=`,
+Every other keyword of `rf.plot` (`observed=`, `normalize=`, `panel=`,
 `systematics=`, `style=`, ...) goes into `plot_kwargs` or a variant. The keyword
 names are checked against `rf.plot`'s signature when the book is built, so a
 misspelt `log_y` is reported, with `logy` as the suggestion, before anything is
@@ -261,7 +261,7 @@ a standalone figure.
 
 By default the grid of a page follows the plots it holds. Plots without a lower
 panel or broken axis go up to `2 × 3` on a page; when one of the plots that
-would land on a page has a `ratio=` panel or an `xbreak=`, which need the room,
+would land on a page has a `panel=` or an `xbreak=`, which need the room,
 the page stops at `2 × 2`. The last page adapts to what is left rather than
 leaving a lone plot in the corner of a full grid: seven plain plots are a
 `2 × 3` page followed by a `1 × 1` one, eight a `2 × 3` page and a `1 × 2` one.
@@ -275,9 +275,9 @@ book.save_pdf("overview.pdf", layout=(2, 3))
 A page is as large as the grid of figures the plots would have on their own,
 plus a narrow gap between neighbouring cells, so a plot in a cell keeps its
 usual size: every cell of the document is as large as the largest figure any
-plot of the book would draw alone (a ratio panel makes it taller, a `Style` with
+plot of the book would draw alone (a lower panel makes it taller, a `Style` with
 a `figsize` sets its own). A cell is laid out exactly as a figure of its size,
-whatever the grid and the style: the gap above a ratio panel, the room for
+whatever the grid and the style: the gap above a lower panel, the room for
 labels, the legend and the y limits are the same on a `1 × 1` page as on an
 `8 × 8` one. The plots of a page are finished together, so a dense page takes
 about as long as the same plots on pages of their own. `figsize=` on
@@ -367,7 +367,7 @@ The book only reads less often than that call would. It runs the tasks in
 batches of a few dozen variables: the branches those variables and every
 selection need are read once per sample for the batch, the files a
 `Systematic.samples` variation fills from included, and variants that only
-change the drawing (`stack`, `logy`, `normalize`, `ratio`, `style`, ...) are drawn from
+change the drawing (`stack`, `logy`, `normalize`, `panel`, `style`, ...) are drawn from
 one set of prepared histograms, each figure from its own copy. A variant that
 changes how the histograms are prepared (`bins`, `weight`, `observed`,
 `systematics`, ...) is prepared on its own, still from the batch's read.

@@ -55,7 +55,7 @@ bkg = rf.Sample(
     },
 )
 p = rf.plot(
-    [bkg, sig], "Jet_pt", observed=data, stack=True, ratio=True, systematics={"lumi": 0.017}
+    [bkg, sig], "Jet_pt", observed=data, stack=True, panel="ratio", systematics={"lumi": 0.017}
 )
 ```
 
@@ -80,9 +80,9 @@ Rules:
   quadrature; the total is statistical ⊕ systematic, per side.
 - Sources with the same name are fully correlated across samples: the stack
   total adds their variations linearly (a sample without the source
-  contributes its nominal contents), and a ratio varies numerator and
-  denominator together, so a shared luminosity uncertainty cancels in an
-  MC/MC ratio.
+  contributes its nominal contents), and a comparison in the lower panel
+  varies numerator and reference together, so a shared luminosity uncertainty
+  cancels in an MC/MC ratio.
 - A [`Group`][rootfig.Group] sums its components' variations by the same rule
   before it is drawn or normalised.
 - `normalize=True`, `"unity"`, `"density"` or a numeric target normalises every
@@ -103,15 +103,16 @@ Rules:
 Drawing follows mplhep's conventions: a stack's hatched band shows the
 statistical and systematic uncertainty of the total (legend `Stat. + syst.
 unc.`), overlaid samples with variations get a light band in their own colour,
-and the ratio panel includes the systematics in its band around one
-(`split_ratio`, data/MC) or in the error bars of the points (`propagate`:
-statistical uncertainties uncorrelated, systematic ones propagated source by
-source through the varied ratio; a variation that empties a denominator bin
-leaves that bin's systematic uncertainty undefined, with a warning). The
-automatic ratio range covers the bulk of the band and of the systematic error
-bars (robust percentiles, like the points, so a single bin with a huge
-uncertainty runs off the panel instead of squashing it; pass `ratio_ylim` to
-show it in full). It stays at or above zero unless a central ratio is negative
+and the [lower panel](#lower-panel) includes the systematics in its band
+around the baseline (`split_ratio`, data/MC) or in the error bars of the points
+(`propagate`: statistical uncertainties uncorrelated, systematic ones
+propagated source by source through the varied ratio or difference; a
+variation that empties a denominator bin leaves that bin's systematic
+uncertainty undefined, with a warning), and a pull divides by them. The
+automatic range covers the bulk of the band and of the systematic error bars
+(robust percentiles, like the points, so a single bin with a huge uncertainty
+runs off the panel instead of squashing it; pass `panel_ylim` to show it in
+full). A ratio stays at or above zero unless a central ratio is negative
 (signed weights).
 
 The numbers are part of the result. `Plot.stack` holds the sum of the stacked
@@ -125,7 +126,7 @@ u.stat, u.syst_down, u.syst_up  # per bin, visible bins
 u.total_down, u.total_up  # statistical ⊕ systematic
 u.components["jes"]  # signed (up − nominal, down − nominal) shifts
 p.histograms[0].variations  # {"jes": (hist_up, hist_down), ...}
-p.ratios[0].syst_band  # relative (down, up) band of the reference
+p.comparisons[0].syst_band  # (down, up) band of the reference, relative for a ratio
 ```
 
 Pre-filled histograms take variations directly and are drawn the same way:
@@ -182,45 +183,96 @@ and a warning says so. An empty histogram, or one whose positive and negative
 weights cancel exactly, is left unchanged with a warning and keeps the plain
 `Events` label (`Histogram.normalization` stays `None`).
 
-## Ratio panel
+## Lower panel
 
-`ratio=True` adds a lower panel sharing the x axis:
+`panel=` adds a lower panel sharing the x axis and says what it shows;
+`reference=` names the histogram it compares with. With `n` and `d` the
+contents of a numerator and of the reference, and `vn` and `vd` their
+variances:
 
-- with a stack and data: data / stack total; overlaid histograms are not part
-  of the prediction and do not appear in the panel;
-- with a stack and no data: every overlaid histogram / stack total; a full
-  stack needs observed data or a histogram outside the stack;
-- without a stack, with data: data / the first non-data histogram;
-- without a stack or data: every histogram after the first / the first.
+| `panel=` | Values | Error bars: `propagate` / `numerator` | Band (`numerator`) | Automatic range |
+| --- | --- | --- | --- | --- |
+| `"ratio"` | `n / d`, around 1 | `√(vn/d² + n²·vd/d⁴)` / `√vn / abs(d)` | `√vd / abs(d)` around 1 | at least 0.5 to 1.5, widened to the bulk of the points, their systematic error bars and the band; within 0 to 3, or −3 to 3 when a ratio is negative |
+| `"relative_difference"` | `n / d − 1`, around 0 | the ratio's | the ratio's, around 0 | the ratio's range moved down by one: at least −0.5 to 0.5, within −1 to 2 (−4 to 2) |
+| `"difference"` | `n − d`, around 0 | `√(vn + vd)` / `√vn` | `√vd` around 0 | symmetric: ±1.1 times the largest magnitude of the 5th and 95th percentiles of the points, their systematic extent and the band; ±1 when all are zero |
+| `"pull"` | `(n − d) / σ`, `σ² = vn + vd + σ_syst²` | none: 1 by construction | none | symmetric: ±1.1 times the 95th percentile of the magnitudes, at least ±3 and at most ±5 |
+| `"s/sqrt(b)"`, `"s/sqrt(s+b)"` | `S/√B`, `S/√(S+B)` per bin, the reference as background | statistical, propagated | none | 0 to 1.25 times the highest point plus its error |
 
-`ratio="Background"` picks the reference by label (a group's label counts);
-all other histograms, data included, are divided by it. For every form, the
-uncertainty treatment is chosen per numerator: data over simulation keeps the
-reference uncertainty as a grey band (`"numerator"`), and every other ratio
-propagates both sides (`"propagate"`), so shared systematic sources cancel.
-`ratio_uncertainty=` applies one treatment to all.
+Ratios, relative and absolute differences are points with error bars over a
+grey band, with a dashed line at their baseline; pulls are filled bars from 0
+in the numerator's colour; significances are points without a baseline. Every
+numerator gets its own series, in its histogram's colour. A bin is left empty
+where the value is undefined: an empty reference for a ratio or a relative
+difference, `σ = 0` for a pull, and no background (or no signal plus
+background) for a significance. Only the bins inside the visible x range
+(`xlim`, both segments of `xbreak`) set the automatic range, and statistical
+error bars never do, so a few low-statistics bins cannot squash the panel.
 
-`ratio="significance"` (or `"s/sqrt(b)"`, `"s/sqrt(s+b)"`) draws a
-**significance panel** instead: per bin, the signal over the square root of
-the background (or of signal plus background), with propagated uncertainties.
-With histograms overlaid on a stack, the stack is the background and every
-overlaid non-data histogram is a signal, so stacking the backgrounds compares
-several signals with them. Without a stack, or with everything stacked, the last
-non-data histogram is the signal and the others are summed into the background:
-with the signal last, drawing it inside the stack or over it shows the same panel.
-`ratio=("s/sqrt(b)", "ZH")` names one signal and sums every other non-data histogram
-into the background. `Plot.ratios` holds one `Ratio` per signal, drawn in that
-histogram's colour.
+`σ_syst` of a pull is the combined [systematic
+uncertainty](#systematic-uncertainties) of `n − d`, every source varying both
+sides together, taken on the side facing the other histogram: the lower one
+where `n > d`, the upper one elsewhere (mplhep's rule for Poisson pulls).
+Significance panels use statistical uncertainties only.
 
-`ratio_ylim` and
-`ratio_label` override the automatic range (at least 0.5 to 1.5, widened to
-cover the bulk of the points) and label (`Ratio to X` or `Data / MC`). A
-rotated y label is bounded by the height of the short ratio panel, so a long
-one is shrunk and, if that is not enough, wrapped onto two lines; pass a
-shorter `ratio_label` such as `"Ratio"` to keep it at full size. The
-computed values are returned in `Plot.ratios` as
-[`Ratio`][rootfig.Ratio] objects (`values`, `errors`, `band`, `edges`, and
-`syst_errors`/`syst_band` with [systematic uncertainties](#systematic-uncertainties)).
+**Roles.** Without `reference=`:
+
+| Drawn | Ratio, differences, pull: numerators / reference | Significance: signals / background |
+| --- | --- | --- |
+| stack and data | data / stack total; overlays are not part of the prediction | overlaid non-data histograms / stack total, or, with everything stacked, the last non-data histogram / the sum of the others |
+| stack, no data | every overlaid histogram / stack total; a full stack raises | as above |
+| no stack, data | data / the first non-data histogram | the last non-data histogram / the sum of the others |
+| no stack, no data | every histogram after the first / the first | the last non-data histogram / the sum of the others |
+
+With the signal last, drawing it inside the stack or over it shows the same
+significance panel, and stacking the backgrounds (`stack=["WW", "ZZ"]`)
+compares every overlaid signal with them. `reference="Background"` names one
+histogram (a group's label counts), for every kind the denominator: every
+other histogram, data included, is compared with it, and for a significance
+every other non-data histogram is a signal over it as background. A label
+that no drawn histogram or several carry raises `ValueError`, as does observed
+data as a background, or `reference=` without `panel=`.
+
+**Uncertainties.** A ratio, relative difference or difference draws its error
+bars in one of two modes, chosen per numerator: data over simulation keeps the
+reference uncertainty as the grey band (`"numerator"`, mplhep's
+`split_ratio`), and everything else propagates both sides (`"propagate"`), so
+sources shared by numerator and reference cancel. `panel_uncertainty=` applies
+one mode to all numerators; it raises for a pull or a significance, which have
+no band.
+
+**Range and label.** `panel_ylim` and `panel_label` override the automatic
+range and label. The label names the reference, `MC` for the stack total:
+
+| `panel=` | Data over simulation | Otherwise |
+| --- | --- | --- |
+| `"ratio"` | `Data / MC` | `Ratio to X` |
+| `"relative_difference"` | `(Data − MC) / MC` | `Rel. difference to X` |
+| `"difference"` | `Data − MC` | `Difference to X` |
+| `"pull"` | `Pull` | `Pull` |
+| `"s/sqrt(b)"`, `"s/sqrt(s+b)"` | `S/√B`, `S/√(S+B)` | the same |
+
+A rotated y label is bounded by the height of the short panel, so a long one
+is shrunk and, if that is not enough, wrapped onto two lines; pass a shorter
+`panel_label` such as `"Ratio"` to keep it at full size.
+
+**Result.** `Plot.comparisons` holds one [`Comparison`][rootfig.Comparison]
+per numerator (`kind`, `label`, `reference`, `values`, `errors`, `edges`,
+`band`, and `syst_errors`/`syst_band` with systematic uncertainties), in the
+order drawn; [`rf.compare`][rootfig.compare] computes one from any two
+histograms.
+
+A detector or software comparison, a fast simulation against the full one,
+normalised to compare shapes and with the full simulation as the reference
+because it comes first:
+
+```python
+full = rf.Sample("full_sim.root", tree="events", label="Full simulation")
+fast = rf.Sample("fast_sim.root", tree="events", label="Fast simulation")
+rf.plot([full, fast], "Muon_pt", normalize=True, panel="relative_difference")
+```
+
+The gallery shows a [ratio to a chosen sample](gallery/ratio_reference.md), a
+[pull](gallery/pull.md) and a [significance panel](gallery/selective_stack.md).
 
 ## Binning and range
 
@@ -310,8 +362,8 @@ range avoids range inference.
 ## Axes
 
 Automatic y limits come from the bins overlapping the x range shown: `xlim`,
-or both segments of `xbreak`. This applies to the main panel and to ratio and
-significance panels alike.
+or both segments of `xbreak`. This applies to the main panel and to the lower
+panel alike.
 
 - `logx`, `logy`: logarithmic scales. Log-spaced bins: `bins=rf.log_bins(n, low, high)`.
 - `xlim`, `ylim`: limits; `ylim=(None, 1e4)` keeps the automatic lower value.
@@ -320,18 +372,18 @@ significance panels alike.
   legend, label, statistics box and text lines need.
 - `xbreak=(a, b)`: cut the range between `a` and `b` out of the x axis and
   draw the two remaining segments side by side with break marks, sharing the
-  y axis (and the ratio panel, if any). Useful for a peak plus a far tail or
+  y axis (and the lower panel, if any). Useful for a peak plus a far tail or
   a sentinel region. The right segment is `Plot.ax_right`
-  (`Plot.ratio_ax_right`). Not available together with `ax=` or `flow="show"`.
+  (`Plot.panel_ax_right`). Not available together with `ax=` or `flow="show"`.
 
   ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio-atlas.png#only-light){ width="60%" }
   ![Broken x axis with a ratio panel](images/gallery/xbreak_ratio-atlas-dark.png#only-dark){ width="60%" }
 - `flow`: how under/overflow is shown (this is where entries outside an
   inferred [range](#binning-and-range) end up), `"hint"` (small arrows, default),
   `"show"` (extra bins labelled `<low` / `>high`, added on a side as soon as any
-  sample has content there, identical for all samples and the ratio panel),
-  `"sum"` (added to the edge bins before anything is computed, so ratios,
-  significances, stack bands and y limits use the folded bins), `"none"`.
+  sample has content there, identical for all samples and the lower panel),
+  `"sum"` (added to the edge bins before anything is computed, so the lower
+  panel, stack bands and y limits use the folded bins), `"none"`.
 - `logx`, `logy`: logarithmic axes. `logx=None` (default) follows the
   `Variable`'s `log` flag (`plot2d`, `efficiency` and `profile` do the same for
   their variables); `True`/`False` override it.
@@ -387,16 +439,16 @@ significance panels alike.
 ## Figure handling
 
 - `figsize=(w, h)`; `ax=some_axes` draws into your own axes (pass a pair
-  `(main, ratio)` for ratio plots), so several rootfig plots can share a figure.
+  `(main, panel)` with `panel=`), so several rootfig plots can share a figure.
 - `save="file.pdf"` saves immediately; `Plot.save(path)` accepts a directory
   (file named after the variable) and `formats=["pdf", "png"]`.
 - Figures use matplotlib's constrained layout, so labels, legends and colour
   bars fit inside the canvas and a saved file has exactly the `figsize`
-  dimensions: 1D, 2D and ratio plots of one size share one shape. Figures
+  dimensions: 1D, 2D and lower-panel plots of one size share one shape. Figures
   drawn into your own `ax` are saved with a tight bounding box instead.
 - Fonts are fixed on the figure when it is made, so saving or displaying it
   later renders exactly the layout that was computed, in the style's fonts.
-- `Plot.fig`, `Plot.ax`, `Plot.ratio_ax` are plain matplotlib objects;
+- `Plot.fig`, `Plot.ax`, `Plot.panel_ax` are plain matplotlib objects;
   `Plot.histograms` wrap the `hist.Hist` objects with labels and statistics.
 - In a notebook the figure is displayed automatically — it is a pyplot figure,
   flushed by the inline backend at the end of the cell, so `%matplotlib inline`
@@ -505,7 +557,7 @@ table.get("MET", "Signal").mean  # a Summary: entries, mean, std, sem, skewness,
 `rf.plot`, `rf.histogram(s)` and `rf.plot2d` read histograms stored in ROOT
 files; `rf.plot` and `rf.plot2d` also draw histogram objects you already have.
 Each keeps its usual drawing options where they apply: the 1D options above
-for `rf.plot` (stacks, ratios, `flow`, ...), those of the
+for `rf.plot` (stacks, lower panels, `flow`, ...), those of the
 [2D section](#2d-histograms-and-correlations) for `rf.plot2d`. Options that
 need information a ready-made histogram does not contain (a selection, a weight,
 `stats` on one without statistics) are refused.
@@ -585,7 +637,7 @@ What a stored histogram supports:
 
   `bins=` accepts only `Regular` and `Variable` axes; integer, boolean and
   category axes must be expressed as a count/range or numeric edges instead.
-- Normalisation, stacks, ratios, `flow` and the other drawing options work
+- Normalisation, stacks, lower panels, `flow` and the other drawing options work
   unchanged. Systematics of the normalisation kind (`{"lumi": 0.02}`) and
   `Systematic.samples(other_files)` (the same histogram read from other files)
   are supported by `plot` and `histograms`; `plot2d` ignores systematics, for
@@ -604,7 +656,7 @@ What a stored histogram supports:
 
 `hist.Hist` or [`Histogram`][rootfig.Histogram] objects, one or a list, are
 drawn as they are: `rf.plot([h_sig, h_bkg], label=["Signal", "Background"],
-ratio=True)`. `label=` names plain `hist.Hist` objects (otherwise their first
+panel="ratio")`. `label=` names plain `hist.Hist` objects (otherwise their first
 axis name is used), `observed=` takes histogram objects for the data,
 `variable=` optionally supplies the axis label, unit and `log` flag, and
 `rf.plot2d(h2)` draws a 2D one, with `x` and `y` `Variable`s optionally
@@ -619,7 +671,7 @@ explicit `(low, high)` range without a bin count crops to those ends, which must
 be existing edges, keeping the bins between them and moving the rest into flow. Options that fill from event data
 (`tree`, `selection`, `weight`, `lumi`, `systematics`) raise;
 `range="auto"`/`"robust"` are no-ops. `Histogram.variations` carries
-systematics instead. Stacks, sums and ratios of histograms with category axes
+systematics instead. Stacks, sums and comparisons of histograms with category axes
 (ROOT bin labels) require the same categories in the same order; the flow bins
 of such an axis hold entries of categories it does not list, which
 `flow="hint"` marks with an arrow and `flow="show"`/`flow="sum"` refuse, since

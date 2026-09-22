@@ -450,10 +450,12 @@ class TestPlots:
 
     def test_drawing_failure_closes_only_the_failed_task(self, samples: list[rf.Sample]) -> None:
         existing = plt.figure()
-        book = rf.PlotBook(samples, X, variants={"good": {}, "bad": {"ratio": "missing"}})
+        book = rf.PlotBook(
+            samples, X, variants={"good": {}, "bad": {"panel": "ratio", "reference": "missing"}}
+        )
         iterator = book.plots()
         _, completed = next(iterator)
-        with pytest.raises(ValueError, match="ratio reference 'missing'") as info:
+        with pytest.raises(ValueError, match="reference='missing' is not the label") as info:
             next(iterator)
         assert plt.get_fignums() == [existing.number, completed.fig.number]
         assert info.value.__notes__ == [
@@ -506,13 +508,13 @@ class TestPassthrough:
             ],
             label="Data",
         )
-        kwargs = {"observed": observed, "stack": True, "ratio": True}
+        kwargs = {"observed": observed, "stack": True, "panel": "ratio"}
         ((_, from_book),) = list(rf.PlotBook(mc, [X], plot_kwargs=kwargs).plots())
         direct = rf.plot(mc, X, **kwargs)
         assert [h.label for h in from_book.histograms] == ["MC", "Data"]
         assert from_book.histograms[1].is_data
-        assert from_book.ratio_ax is not None
-        np.testing.assert_allclose(from_book.ratios[0].values, direct.ratios[0].values)
+        assert from_book.panel_ax is not None
+        np.testing.assert_allclose(from_book.comparisons[0].values, direct.comparisons[0].values)
 
     def test_histogram_objects(self) -> None:
         h = hist.Hist(hist.axis.Regular(4, 0, 1, name="x"), storage=hist.storage.Weight())
@@ -577,8 +579,8 @@ class TestSave:
 
     def test_drawing_failure_closes_figure(self, samples: list[rf.Sample], tmp_path: Path) -> None:
         existing = plt.figure()
-        book = rf.PlotBook(samples, X, plot_kwargs={"ratio": "missing"})
-        with pytest.raises(ValueError, match="ratio reference 'missing'"):
+        book = rf.PlotBook(samples, X, plot_kwargs={"panel": "ratio", "reference": "missing"})
+        with pytest.raises(ValueError, match="reference='missing' is not the label"):
             book.save(tmp_path)
         assert plt.get_fignums() == [existing.number]
 
@@ -774,7 +776,7 @@ def _spy(monkeypatch: pytest.MonkeyPatch, name: str) -> list[tuple[Any, ...]]:
 
 
 def assert_same_plot(result: rf.Plot, direct: rf.Plot) -> None:
-    """Assert that two plots hold the same histograms, ratios and axes, bit for bit."""
+    """Assert that two plots hold the same histograms, comparisons and axes, bit for bit."""
     assert [h.label for h in result.histograms] == [h.label for h in direct.histograms]
     for got, want in zip(result.histograms, direct.histograms, strict=True):
         np.testing.assert_array_equal(got.values(flow=True), want.values(flow=True))
@@ -794,10 +796,19 @@ def assert_same_plot(result: rf.Plot, direct: rf.Plot) -> None:
             np.testing.assert_array_equal(up.values(flow=True), want_up.values(flow=True))
             np.testing.assert_array_equal(up.variances(flow=True), want_up.variances(flow=True))
             np.testing.assert_array_equal(down.values(flow=True), want_down.values(flow=True))
-    assert len(result.ratios) == len(direct.ratios)
-    for got_ratio, want_ratio in zip(result.ratios, direct.ratios, strict=True):
-        np.testing.assert_array_equal(got_ratio.values, want_ratio.values)
-    assert (result.ratio_ax is None) == (direct.ratio_ax is None)
+    assert len(result.comparisons) == len(direct.comparisons)
+    for got_comparison, want_comparison in zip(result.comparisons, direct.comparisons, strict=True):
+        assert (got_comparison.kind, got_comparison.label, got_comparison.reference) == (
+            want_comparison.kind,
+            want_comparison.label,
+            want_comparison.reference,
+        )
+        np.testing.assert_array_equal(got_comparison.values, want_comparison.values)
+        np.testing.assert_array_equal(got_comparison.errors, want_comparison.errors)
+    assert (result.panel_ax is None) == (direct.panel_ax is None)
+    if result.panel_ax is not None and direct.panel_ax is not None:
+        assert result.panel_ax.get_ylabel() == direct.panel_ax.get_ylabel()
+        assert result.panel_ax.get_ylim() == direct.panel_ax.get_ylim()
     assert result.ax.get_yscale() == direct.ax.get_yscale()
     assert result.ax.get_xlabel() == direct.ax.get_xlabel()
     assert result.ax.get_ylabel() == direct.ax.get_ylabel()
@@ -821,7 +832,8 @@ class TestBatching:
         prepare = {"selection", "tree", "bins", "range", "weight", "lumi", "observed"}
         prepare |= {"systematics", "assume_poisson", "nonfinite", "label", "xlabel", "unit"}
         assert prepare <= batch._PREPARE_KEYWORDS
-        draw = {"logy", "logx", "normalize", "ratio", "stack", "style", "text", "stats"}
+        draw = {"logy", "logx", "normalize", "stack", "style", "text", "stats"}
+        draw |= {"panel", "reference", "panel_ylim", "panel_label", "panel_uncertainty"}
         assert draw | {"save", "ax"} <= batch._DRAW_KEYWORDS
 
     def test_variables_of_a_batch_share_one_read_per_sample(
@@ -852,7 +864,13 @@ class TestBatching:
         book = rf.PlotBook(
             files,
             ["MET", "Muon_pt"],
-            variants={"lin": {}, "log": {"logy": True}, "overlay": {"stack": ["Background"]}},
+            variants={
+                "lin": {},
+                "log": {"logy": True},
+                "overlay": {"stack": ["Background"]},
+                # a pull needs something outside the stack: Signal over the Background stack
+                "pull": {"panel": "pull", "stack": ["Background"]},
+            },
             plot_kwargs={"stack": True},
         )
         results = {task.stem: result for task, result in book.plots()}
@@ -867,6 +885,10 @@ class TestBatching:
             assert_same_plot(log, rf.plot(files, variable, stack=True, logy=True))
 
         assert_same_plot(results["MET__overlay"], rf.plot(files, "MET", stack=["Background"]))
+        for variable in ("MET", "Muon_pt"):
+            pull = results[f"{variable}__pull"]
+            assert [c.kind for c in pull.comparisons] == ["pull"]
+            assert_same_plot(pull, rf.plot(files, variable, stack=["Background"], panel="pull"))
 
     def test_variants_changing_the_preparation_are_prepared_apart(
         self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
@@ -958,12 +980,12 @@ class TestBatching:
         reads = _reads(monkeypatch)
         mc = rf.Sample(signal_file, tree="events", label="MC", weight="weight")
         data = rf.Sample(background_file, tree="events", label="Data", is_data=True)
-        kwargs: dict[str, Any] = {"observed": data, "stack": True, "ratio": True}
+        kwargs: dict[str, Any] = {"observed": data, "stack": True, "panel": "ratio"}
         results = list(rf.PlotBook(mc, ["MET", "Muon_pt"], plot_kwargs=kwargs).plots())
         assert len(reads) == 2
         for task, result in results:
             assert result.histograms[-1].is_data
-            assert result.ratio_ax is not None
+            assert result.panel_ax is not None
             assert_same_plot(result, rf.plot(mc, task.variable, **kwargs))
 
     def test_stored_histograms_open_each_file_once_per_batch(
@@ -1244,7 +1266,7 @@ def _books(data_dir: Path, stored_dir: Path) -> dict[str, rf.PlotBook]:
             rf.Group([signal, background], label="MC"),
             ["MET", "Muon_pt"],
             variants={"lin": {}, "norm": {"normalize": True, "stack": False}},
-            plot_kwargs={"observed": data, "stack": True, "ratio": True},
+            plot_kwargs={"observed": data, "stack": True, "panel": "ratio"},
         ),
         "stored": rf.PlotBook(
             [
