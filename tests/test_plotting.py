@@ -903,6 +903,18 @@ class TestPanel:
             draw_panel([], ax)
         plt.close(fig)
 
+    def test_one_reference_and_one_binning_per_panel(self, mc_hists: list[Histogram]) -> None:
+        # the label and the band come from the first comparison, so the rest must share them
+        fig, ax = plt.subplots()
+        other = Histogram(mc_hists[0].hist, label="Other")
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel([compare(mc_hists[1], mc_hists[0]), compare(mc_hists[1], other)], ax)
+        merged = Histogram(mc_hists[0].hist[::2j], label="A")  # the same labels, half the bins
+        wide = compare(merged, merged)
+        with pytest.raises(ValueError, match="one binning"):
+            draw_panel([compare(mc_hists[1], mc_hists[0]), wide], ax)
+        plt.close(fig)
+
     @pytest.mark.parametrize(
         ("kind", "data", "expected"),
         [

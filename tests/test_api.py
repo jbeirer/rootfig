@@ -769,6 +769,22 @@ class TestPanelRoles:
             rf.plot(self._hists(data=True), stack=["A"], **kwargs)
         assert plt.get_fignums() == before
 
+    @pytest.mark.parametrize("panel", [None, "ratio"])
+    def test_a_stack_that_cannot_be_summed_raises_before_a_figure_exists(self, panel: Any) -> None:
+        # the panel compares with the stack total, which must exist: every component counts,
+        # not only the first, and the check runs whether or not a panel is drawn
+        before = plt.get_fignums()
+        coarse = hist.Hist(hist.axis.Regular(1, 0, 2), storage=hist.storage.Weight())
+        coarse.view().value, coarse.view().variance = 5.0, 5.0
+        hists = [
+            *self._hists(data=False, labels=("A",)),
+            rf.Histogram(coarse, label="B"),
+            *[h for h in self._hists(data=True, labels=()) if h.is_data],
+        ]
+        with pytest.raises(BinningError, match="a stack needs histograms"):
+            rf.plot(hists, stack=True, panel=panel)
+        assert plt.get_fignums() == before
+
     @pytest.mark.parametrize("kwargs", [{}, {"reference": "A"}, {"stack": ["A"]}])
     def test_mismatched_binning_raises_before_a_figure_exists(self, kwargs: Any) -> None:
         before = plt.get_fignums()
