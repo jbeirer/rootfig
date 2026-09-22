@@ -871,6 +871,22 @@ class TestPanel:
         draw_panel([against[0], compare(numerator, copied, uncertainty="numerator")], ax)
         plt.close(fig)
 
+    def test_category_references_must_list_the_same_categories(self) -> None:
+        # a category axis reports numeric index edges, which say nothing about its categories
+        def categories(names: str, value: float) -> Any:
+            h = hist.Hist(hist.axis.StrCategory(list(names)), storage=hist.storage.Weight())
+            h.view().value, h.view().variance = value, value
+            return h
+
+        fig, ax = plt.subplots()
+        first = compare(categories("ab", 4.0), categories("ab", 2.0))
+        other = compare(categories("cd", 4.0), categories("cd", 2.0))
+        assert first.edges.tolist() == other.edges.tolist()  # the same indices, other categories
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel([first, other], ax)
+        draw_panel([first, compare(categories("ab", 6.0), categories("ab", 2.0))], ax)
+        plt.close(fig)
+
     @pytest.mark.parametrize(
         ("kind", "baseline"), [("ratio", 1.0), ("relative_difference", 0.0), ("difference", 0.0)]
     )
