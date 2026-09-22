@@ -98,7 +98,9 @@ def draw_panel(
     Raises
     ------
     ValueError
-        Without comparisons, or with comparisons of different kinds.
+        Without comparisons, or with comparisons of different kinds, references
+        or binnings: one panel shows one kind against one reference, whose
+        label and band it draws.
     """
     if not comparisons:
         msg = "draw_panel needs at least one comparison"
@@ -107,6 +109,17 @@ def draw_panel(
     if any(c.kind != kind for c in comparisons):
         msg = f"draw_panel draws one kind; got {sorted({c.kind for c in comparisons})}"
         raise ValueError(msg)
+    first = comparisons[0]
+    for comparison in comparisons[1:]:
+        if comparison.reference != first.reference:
+            msg = (
+                "draw_panel draws one reference, whose label and band the panel shows; got "
+                f"{first.reference!r} and {comparison.reference!r}"
+            )
+            raise ValueError(msg)
+        if not _same_edges(comparison.edges, first.edges):
+            msg = "draw_panel draws one binning; the comparisons have different bin edges"
+            raise ValueError(msg)
     flags = [False] * len(comparisons) if observed is None else list(observed)
     if colors is None:
         cycle = iter(color_cycle(len(comparisons)))
@@ -157,6 +170,11 @@ def draw_panel(
     ax.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 2.5, 5, 10], prune="upper"))
 
 
+def _same_edges(edges: np.ndarray, other: np.ndarray) -> bool:
+    """Whether two comparisons share their bin edges, up to round-off."""
+    return edges.shape == other.shape and bool(np.allclose(edges, other, rtol=1e-9, atol=0.0))
+
+
 def _draw_points(
     comparisons: Sequence[Comparison],
     ax: Axes,
@@ -202,14 +220,15 @@ def panel_ylim(
     """Choose the automatic y range of a panel from the bins in the x windows ``view``.
 
     ``band`` is the lower and upper edge of the drawn reference band, if any.
-    Statistical error bars never count: a few low-statistics bins with huge
-    uncertainties would otherwise squash the panel. Per kind:
+    Statistical error bars do not widen the range, so a few low-statistics bins
+    with huge uncertainties cannot squash the panel; a significance is the
+    exception, its top following the highest point plus its error. Per kind:
 
     * ratio: at least (0.5, 1.5), widened to the 5th to 95th percentile, padded
       by 10 percent, of the values, their systematic extent and the band edges,
       each judged on its own so it can widen the range but never narrow it;
       clipped to ``[0, 3]``, or to ``[-3, 3]`` with negative ratios (signed
-      weights), whose lowest value then stays in view;
+      weights);
     * relative difference: the ratio's range of the values plus one, shifted back;
     * difference: symmetric, 1.1 times the largest magnitude of those
       percentiles, or ``(-1, 1)`` when everything is zero;

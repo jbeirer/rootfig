@@ -24,6 +24,7 @@ from rootfig.plotting.hist1d import (
     envelope,
     fold_flow_bins,
     label_flow_bins,
+    require_same_binning,
     show_flow_bins,
     split_stack,
 )
@@ -97,6 +98,7 @@ __all__ = [
     "pin_fonts",
     "plan_pages",
     "raise_ylim_above",
+    "require_same_binning",
     "resolve_rc",
     "show_flow_bins",
     "split_stack",

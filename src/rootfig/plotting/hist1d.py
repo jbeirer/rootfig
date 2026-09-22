@@ -32,6 +32,7 @@ __all__ = [
     "fold_flow_bins",
     "in_view",
     "label_flow_bins",
+    "require_same_binning",
     "show_flow_bins",
     "split_stack",
 ]
@@ -149,7 +150,7 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
     """
     if not histograms:
         return [], (False, False)
-    _require_same_binning(histograms, "flow='show'")
+    require_same_binning(histograms, "flow='show'")
     _reject_category_flow(histograms, "flow='show'")
     edges = histograms[0].edges
     under = any(_flow_content(h, 0) for h in histograms)
@@ -258,7 +259,8 @@ def _reject_category_flow(histograms: Sequence[Histogram], what: str) -> None:
             raise BinningError(msg)
 
 
-def _require_same_binning(histograms: Sequence[Histogram], what: str) -> None:
+def require_same_binning(histograms: Sequence[Histogram], what: str) -> None:
+    """Refuse histograms ``what`` must combine bin by bin but which bin differently."""
     first = histograms[0].hist
     for histogram in histograms[1:]:
         if not compatible_binning(first, histogram.hist):
@@ -455,7 +457,7 @@ def _draw_stack(
     artists: list[Artist] = []
     labels: list[str] = []
     ranges: list[tuple[float, float, float]] = []
-    _require_same_binning(mc, "a stack")
+    require_same_binning(mc, "a stack")
     fill_alpha = 1.0 if alpha is None else alpha
     stacked = _histplot(
         [h.hist for h in mc],

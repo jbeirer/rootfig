@@ -71,6 +71,7 @@ from rootfig.plotting import (
     overlay_artists,
     pin_fonts,
     raise_ylim_above,
+    require_same_binning,
     show_flow_bins,
     split_stack,
     style_context,
@@ -591,7 +592,8 @@ def draw_plot(
         flow = "none"
 
     stacked, overlaid, data = split_stack(histograms_, stack)
-    # the roles of the lower panel are checked before a figure exists
+    # the stack and the roles of the lower panel are checked before a figure exists
+    require_same_binning(stacked, "a stack")
     plan = resolve_panel(
         histograms_,
         panel=panel,
