@@ -7,6 +7,7 @@ import io
 import re
 import warnings
 from pathlib import Path
+from types import ModuleType
 from typing import Any, ClassVar
 
 import awkward as ak
@@ -1396,7 +1397,7 @@ class TestFigureShape:
         sizes = [text.get_fontsize() for text in texts]
         for text, size in zip(texts, sizes, strict=True):
             assert size >= LABEL_MIN_SCALE * full[type(text)] - 0.01, type(text).__name__
-        align_experiment_label(p.ax)  # as a user may, or another finalisation
+        align_experiment_label(p.ax)  # as a second finishing pass does
         assert [text.get_fontsize() for text in texts] == pytest.approx(sizes, rel=0.01)
         again = self._shown_boxes(p)
         for name, box in boxes.items():
@@ -1531,26 +1532,42 @@ class TestPublicSurface:
         assert rf.__version__
         for name in rf.__all__:
             assert hasattr(rf, name), name
+            # rf.histograms is the function: a subpackage of the same name must not shadow it
+            assert not isinstance(getattr(rf, name), ModuleType), name
 
     def test_documented_lower_layer_exports(self) -> None:
         reference = (Path(__file__).resolve().parents[1] / "docs" / "api.md").read_text()
         lower_layers = reference.split("## Lower layers\n", 1)[1].split("\n## ", 1)[0]
-        entries = lower_layers.split("\n::: ")[1:]
-        assert len(entries) == 6
-        for entry in entries:
-            module_name, options = entry.split("\n", 1)
+        entries = []
+        for entry in lower_layers.split("\n::: ")[1:]:
+            path, _, options = entry.partition("\n")
+            entries.append((path, options))
+        assert [path for path, _ in entries] == [
+            "rootfig.io",
+            "rootfig.expressions",
+            "rootfig.selection",
+            "rootfig.histograms",
+            "rootfig.histograms.normalize.normalize",
+            "rootfig.plotting",
+        ]
+        for path, options in entries:
             if "      members:\n" in options:
+                module_name = path
                 members = re.findall(r"^        - (\w+)$", options, re.MULTILINE)
-                assert members, module_name
+                assert members, f"{path}: list the documented members"
             else:
-                module_name, name = module_name.rsplit(".", 1)
+                package, _, name = path.rpartition(".")
+                parent = importlib.import_module(package)
+                assert not isinstance(getattr(parent, name, None), ModuleType), (
+                    f"{path} documents a module: give it a members list of its own"
+                )
                 # A defining-function path still documents its package's re-export.
-                module_name = importlib.import_module(module_name).__package__
+                module_name = parent.__package__ or package
                 members = [name]
             module = importlib.import_module(module_name)
-            for name in members:
-                assert hasattr(module, name), f"{module_name}.{name}"
-                assert name in module.__all__, f"{module_name}.{name}"
+            for member in members:
+                assert hasattr(module, member), f"{module_name}.{member}"
+                assert member in module.__all__, f"{module_name}.{member}"
 
     def test_evaluate_reexport(self) -> None:
         assert rf.evaluate("a + 1", {"a": ak.Array([1, 2])}).tolist() == [2, 3]

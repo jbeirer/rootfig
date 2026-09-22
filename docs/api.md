@@ -58,7 +58,8 @@
 ## Lower layers
 
 These are the layers `rf.plot` is built from, usable on their own; names a module
-does not list here are internal.
+does not list here are internal. The descriptions in `rootfig.model` are documented
+above.
 
 ::: rootfig.io
     options:

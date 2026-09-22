@@ -239,7 +239,7 @@ def build_histograms(
     :attr:`~rootfig.histograms.Histogram.variations` with the binning chosen
     from the nominal values. A :class:`~rootfig.model.Group` is filled through
     its samples, which share the binning like any other, and gets the sum of
-    their histograms (:func:`~rootfig.histograms.group_histogram`).
+    their histograms (:func:`~rootfig.histograms.groups.group_histogram`).
 
     A bare variable name that addresses a histogram stored in the samples'
     files (see :func:`~rootfig.histograms.stored_mode`) is read instead of

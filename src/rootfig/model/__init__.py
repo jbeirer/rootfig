@@ -3,6 +3,7 @@
 from rootfig.model.binning import (
     Axis,
     Bins,
+    MergeTarget,
     RangeSpec,
     log_bins,
     merge_target,
@@ -16,6 +17,7 @@ from rootfig.model.samples import Sample
 from rootfig.model.style import Style, StyleLike, as_style
 from rootfig.model.systematics import (
     Systematic,
+    SystematicKind,
     SystematicLike,
     as_systematics,
 )
@@ -27,12 +29,14 @@ __all__ = [
     "Cut",
     "CutLike",
     "Group",
+    "MergeTarget",
     "PlotItem",
     "RangeSpec",
     "Sample",
     "Style",
     "StyleLike",
     "Systematic",
+    "SystematicKind",
     "SystematicLike",
     "Variable",
     "as_cut",
