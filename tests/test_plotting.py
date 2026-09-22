@@ -849,6 +849,28 @@ class TestPanel:
         assert container.lines[0].get_color() == foreground()
         plt.close(fig)
 
+    def test_references_varied_differently_are_not_one_reference(
+        self, mc_hists: list[Histogram]
+    ) -> None:
+        # the panel draws one band, so the reference's systematics must agree as well
+        fig, ax = plt.subplots()
+        reference = mc_hists[0]
+        varied = reference.replace(variations={"s": (reference.hist * 1.5, None)})
+        others = reference.replace(variations={"other": (reference.hist * 1.2, None)})
+        numerator = mc_hists[1]
+        against = [
+            compare(numerator, h, uncertainty="numerator") for h in (varied, others, reference)
+        ]
+        for pair in ((against[0], against[1]), (against[0], against[2])):
+            with pytest.raises(ValueError, match="one reference"):
+                draw_panel(list(pair), ax)
+        # the same nominal contents and the same variations: one band, so one reference
+        copied = Histogram(reference.hist.copy(), label=reference.label).replace(
+            variations={"s": (reference.hist * 1.5, None)}
+        )
+        draw_panel([against[0], compare(numerator, copied, uncertainty="numerator")], ax)
+        plt.close(fig)
+
     @pytest.mark.parametrize(
         ("kind", "baseline"), [("ratio", 1.0), ("relative_difference", 0.0), ("difference", 0.0)]
     )

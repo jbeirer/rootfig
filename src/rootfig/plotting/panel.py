@@ -101,7 +101,8 @@ def draw_panel(
     ValueError
         Without comparisons, or with comparisons of different kinds, references
         or binnings: one panel shows one kind against one reference, whose
-        label and band it draws.
+        label and uncertainty band it draws, so references varied differently
+        are refused too.
     """
     if not comparisons:
         msg = "draw_panel needs at least one comparison"
@@ -114,8 +115,9 @@ def draw_panel(
     for comparison in comparisons[1:]:
         if not _same_reference(first, comparison):
             msg = (
-                "draw_panel draws one reference, whose label and band the panel shows; got "
-                f"{first.reference!r} and {comparison.reference!r}"
+                "draw_panel draws one reference, whose label and uncertainty band the panel "
+                f"shows; got {first.reference!r} and {comparison.reference!r}, which differ in "
+                "their contents or in their variations"
             )
             raise ValueError(msg)
         if not same_edges(comparison.edges, first.edges):
@@ -172,26 +174,49 @@ def draw_panel(
 
 
 def _same_reference(comparison: Comparison, other: Comparison) -> bool:
-    """Whether two comparisons were made against the same reference.
+    """Whether two comparisons were made against the same reference, uncertainty included.
 
-    The histograms themselves when they carry them (:func:`compare` keeps the
-    reference), one standing for the other when their contents agree; a
-    hand-built :class:`~rootfig.histograms.Comparison` has only its label.
+    The panel draws one band, so the references must agree on it: the
+    histograms themselves when they carry them (:func:`compare` keeps the
+    reference), one standing for the other when their contents agree, and in
+    either case the band the comparisons carry, which holds the reference's
+    statistical and systematic uncertainty. A hand-built
+    :class:`~rootfig.histograms.Comparison` has only its label and its band.
     """
+    if not _same_band(comparison, other):  # the same nominal contents, varied differently
+        return False
     if comparison.reference_hist is None or other.reference_hist is None:
         return comparison.reference == other.reference
     first, second = comparison.reference_hist, other.reference_hist
     if first is second:
         return True
     first_variances, second_variances = first.variances(), second.variances()
-    if (first_variances is None) != (second_variances is None):
-        return False
     same_variances = (
-        first_variances is None
-        or second_variances is None
-        or np.array_equal(first_variances, second_variances)
+        np.array_equal(first_variances, second_variances)
+        if first_variances is not None and second_variances is not None
+        else first_variances is second_variances  # a storage without variances, on both sides
     )
     return bool(np.array_equal(first.values(), second.values()) and same_variances)
+
+
+def _same_band(comparison: Comparison, other: Comparison) -> bool:
+    """Whether two comparisons carry the same reference uncertainty, ``nan`` bins included."""
+    return all(
+        (first is None and second is None)
+        or (
+            first is not None
+            and second is not None
+            and first.shape == second.shape
+            and bool(np.array_equal(first, second, equal_nan=True))
+        )
+        for first, second in zip(_band_arrays(comparison), _band_arrays(other), strict=True)
+    )
+
+
+def _band_arrays(comparison: Comparison) -> tuple[np.ndarray | None, ...]:
+    """Return the reference's statistical band and its systematic sides, ``None`` where absent."""
+    down, up = comparison.syst_band if comparison.syst_band is not None else (None, None)
+    return (comparison.band, down, up)
 
 
 def _draw_points(

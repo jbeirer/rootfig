@@ -353,11 +353,11 @@ def _source_shifts(
 
 
 def _warn_emptied(name: str, direction: str, emptied: np.ndarray) -> None:
-    """Warn that a variation empties denominator bins, leaving the ratio's systematic undefined."""
+    """Warn that a variation empties reference bins, so the comparison's systematic is undefined."""
     if emptied.any():
         warnings.warn(
-            f"systematic {name!r} {direction} empties the denominator in "
-            f"{int(emptied.sum())} bin(s); the ratio's systematic uncertainty there is nan",
+            f"systematic {name!r} {direction} empties the reference in "
+            f"{int(emptied.sum())} bin(s); the comparison's systematic uncertainty there is nan",
             RootfigWarning,
             stacklevel=4,  # the caller of compare()
         )

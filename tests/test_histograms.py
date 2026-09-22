@@ -1806,7 +1806,7 @@ class TestSystematicsRegressions:
         den = Histogram(
             contents([20.0, 20.0]), label="D", variations={"shape": (contents([20.0, 0.0]), None)}
         )
-        with pytest.warns(RootfigWarning, match="'shape' up empties the denominator in 1 bin"):
+        with pytest.warns(RootfigWarning, match="'shape' up empties the reference in 1 bin"):
             result = compare(num, den)
         assert result.syst_errors is not None
         assert np.isfinite(result.syst_errors[0][0])
