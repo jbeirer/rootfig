@@ -16,10 +16,11 @@ from matplotlib.collections import PolyCollection
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties, findfont
 from matplotlib.gridspec import GridSpec
+from matplotlib.patches import StepPatch
 from matplotlib.text import Text
 
 from rootfig.errors import BinningError, RootfigWarning
-from rootfig.histograms import Histogram, fill, summarize
+from rootfig.histograms import Histogram, fill, summarize, uncertainty
 from rootfig.model import Style
 from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
@@ -28,6 +29,7 @@ from rootfig.plotting import (
     Finish,
     Layout,
     Plot,
+    StackSpec,
     add_experiment_label,
     add_legend,
     add_stats_box,
@@ -53,6 +55,7 @@ from rootfig.plotting import (
     ratio_ylim,
     resolve_rc,
     show_flow_bins,
+    split_stack,
     style_context,
     use_style,
     ylabel_for,
@@ -576,7 +579,7 @@ class TestDrawHistograms:
             fig, ax = plt.subplots()
             drawn = draw_histograms(mc_hists, ax, style=st)
         assert drawn.labels == ["A", "B"]
-        assert drawn.colors == {"A": DEFAULT_COLORS[0], "B": "green"}
+        assert drawn.colors == [DEFAULT_COLORS[0], "green"]
         assert drawn.ymax == pytest.approx(4.0)
         assert drawn.ymin_positive == pytest.approx(1.0)
         assert len(ax.get_legend_handles_labels()[1]) == 2
@@ -590,14 +593,77 @@ class TestDrawHistograms:
         # with error bars the range includes them
         assert drawn.ymax > 4.0
 
-    def test_stack_with_data(self, mc_hists: list[Histogram], data_hist: Histogram) -> None:
+    @pytest.mark.parametrize("stack", [True, ["A", "B"]])
+    def test_stack_with_data(
+        self, mc_hists: list[Histogram], data_hist: Histogram, stack: StackSpec
+    ) -> None:
         with style_context() as st:
             fig, ax = plt.subplots()
-            drawn = draw_histograms([*mc_hists, data_hist], ax, style=st, stack=True)
+            drawn = draw_histograms([*mc_hists, data_hist], ax, style=st, stack=stack)
         assert drawn.labels == ["A", "B", "Stat. unc.", "Data"]
         total = mc_hists[0].values() + mc_hists[1].values()
+        assert drawn.stack is not None
+        np.testing.assert_allclose(drawn.stack.values(), total)
         assert drawn.ymax >= total.max()
-        assert drawn.colors["Data"] == "black"
+        assert drawn.colors[-1] == "black"
+
+    def test_partial_stack(self, mc_hists: list[Histogram], data_hist: Histogram) -> None:
+        histograms = [*mc_hists, data_hist]
+        with style_context() as st:
+            _, ax = plt.subplots()
+            drawn = draw_histograms(histograms, ax, style=st, stack=["A"])
+            colors = []
+            for stack in (True, False):
+                _, other = plt.subplots()
+                colors.append(draw_histograms(histograms, other, style=st, stack=stack).colors)
+        assert drawn.labels == ["A", "Stat. unc.", "B", "Data"]
+        assert drawn.stack is not None
+        np.testing.assert_allclose(drawn.stack.values(), mc_hists[0].values())
+        assert drawn.ymax == pytest.approx(4.0)
+        assert drawn.colors == colors[0] == colors[1]
+
+    def test_stack_labels_are_checked(
+        self, mc_hists: list[Histogram], data_hist: Histogram
+    ) -> None:
+        histograms = [*mc_hists, data_hist]
+        assert split_stack(histograms, "A") == split_stack(histograms, ["A"])
+        assert split_stack(histograms, []) == split_stack(histograms, False)
+        assert split_stack(histograms, ["B", "A", "B"])[0] == mc_hists
+        with pytest.raises(ValueError, match="observed data"):
+            split_stack(histograms, "Data")
+        with pytest.raises(ValueError, match="stack= names") as exc:
+            split_stack(histograms, ["WW", "ZZ"])
+        assert str(exc.value) == (
+            "stack= names 'WW', 'ZZ', which are not labels of drawn histograms "
+            "(labels: ['A', 'B', 'Data']); a Group is stacked by its own label, "
+            "not by those of its components"
+        )
+        with pytest.raises(ValueError, match="stack= names") as exc:
+            split_stack(histograms, "WW")
+        assert str(exc.value) == (
+            "stack= names 'WW', which is not the label of a drawn histogram "
+            "(labels: ['A', 'B', 'Data']); a Group is stacked by its own label, "
+            "not by those of its components"
+        )
+        for bad in (None, 1, [1], {"A"}):
+            with pytest.raises(TypeError) as exc:
+                split_stack(histograms, bad)  # type: ignore[arg-type]
+            assert str(exc.value) == (
+                f"stack= must be True, False, a label or a list of labels, got {bad!r}"
+            )
+
+    def test_duplicate_labels_select_all_non_data(self, mc_hists: list[Histogram]) -> None:
+        a, b = mc_hists
+        histograms = [a, b.replace(label="A"), a.replace(is_data=True)]
+        stacked, overlaid, data = split_stack(histograms, "A")
+        assert stacked == histograms[:2]
+        assert overlaid == []
+        assert data == histograms[2:]
+        _, ax = plt.subplots()
+        drawn = draw_histograms(histograms, ax, style=Style(), stack="A")
+        assert drawn.colors == [color_cycle(1, Style())[0], "green", "black"]
+        assert drawn.stack is not None
+        np.testing.assert_allclose(drawn.stack.values(), a.values() + b.values())
 
     def test_stack_without_uncertainty_band(self, mc_hists: list[Histogram]) -> None:
         with style_context() as st:
@@ -778,14 +844,24 @@ class TestRatioPanel:
 
 
 class TestAnnotations:
-    def test_legend_order(self, mc_hists: list[Histogram], data_hist: Histogram) -> None:
+    @pytest.mark.parametrize(
+        ("stack", "expected"),
+        [(True, ["Data", "B", "A", "Stat. unc."]), (["A"], ["Data", "A", "Stat. unc.", "B"])],
+    )
+    def test_legend_order(
+        self,
+        mc_hists: list[Histogram],
+        data_hist: Histogram,
+        stack: StackSpec,
+        expected: list[str],
+    ) -> None:
         with style_context() as st:
             fig, ax = plt.subplots()
-            draw_histograms([*mc_hists, data_hist], ax, style=st, stack=True)
+            draw_histograms([*mc_hists, data_hist], ax, style=st, stack=stack)
             legend = add_legend(ax, st)
         assert legend is not None
         texts = [t.get_text() for t in legend.get_texts()]
-        assert texts == ["Data", "B", "A", "Stat. unc."]  # top of the stack first
+        assert texts == expected
 
     def test_legend_disabled_or_empty(self) -> None:
         fig, ax = plt.subplots()
@@ -821,6 +897,11 @@ class TestAnnotations:
         with pytest.raises(ValueError, match="location"):
             add_stats_box(ax, mc_hists, loc="nowhere")
         assert len(add_stats_box(ax, mc_hists[:1], include_entries=False)) == 1
+        with pytest.raises(ValueError, match="1 colours for 2 histograms"):
+            add_stats_box(ax, mc_hists, colors=["red"])
+        duplicate = [h.replace(label="same") for h in mc_hists]
+        texts = add_stats_box(ax, duplicate, colors=["red", "blue"])
+        assert [text.get_color() for text in texts] == ["red", "blue"]
 
     def test_add_text(self) -> None:
         fig, ax = plt.subplots()
@@ -994,6 +1075,8 @@ class TestFlowBins:
         np.testing.assert_allclose(heights, [2, 2 + np.sqrt(2), 3 + np.sqrt(3), 2])
         _, stacked = envelope([a, a], stack=True)
         np.testing.assert_allclose(stacked, [2 + np.sqrt(2), 4 + 2, 0, 0])
+        _, partial_stack = envelope([a, a, b.replace(is_data=False)], stack=["A"])
+        np.testing.assert_allclose(partial_stack, [2 + np.sqrt(2), 6, 3 + np.sqrt(3), 2])
 
 
 class TestHeadroom:
@@ -1169,11 +1252,20 @@ class TestSignificancePanelAndPoints:
             edges=np.array([0.0, 1.0, 2.0, 3.0]),
         )
         fig, ax = plt.subplots()
-        draw_significance_panel(result, ax)
+        draw_significance_panel([result], ax)
         assert ax.get_ylabel() == r"$S/\sqrt{B}$"
         assert ax.get_ylim() == (0.0, pytest.approx(1.25 * 2.2))
         assert ax.get_xlim() == (0.0, 3.0)
-        draw_significance_panel(result, ax, kind="s/sqrt(s+b)", ylim=(0, 5), ylabel="Z")
+        large = Ratio(
+            values=result.values * 3,
+            errors=result.errors * 2,
+            band=result.band,
+            edges=result.edges,
+        )
+        draw_significance_panel([result, large], ax, colors=["red", "blue"])
+        assert ax.get_ylim() == (0.0, pytest.approx(1.25 * 6.4))
+        assert [c.lines[0].get_color() for c in ax.containers[-2:]] == ["red", "blue"]
+        draw_significance_panel([result], ax, kind="s/sqrt(s+b)", ylim=(0, 5), ylabel="Z")
         assert ax.get_ylabel() == "Z"
         assert ax.get_ylim() == (0.0, 5.0)
         plt.close(fig)
@@ -1260,7 +1352,7 @@ class TestFlowTransformations:
         fig, ax = plt.subplots()
         drawn = draw_histograms([make_hist([9.0] * 5, label="A")], ax, style=Style(), flow="sum")
         assert drawn.ymax == 5.0
-        assert drawn.histogram_colors == color_cycle(1, Style())
+        assert drawn.colors == color_cycle(1, Style())
         plt.close(fig)
 
 
@@ -1287,21 +1379,21 @@ class TestEnvelopeAndColors:
         ]
         fig, (ax, ratio_ax) = plt.subplots(2)
         drawn = draw_histograms(hists, ax, style=Style())
-        assert drawn.histogram_colors == color_cycle(3, Style())
+        assert drawn.colors == color_cycle(3, Style())
         draw_ratio_panel(
             hists[1:],
             hists[0],
             ratio_ax,
             style=Style(),
             uncertainty="propagate",
-            colors=drawn.histogram_colors[1:],
+            colors=drawn.colors[1:],
         )
         drawn_colors = [
             to_rgba(c.lines[0].get_color())
             for c in ratio_ax.containers
             if isinstance(c, matplotlib.container.ErrorbarContainer)
         ]
-        assert drawn_colors == [to_rgba(c) for c in drawn.histogram_colors[1:]]
+        assert drawn_colors == [to_rgba(c) for c in drawn.colors[1:]]
         plt.close(fig)
 
 
@@ -1342,6 +1434,23 @@ class TestSystematicDrawing:
             drawn = draw_histograms([*varied, data_hist], ax, style=st, stack=True)
         assert drawn.labels == ["A", "B", "Stat. + syst. unc.", "Data"]
         assert drawn.ymax > plain.ymax
+        _, ax = plt.subplots()
+        partial_stack = draw_histograms(varied, ax, style=Style(), stack=["B"])
+        assert partial_stack.labels == ["B", "Stat. unc.", "A"]
+        assert partial_stack.stack is not None
+        assert partial_stack.stack.variations == {}
+        bands = [
+            artist
+            for artist in partial_stack.artists
+            if isinstance(artist, StepPatch) and artist.get_label() not in ("A", "B")
+        ]
+        assert len(bands) == 2  # stack uncertainty and the overlay's own light band
+        for band, histogram in zip(bands, [varied[1], varied[0]], strict=True):
+            expected = uncertainty(histogram)
+            bounds = band.get_data()
+            np.testing.assert_allclose(bounds.edges, histogram.edges)
+            np.testing.assert_allclose(bounds.values, histogram.values() + expected.total_up)
+            np.testing.assert_allclose(bounds.baseline, histogram.values() - expected.total_down)
 
     def test_overlay_band_and_envelope(self, mc_hists: list[Histogram]) -> None:
         varied = [mc_hists[0], with_variation(mc_hists[1], 2.0)]

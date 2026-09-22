@@ -19,11 +19,13 @@ from rootfig.plotting.hist1d import (
     DATA_STYLE,
     Drawn,
     FlowSpec,
+    StackSpec,
     draw_histograms,
     envelope,
     fold_flow_bins,
     label_flow_bins,
     show_flow_bins,
+    split_stack,
 )
 from rootfig.plotting.hist2d import draw_hist2d
 from rootfig.plotting.pages import Page, make_page, multipage_pdf, page_size, plan_pages
@@ -59,6 +61,7 @@ __all__ = [
     "Layout",
     "Page",
     "Plot",
+    "StackSpec",
     "add_experiment_label",
     "add_legend",
     "add_stats_box",
@@ -97,6 +100,7 @@ __all__ = [
     "ratio_ylim",
     "resolve_rc",
     "show_flow_bins",
+    "split_stack",
     "style_context",
     "use_style",
     "ylabel_for",

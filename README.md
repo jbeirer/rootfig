@@ -166,9 +166,9 @@ book = rf.PlotBook(
   ratio panels share binning and propagate histogram uncertainties; bin edges
   and `(n, low, high)` are used as given, while a range inferred from the data
   ignores far outliers, so `-999` sentinels do not set the axis. Normalise to
-  unity, density, bin width or luminosity. Draw several samples as one
-  histogram with `rf.Group`, each keeping its own weights, cross section and
-  systematics.
+  unity, density, bin width or luminosity; stack some samples and overlay the rest.
+  Draw several samples as one histogram with `rf.Group`, each keeping its own
+  weights, cross section and systematics.
 - **Show systematic uncertainties.** Attach weight, branch, file or
   normalisation variations to a sample; stacks and ratio panels draw the
   combined statistical and systematic band, and every component stays
