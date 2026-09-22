@@ -136,18 +136,18 @@ def draw_panel(
     else:
         baseline = _BASELINES[kind]
         ax.axhline(baseline, color="gray", linestyle="--", linewidth=1.0, zorder=1)
-        first = next((c for c in comparisons if c.band is not None), None)
-        total = first.total_band() if first is not None else None
+        with_band = next((c for c in comparisons if c.band is not None), None)
+        total = with_band.total_band() if with_band is not None else None
         if band is None:
             band = any(c.uncertainty == "numerator" for c in comparisons)
-        if band and first is not None and total is not None:
+        if band and with_band is not None and total is not None:
             band_down, band_up = total
-            has_systematics = first.syst_band is not None
+            has_systematics = with_band.syst_band is not None
             lower = np.where(np.isfinite(band_down), baseline - band_down, baseline)
             upper = np.where(np.isfinite(band_up), baseline + band_up, baseline)
             band_edges = (lower, upper)
             ax.fill_between(
-                first.edges,
+                with_band.edges,
                 np.append(lower, lower[-1]),
                 np.append(upper, upper[-1]),
                 step="post",
@@ -155,7 +155,7 @@ def draw_panel(
                 alpha=0.3,
                 linewidth=0,
                 zorder=0,
-                label=f"{first.reference} {band_label(systematics=has_systematics).lower()}",
+                label=f"{with_band.reference} {band_label(systematics=has_systematics).lower()}",
             )
         _draw_points(comparisons, ax, colors, flags, clip_errors=False)
 

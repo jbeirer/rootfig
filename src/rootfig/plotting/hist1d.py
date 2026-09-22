@@ -260,7 +260,12 @@ def _reject_category_flow(histograms: Sequence[Histogram], what: str) -> None:
 
 
 def require_same_binning(histograms: Sequence[Histogram], what: str) -> None:
-    """Refuse histograms ``what`` must combine bin by bin but which bin differently."""
+    """Refuse histograms ``what`` must combine bin by bin but which bin differently.
+
+    Fewer than two histograms are always compatible.
+    """
+    if not histograms:
+        return
     first = histograms[0].hist
     for histogram in histograms[1:]:
         if not compatible_binning(first, histogram.hist):
