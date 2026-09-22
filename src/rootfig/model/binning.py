@@ -115,7 +115,7 @@ def validate_bins(bins: Bins | None, range_: RangeSpec) -> None:
     if isinstance(bins, bool):
         msg = "bins must be an int, (n, low, high), edges, or a hist axis, got a bool"
         raise BinningError(msg)
-    if isinstance(bins, int):
+    if isinstance(bins, int | np.integer):
         if bins < 1:
             msg = f"number of bins must be positive, got {bins}"
             raise BinningError(msg)
@@ -125,7 +125,7 @@ def validate_bins(bins: Bins | None, range_: RangeSpec) -> None:
             msg = f"range must be (low, high), 'auto', or 'robust', got {range_!r}"
             raise BinningError(msg)
         return
-    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):
+    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int | np.integer):
         if bins[0] < 1:
             msg = f"number of bins must be positive, got {bins[0]}"
             raise BinningError(msg)
@@ -164,11 +164,11 @@ def merge_target(bins: Bins | None, range_: RangeSpec = None) -> MergeTarget:
         return (float(range_[0]), float(range_[1])) if isinstance(range_, tuple) else None
     if isinstance(bins, hist.axis.Regular | hist.axis.Variable):
         return np.asarray(bins.edges, dtype=float)
-    if isinstance(bins, int):
+    if isinstance(bins, int | np.integer):
         if isinstance(range_, tuple):
-            return np.linspace(range_[0], range_[1], bins + 1)
-        return bins
-    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):
+            return np.linspace(range_[0], range_[1], int(bins) + 1)
+        return int(bins)
+    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int | np.integer):
         n, low, high = bins
         return np.linspace(float(low), float(high), int(n) + 1)
     return _edges_from(bins)
@@ -500,7 +500,7 @@ def resolve_axis(
         if not axis.label:
             axis.label = label
         return axis
-    if isinstance(bins, int) and not isinstance(bins, bool):
+    if isinstance(bins, int | np.integer) and not isinstance(bins, bool):
         if isinstance(variable.range, tuple):
             low, high = variable.range
         else:
@@ -513,8 +513,8 @@ def resolve_axis(
             requested = DEFAULT_RANGE if variable.range is None else variable.range
             mode: Literal["auto", "robust"] = "robust" if requested == "robust" else "auto"
             low, high = auto_range(data, mode=mode, weights=weights)
-        return hist.axis.Regular(bins, low, high, name=name, label=label)
-    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):
+        return hist.axis.Regular(int(bins), low, high, name=name, label=label)
+    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int | np.integer):
         n, low, high = bins
         return hist.axis.Regular(int(n), float(low), float(high), name=name, label=label)
     edges = _edges_from(bins)

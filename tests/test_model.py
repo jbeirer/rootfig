@@ -1103,6 +1103,26 @@ class TestAsPlotItems:
         assert as_samples([a]) == [a]
 
 
+@pytest.mark.parametrize("count", [np.int64(3), np.int32(3)])
+def test_numpy_integer_counts(count: np.integer[Any]) -> None:
+    import rootfig as rf
+    from rootfig.model.binning import merge_target
+
+    target = merge_target(count)  # type: ignore[arg-type]
+    assert target == 3
+    assert type(target) is int
+    h = hist.Hist(hist.axis.Regular(6, 0, 6), storage=hist.storage.Weight())
+    assert rf.Histogram(h, label="h").rebinned_to(count).axis.size == 3
+    p = rf.plot(h, bins=count)  # type: ignore[arg-type]
+    assert p.histograms[0].axis.size == 3
+    p.close()
+    x = {"x": np.arange(6.0)}
+    assert rf.histogram(x, "x", bins=count, range=(0, 6)).axes[0].size == 3  # type: ignore[arg-type]
+    # not the edges 3, 10, 20
+    axis = rf.histogram(x, "x", bins=(count, 10, 20)).axes[0]  # type: ignore[arg-type]
+    np.testing.assert_allclose(axis.edges, np.linspace(10, 20, 4))
+
+
 @pytest.mark.parametrize(
     "axis",
     [
