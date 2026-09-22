@@ -224,7 +224,7 @@ def plot(
         A sample or group of observed data (or the file(s) for one; histogram
         objects when ``data`` are) drawn as points, excluded from stacks and,
         without ``reference=``, compared with the prediction in a ratio,
-        difference or pull panel.
+        relative difference, difference or pull panel.
     xlabel, ylabel, unit, title
         Axis labels; defaults come from the variable (or the stored axis title),
         the normalisation and the bin width (``Events / 2 GeV``).
@@ -253,9 +253,9 @@ def plot(
         significance). By default data is compared with the stack total, or with
         the first non-data histogram without a stack; with a stack but no data,
         every overlaid histogram with the total, and with neither (or with
-        observed data alone), every histogram after the first with the first. A significance takes the
-        overlaid non-data histograms as signals over the stack, or otherwise the
-        last non-data histogram over the sum of the others.
+        observed data alone), every histogram after the first with the first.
+        A significance takes the overlaid non-data histograms as signals over the
+        stack, or otherwise the last non-data histogram over the sum of the others.
     panel_ylim, panel_label, panel_uncertainty
         Lower panel range, y label, and uncertainty treatment of a ratio,
         relative difference or difference (``"propagate"``, or ``"numerator"``

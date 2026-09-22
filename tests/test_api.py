@@ -678,6 +678,22 @@ class TestPanelRoles:
         for plot in (p, stacked, significance):
             plot.close()
 
+    @pytest.mark.parametrize("stack", [False, True])
+    def test_observed_data_alone(self, stack: bool) -> None:
+        # nothing to stack and no simulation: every further data histogram over the first
+        hists = self._hists(data=False, labels=("A", "B"))
+        hists = [rf.Histogram(h.hist, label=h.label, is_data=True) for h in hists]
+        p = rf.plot(hists, panel="ratio", stack=stack)
+        assert [(c.label, c.reference) for c in p.comparisons] == [("B", "A")]
+        np.testing.assert_allclose(p.comparisons[0].values, 3.0)
+        assert p.comparisons[0].uncertainty == "propagate"  # a data reference is no band
+        assert panel_ylabel(p) == "Ratio to A"
+        assert p.panel_ax is not None
+        assert not [c for c in p.panel_ax.collections if isinstance(c, PolyCollection)]
+        with pytest.raises(ValueError, match="at least two non-data"):
+            rf.plot(hists, panel="s/sqrt(b)", stack=stack)
+        p.close()
+
     def test_every_kind_through_plot(self) -> None:
         for kind, expected in (
             ("ratio", 0.5),

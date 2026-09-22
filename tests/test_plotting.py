@@ -808,13 +808,31 @@ def comparison(
 class TestPanel:
     def test_ratio_panel_propagate(self, mc_hists: list[Histogram]) -> None:
         fig, (ax, rax) = plt.subplots(2)
-        draw_panel([compare(mc_hists[1], mc_hists[0])], rax, band=False)
+        # propagated error bars already hold the reference uncertainty: no band by default
+        draw_panel([compare(mc_hists[1], mc_hists[0])], rax)
         assert rax.get_ylabel() == "Ratio to A"
         assert rax.get_xlim() == (0.0, 4.0)
         assert not [c for c in rax.collections if isinstance(c, PolyCollection)]  # no band
         (baseline,) = rax.lines[:1]
         assert baseline.get_ydata() == [1.0, 1.0]
         plt.close(fig)
+
+    def test_the_band_follows_the_uncertainty_mode(self, mc_hists: list[Histogram]) -> None:
+        propagated = compare(mc_hists[1], mc_hists[0])
+        split = compare(mc_hists[1], mc_hists[0], uncertainty="numerator")
+        assert (propagated.uncertainty, split.uncertainty) == ("propagate", "numerator")
+        bands = []
+        for comparison, band in (
+            (propagated, None),
+            (split, None),
+            (propagated, True),
+            (split, False),
+        ):
+            fig, rax = plt.subplots()
+            draw_panel([comparison], rax, band=band)
+            bands.append(len([c for c in rax.collections if isinstance(c, PolyCollection)]))
+            plt.close(fig)
+        assert bands == [0, 1, 1, 0]  # the default follows the mode, band= overrides it
 
     def test_ratio_panel_numerator_band(
         self, mc_hists: list[Histogram], data_hist: Histogram

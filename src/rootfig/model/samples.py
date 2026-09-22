@@ -46,7 +46,8 @@ class Sample:
     is_data
         Mark as observed data: drawn as points with error bars, excluded
         from stacks, and by default compared with the prediction in a ratio,
-        difference or pull panel (never a signal of a significance).
+        relative difference, difference or pull panel (never a signal of a
+        significance).
     color
         Matplotlib colour. Defaults to the style's colour cycle.
     histtype
