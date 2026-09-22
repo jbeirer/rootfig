@@ -368,6 +368,11 @@ class TestCompare:
             np.testing.assert_array_equal(wrapped.errors, plain.errors)
         assert (plain.label, plain.reference) == ("", "")
 
+    def test_the_reference_histogram_is_kept(self) -> None:
+        n, d = _poisson(list(self.N)), _poisson(list(self.D))
+        assert compare(n, d).reference_hist is d
+        assert compare(Histogram(n, label="N"), Histogram(d, label="D")).reference_hist is d
+
     def test_unknown_kind(self) -> None:
         with pytest.raises(ValueError, match="kind must be one of"):
             compare(_poisson([1.0]), _poisson([1.0]), kind="significance")  # type: ignore[arg-type]

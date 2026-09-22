@@ -259,10 +259,12 @@ def _reject_category_flow(histograms: Sequence[Histogram], what: str) -> None:
             raise BinningError(msg)
 
 
-def require_same_binning(histograms: Sequence[Histogram], what: str) -> None:
+def require_same_binning(histograms: Sequence[Histogram], what: str, *, flow: bool = False) -> None:
     """Refuse histograms ``what`` must combine bin by bin but which bin differently.
 
-    Fewer than two histograms are always compatible.
+    Fewer than two histograms are always compatible. ``flow`` also asks for the
+    same under- and overflow bins, which summing them needs; drawing them does
+    not, and ``flow="show"`` gives them the flow bins itself.
     """
     if not histograms:
         return
@@ -274,6 +276,20 @@ def require_same_binning(histograms: Sequence[Histogram], what: str) -> None:
                 f"and {histogram.label!r} differ"
             )
             raise BinningError(msg)
+        if flow and not _same_flow_bins(first, histogram.hist):
+            msg = (
+                f"{what} needs histograms with the same flow bins; {histograms[0].label!r} "
+                f"and {histogram.label!r} differ (hist.axis.Regular(..., underflow=, overflow=))"
+            )
+            raise BinningError(msg)
+
+
+def _same_flow_bins(a: Any, b: Any) -> bool:
+    """Whether two one-dimensional histograms have their flow bins alike."""
+    return (a.axes[0].traits.underflow, a.axes[0].traits.overflow) == (
+        b.axes[0].traits.underflow,
+        b.axes[0].traits.overflow,
+    )
 
 
 def label_flow_bins(ax: Axes, edges: np.ndarray, *, under: bool, over: bool) -> None:

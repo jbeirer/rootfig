@@ -593,7 +593,7 @@ def draw_plot(
 
     stacked, overlaid, data = split_stack(histograms_, stack)
     # the stack and the roles of the lower panel are checked before a figure exists
-    require_same_binning(stacked, "a stack")
+    require_same_binning(stacked, "a stack", flow=True)  # summed: the flow bins must agree too
     plan = resolve_panel(
         histograms_,
         panel=panel,

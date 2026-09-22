@@ -128,11 +128,21 @@ def same_axis(axis_a: Any, axis_b: Any, *, flow: bool = True) -> bool:
     if is_category(axis_a) or is_category(axis_b):
         both = is_category(axis_a) and is_category(axis_b)
         return both and list(axis_a) == list(axis_b)
-    edges_a, edges_b = np.asarray(axis_a.edges, dtype=float), np.asarray(axis_b.edges, dtype=float)
-    if edges_a.shape != edges_b.shape:
-        return False
-    tolerance = 1e-6 * float(min(np.diff(edges_a).min(), np.diff(edges_b).min()))
-    return bool(np.allclose(edges_a, edges_b, rtol=0.0, atol=tolerance))
+    return same_edges(axis_a.edges, axis_b.edges)
+
+
+def same_edges(edges_a: Any, edges_b: Any) -> bool:
+    """Return True if two sets of bin edges agree to a millionth of the smallest bin width.
+
+    The one tolerance rootfig judges binnings by: absolute, so edges near zero
+    are compared like any others, and tied to the bin width, so bins shifted by
+    a whole width at large coordinates are rejected.
+    """
+    first, second = np.asarray(edges_a, dtype=float), np.asarray(edges_b, dtype=float)
+    if first.shape != second.shape or first.size < 2:
+        return bool(first.shape == second.shape)
+    tolerance = 1e-6 * float(min(np.diff(first).min(), np.diff(second).min()))
+    return bool(np.allclose(first, second, rtol=0.0, atol=tolerance))
 
 
 def is_category(axis: Any) -> bool:

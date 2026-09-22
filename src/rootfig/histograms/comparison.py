@@ -89,6 +89,9 @@ class Comparison:
     uncertainty
         The :data:`UncertaintyMode` of the error bars: with ``"numerator"`` the
         reference's uncertainty is only in the band, which is then drawn.
+    reference_hist
+        The histogram compared with, which a panel drawing several comparisons
+        checks they share; ``None`` for a :class:`Comparison` built by hand.
     """
 
     kind: ComparisonKind
@@ -101,6 +104,7 @@ class Comparison:
     syst_errors: tuple[FloatArray, FloatArray] | None = None
     syst_band: tuple[FloatArray, FloatArray] | None = None
     uncertainty: UncertaintyMode = "propagate"
+    reference_hist: Hist | None = None
 
     @property
     def centers(self) -> FloatArray:
@@ -200,6 +204,7 @@ def compare(
         reference=ref.label,
         edges=np.asarray(num.hist.axes[0].edges, dtype=float),
         uncertainty=uncertainty,
+        reference_hist=ref.hist,
         **fields,
     )
 

@@ -781,8 +781,18 @@ class TestPanelRoles:
             rf.Histogram(coarse, label="B"),
             *[h for h in self._hists(data=True, labels=()) if h.is_data],
         ]
-        with pytest.raises(BinningError, match="a stack needs histograms"):
+        with pytest.raises(BinningError, match="a stack needs histograms with identical bin"):
             rf.plot(hists, stack=True, panel=panel)
+        # summing also needs the same flow bins, which drawing alone does not
+        axis = hist.axis.Regular(2, 0, 2, underflow=False)
+        without_flow = hist.Hist(axis, storage=hist.storage.Weight())
+        without_flow.view().value, without_flow.view().variance = 1.0, 1.0
+        with pytest.raises(BinningError, match="the same flow bins"):
+            rf.plot(
+                [*self._hists(data=False, labels=("A",)), rf.Histogram(without_flow, label="B")],
+                stack=True,
+                panel=panel,
+            )
         assert plt.get_fignums() == before
 
     @pytest.mark.parametrize("kwargs", [{}, {"reference": "A"}, {"stack": ["A"]}])

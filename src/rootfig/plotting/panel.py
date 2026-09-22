@@ -9,6 +9,7 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.ticker import MaxNLocator
 
+from rootfig._storage import same_edges
 from rootfig.histograms.comparison import SIGNIFICANCE_KINDS, Comparison, ComparisonKind
 from rootfig.plotting.hist1d import band_label, in_view
 from rootfig.plotting.style import color_cycle, foreground
@@ -111,13 +112,13 @@ def draw_panel(
         raise ValueError(msg)
     first = comparisons[0]
     for comparison in comparisons[1:]:
-        if comparison.reference != first.reference:
+        if not _same_reference(first, comparison):
             msg = (
                 "draw_panel draws one reference, whose label and band the panel shows; got "
                 f"{first.reference!r} and {comparison.reference!r}"
             )
             raise ValueError(msg)
-        if not _same_edges(comparison.edges, first.edges):
+        if not same_edges(comparison.edges, first.edges):
             msg = "draw_panel draws one binning; the comparisons have different bin edges"
             raise ValueError(msg)
     flags = [False] * len(comparisons) if observed is None else list(observed)
@@ -170,9 +171,27 @@ def draw_panel(
     ax.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 2.5, 5, 10], prune="upper"))
 
 
-def _same_edges(edges: np.ndarray, other: np.ndarray) -> bool:
-    """Whether two comparisons share their bin edges, up to round-off."""
-    return edges.shape == other.shape and bool(np.allclose(edges, other, rtol=1e-9, atol=0.0))
+def _same_reference(comparison: Comparison, other: Comparison) -> bool:
+    """Whether two comparisons were made against the same reference.
+
+    The histograms themselves when they carry them (:func:`compare` keeps the
+    reference), one standing for the other when their contents agree; a
+    hand-built :class:`~rootfig.histograms.Comparison` has only its label.
+    """
+    if comparison.reference_hist is None or other.reference_hist is None:
+        return comparison.reference == other.reference
+    first, second = comparison.reference_hist, other.reference_hist
+    if first is second:
+        return True
+    first_variances, second_variances = first.variances(), second.variances()
+    if (first_variances is None) != (second_variances is None):
+        return False
+    same_variances = (
+        first_variances is None
+        or second_variances is None
+        or np.array_equal(first_variances, second_variances)
+    )
+    return bool(np.array_equal(first.values(), second.values()) and same_variances)
 
 
 def _draw_points(

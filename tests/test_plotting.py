@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from functools import partial
 from typing import Any
 
@@ -903,16 +904,28 @@ class TestPanel:
             draw_panel([], ax)
         plt.close(fig)
 
-    def test_one_reference_and_one_binning_per_panel(self, mc_hists: list[Histogram]) -> None:
+    def test_one_reference_and_one_binning_per_panel(
+        self, mc_hists: list[Histogram], data_hist: Histogram
+    ) -> None:
         # the label and the band come from the first comparison, so the rest must share them
         fig, ax = plt.subplots()
-        other = Histogram(mc_hists[0].hist, label="Other")
+        against_a = compare(mc_hists[1], mc_hists[0])
         with pytest.raises(ValueError, match="one reference"):
-            draw_panel([compare(mc_hists[1], mc_hists[0]), compare(mc_hists[1], other)], ax)
-        merged = Histogram(mc_hists[0].hist[::2j], label="A")  # the same labels, half the bins
-        wide = compare(merged, merged)
+            draw_panel([against_a, compare(mc_hists[1], data_hist)], ax)
+        # the reference is the histogram, not its label: plain hists carry none at all
+        plain = [compare(mc_hists[1].hist, h.hist) for h in (mc_hists[0], data_hist)]
+        assert [c.reference for c in plain] == ["", ""]
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel(plain, ax)
+        with pytest.raises(ValueError, match="one reference"):  # and labels alone, without one
+            draw_panel([comparison([1.0]), replace(comparison([1.0]), reference="other")], ax)
+        # one reference under another name, or copied: the same band, so the panel is drawn
+        renamed = Histogram(mc_hists[0].hist, label="Renamed")
+        copied = Histogram(mc_hists[0].hist.copy(), label="A")
+        draw_panel([against_a, compare(mc_hists[1], renamed), compare(mc_hists[1], copied)], ax)
+        # comparing with one histogram gives one binning; hand-built ones are checked too
         with pytest.raises(ValueError, match="one binning"):
-            draw_panel([compare(mc_hists[1], mc_hists[0]), wide], ax)
+            draw_panel([comparison([1.0, 2.0]), comparison([1.0])], ax)
         plt.close(fig)
 
     @pytest.mark.parametrize(
