@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import math
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
+import boost_histogram as bh
 import hist
 import numpy as np
 
@@ -69,9 +70,10 @@ DEFAULT_BINS: int = 50
 """Number of bins used to fill from a tree when a :class:`~rootfig.model.Variable` names none
 (``bins=None``). A histogram stored in a file keeps its own binning instead."""
 
-MergeTarget: TypeAlias = int | np.ndarray | None
+MergeTarget: TypeAlias = int | np.ndarray | tuple[float, float] | None
 """What the axis of a histogram that already exists is merged to: a bin count, the edges to
-end up with, or ``None`` to keep it (see :func:`merge_target`)."""
+end up with, a crop range whose ends are existing edges, or ``None`` to keep it
+(see :func:`merge_target`)."""
 
 
 # --------------------------------------------------------------------------------------
@@ -103,10 +105,17 @@ def validate_bins(bins: Bins | None, range_: RangeSpec) -> None:
         bins = DEFAULT_BINS
     if isinstance(bins, hist.axis.Regular | hist.axis.Variable):
         return
+    if isinstance(cast("object", bins), bh.axis.Axis):
+        msg = (
+            f"bins={bins!r} cannot be used: the axes rootfig bins with are "
+            "hist.axis.Regular and hist.axis.Variable; give one of those, (n, low, high) or "
+            "edges instead, e.g. bins=(6, 0, 6) for the integers 0 to 5"
+        )
+        raise BinningError(msg)
     if isinstance(bins, bool):
         msg = "bins must be an int, (n, low, high), edges, or a hist axis, got a bool"
         raise BinningError(msg)
-    if isinstance(bins, int):
+    if isinstance(bins, int | np.integer):
         if bins < 1:
             msg = f"number of bins must be positive, got {bins}"
             raise BinningError(msg)
@@ -116,7 +125,7 @@ def validate_bins(bins: Bins | None, range_: RangeSpec) -> None:
             msg = f"range must be (low, high), 'auto', or 'robust', got {range_!r}"
             raise BinningError(msg)
         return
-    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):
+    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int | np.integer):
         if bins[0] < 1:
             msg = f"number of bins must be positive, got {bins[0]}"
             raise BinningError(msg)
@@ -137,40 +146,29 @@ def validate_bins(bins: Bins | None, range_: RangeSpec) -> None:
 def merge_target(bins: Bins | None, range_: RangeSpec = None) -> MergeTarget:
     """Interpret a binning specification for a histogram that already exists.
 
-    A stored or ready-made histogram has its bins; a specification can only ask
-    to merge them. ``None`` keeps the axis. An ``int`` whose range would be
-    inferred (``"auto"``, ``"robust"`` or unset) is a bin count: the axis is
-    merged down to that many bins. Everything that pins the edges (an ``int``
-    with a ``(low, high)`` range, ``(n, low, high)``, a sequence of edges, a
-    ``hist`` axis) returns those edges, and the caller merges the bins between
-    them (:meth:`~rootfig.histograms.Histogram.rebinned_to`), so a
-    :class:`~rootfig.model.Variable` written for a tree also describes the
-    histogram it was filled into.
+    An integer without an explicit range merges the whole axis to that count.
+    Explicit edges, including ``(n, low, high)`` and numeric axes, crop and merge
+    to those edges. A range without bins crops to its ends and keeps the bins
+    between them; ``None`` without an explicit range keeps the axis. Requested
+    edges must coincide with existing edges, as checked by
+    :meth:`~rootfig.histograms.Histogram.rebinned_to`. Cropped content belongs
+    in the flow bins, as when filling a tree with the same Variable.
 
     Raises
     ------
     BinningError
-        If the specification is invalid, or a ``(low, high)`` range comes
-        without a bin count: the range of an existing histogram is fixed, so a
-        range alone can only mean a zoom, which is ``xlim=``.
+        If the specification is invalid.
     """
     validate_bins(bins, range_)
     if bins is None:
-        if isinstance(range_, tuple):
-            msg = (
-                f"range={range_!r} cannot be applied to a histogram that already exists: its "
-                "axis range is fixed. Use xlim= to zoom, or bins= with the edges to merge its "
-                "bins to"
-            )
-            raise BinningError(msg)
-        return None
+        return (float(range_[0]), float(range_[1])) if isinstance(range_, tuple) else None
     if isinstance(bins, hist.axis.Regular | hist.axis.Variable):
         return np.asarray(bins.edges, dtype=float)
-    if isinstance(bins, int):
+    if isinstance(bins, int | np.integer):
         if isinstance(range_, tuple):
-            return np.linspace(range_[0], range_[1], bins + 1)
-        return bins
-    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):
+            return np.linspace(range_[0], range_[1], int(bins) + 1)
+        return int(bins)
+    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int | np.integer):
         n, low, high = bins
         return np.linspace(float(low), float(high), int(n) + 1)
     return _edges_from(bins)
@@ -502,7 +500,7 @@ def resolve_axis(
         if not axis.label:
             axis.label = label
         return axis
-    if isinstance(bins, int) and not isinstance(bins, bool):
+    if isinstance(bins, int | np.integer) and not isinstance(bins, bool):
         if isinstance(variable.range, tuple):
             low, high = variable.range
         else:
@@ -515,8 +513,8 @@ def resolve_axis(
             requested = DEFAULT_RANGE if variable.range is None else variable.range
             mode: Literal["auto", "robust"] = "robust" if requested == "robust" else "auto"
             low, high = auto_range(data, mode=mode, weights=weights)
-        return hist.axis.Regular(bins, low, high, name=name, label=label)
-    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int):
+        return hist.axis.Regular(int(bins), low, high, name=name, label=label)
+    if isinstance(bins, tuple) and len(bins) == 3 and isinstance(bins[0], int | np.integer):
         n, low, high = bins
         return hist.axis.Regular(int(n), float(low), float(high), name=name, label=label)
     edges = _edges_from(bins)

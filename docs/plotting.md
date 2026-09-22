@@ -309,6 +309,10 @@ range avoids range inference.
 
 ## Axes
 
+Automatic y limits come from the bins overlapping the x range shown: `xlim`,
+or both segments of `xbreak`. This applies to the main panel and to ratio and
+significance panels alike.
+
 - `logx`, `logy`: logarithmic scales. Log-spaced bins: `bins=rf.log_bins(n, low, high)`.
 - `xlim`, `ylim`: limits; `ylim=(None, 1e4)` keeps the automatic lower value.
   Automatic y limits add a small margin above the tallest bin (a factor 1.2 in
@@ -503,36 +507,34 @@ files; `rf.plot` and `rf.plot2d` also draw histogram objects you already have.
 Each keeps its usual drawing options where they apply: the 1D options above
 for `rf.plot` (stacks, ratios, `flow`, ...), those of the
 [2D section](#2d-histograms-and-correlations) for `rf.plot2d`. Options that
-need information a ready-made histogram no longer has (a selection, a weight,
+need information a ready-made histogram does not contain (a selection, a weight,
 `stats` on one without statistics) are refused.
 
 ### Histograms already in ROOT files
 
 Analysis frameworks often write their selections out as `TH1`/`TH2` objects,
-one file per process (FCCAnalyses' `<process>_<selection>_histo.root`, for
-instance). Name the histogram where a branch would go:
+one file per process. Name the histogram where a branch would go:
 
 ```python
-samples = {
-    "ZH": rf.Sample("final/p8_ee_ZH_ecm240_sel1_histo.root", color="C3", scale=10),
-    "VV": ["final/p8_ee_WW_ecm240_sel1_histo.root", "final/p8_ee_ZZ_ecm240_sel1_histo.root"],
-}
+ww = rf.Sample("outputs/p8_ee_WW_ecm240.root", label="WW")
+zz = rf.Sample("outputs/p8_ee_ZZ_ecm240.root", label="ZZ")
+zh = rf.Sample("outputs/p8_ee_ZH_ecm240.root", label="ZH")
+recoil = rf.Variable("zmumu_recoil_m", bins=(200, 120, 140), label="Recoil mass", unit="GeV")
 rf.plot(
-    samples,
-    "leptonic_recoil_m",
-    bins=50,
-    stack=True,
+    [rf.Group([ww, zz], label="VV"), zh],
+    recoil,
+    stack=["VV"],
     logy=True,
-    xlabel="Z leptonic recoil",
-    unit="GeV",
-    style=rf.Style(com=240, com_unit="GeV", lumi=5, lumi_unit="ab^{-1}"),
+    style=rf.Style(experiment="FCC-ee", com="240 GeV", lumi="5 ab^-1"),
 )
-h = rf.histogram("final/p8_ee_ZH_ecm240_sel0_histo.root", "mz")  # a hist.Hist
-rf.plot2d("final/p8_ee_ZH_ecm240_sel0_histo.root", "mz_recoil_2D")  # a stored TH2
+h = rf.histogram("outputs/p8_ee_ZH_ecm240.root", "zmumu_recoil_m")  # a hist.Hist
+rf.plot2d("outputs/p8_ee_ZH_ecm240.root", "zmumu_m_vs_recoil_m")  # a stored TH2
 ```
 
 A [`Group`][rootfig.Group] of such samples sums their stored histograms into
-one, each scaled by its sample's `scale` and luminosity factor first.
+one, each scaled by its sample's `scale` and luminosity factor first. See the
+[complete histogram-file example](batch.md#a-complete-example-histogram-files)
+for an overview book and selected plots from histogram files or ntuples.
 
 The decision is made per call and is deterministic. A variable that is a bare
 name is read as a stored histogram when every sample reads files without an
@@ -568,23 +570,28 @@ What a stored histogram supports:
   both axes must resolve to one stored object:
   `` rf.plot2d(f, "my_hist", rf.Variable("my_hist", name="recoil", label="Recoil")) ``.
   A `Variable` with another expression asks for a branch instead.
-- `bins=` merges the stored bins: an integer count (it must divide the stored
-  count), or edges that coincide with the stored ones (`(n, low, high)`, a
-  sequence of edges, or an `int` with `range=(low, high)`) and merge the bins
-  between them. The `Variable` written for the tree therefore also describes
-  the histogram filled from it, as its own edges or a coarser aligned set. With
-  `bins=None` the stored binning is kept. Other edges cannot be made, and an
-  explicit `(low, high)` range without a bin count cannot be applied: use
-  `xlim=` to zoom. `range="auto"` and `"robust"` have no effect on a histogram
-  that is already filled.
+- `bins=` and `range=` crop and merge the stored bins as described below.
+  Every requested edge must coincide with an existing edge; the range can
+  shrink but cannot grow. Content and variances outside the range join the
+  flow bins. A crop requires the flow bin on each cropped side. Crop and
+  rebin before normalising; asking for the bins already present is a no-op.
+
+  | Specification | Filling a tree | Stored or ready-made histogram |
+  | --- | --- | --- |
+  | `bins=None`, range unset, `"auto"` or `"robust"` | `DEFAULT_BINS` over an inferred range | Keeps its binning |
+  | `bins=20`, range unset, `"auto"` or `"robust"` | 20 bins over an inferred range | Merges the whole axis to 20 bins; the count must divide its size |
+  | `bins=(20, 120, 140)`, `bins=20, range=(120, 140)`, explicit edges, or a `Regular`/`Variable` axis | Fills those bins, with entries outside in flow bins | Crops and merges to those edges, with contents outside in flow bins |
+  | `bins=None, range=(120, 140)` | `DEFAULT_BINS` between 120 and 140 | Keeps its own bins between those edges |
+
+  `bins=` accepts only `Regular` and `Variable` axes; integer, boolean and
+  category axes must be expressed as a count/range or numeric edges instead.
 - Normalisation, stacks, ratios, `flow` and the other drawing options work
   unchanged. Systematics of the normalisation kind (`{"lumi": 0.02}`) and
   `Systematic.samples(other_files)` (the same histogram read from other files)
   are supported by `plot` and `histograms`; `plot2d` ignores systematics, for
   stored histograms as for trees.
 - `selection=`, `weight=` (on the call or the `Sample`), `nonfinite="error"`,
-  an explicit `(low, high)` range without a bin count, weight and
-  branch-replacement systematics and `stats=` need event data and raise with a
+  weight and branch-replacement systematics and `stats=` need event data and raise with a
   message that says so.
 - A `TH1` written with `Sumw2` keeps its uncertainties; one without it arrives
   with its bin contents as variances (uproot cannot know the weights). Negative
@@ -604,12 +611,13 @@ axis name is used), `observed=` takes histogram objects for the data,
 describing its axes the same way (`rf.plot2d(h2, rf.Variable("mass",
 label="Mass", unit="GeV"), rf.Variable("recoil", bins=6))`; a `name=` renames
 the axis, the histogram you passed is left untouched). As for stored histograms, `bins=` (given
-directly or on the `Variable`) merges bins: an integer count, or edges that
+directly or on the `Variable`) crops and merges bins: an integer count, or edges that
 coincide with the existing ones, so the `Variable` a histogram was filled with
 can be passed along with it (`rf.plot(rf.histogram(sample, pt), pt)`), also
 after normalising it, as long as it asks for the bins the histogram has. An
-explicit `(low, high)` range without a bin count and the options that fill
-from event data (`tree`, `selection`, `weight`, `lumi`, `systematics`) raise;
+explicit `(low, high)` range without a bin count crops to those ends, which must
+be existing edges, keeping the bins between them and moving the rest into flow. Options that fill from event data
+(`tree`, `selection`, `weight`, `lumi`, `systematics`) raise;
 `range="auto"`/`"robust"` are no-ops. `Histogram.variations` carries
 systematics instead. Stacks, sums and ratios of histograms with category axes
 (ROOT bin labels) require the same categories in the same order; the flow bins

@@ -2223,10 +2223,14 @@ class TestStoredHistogramPlots:
         # only merges of the existing bins are possible
         with pytest.raises(rf.BinningError, match="can be merged into"):
             rf.plot2d(h2, rf.Variable("mass", bins=7))
-        with pytest.raises(rf.BinningError, match="range of a histogram that already exists"):
-            rf.plot2d(h2, rf.Variable("mass", bins=(5, 0.0, 50.0)))
-        with pytest.raises(rf.BinningError, match="cannot be applied to a histogram"):
-            rf.plot2d(h2, rf.Variable("mass", range=(0.0, 50.0)))
+        for variable in (
+            rf.Variable("mass", bins=(5, 0.0, 50.0)),
+            rf.Variable("mass", range=(0.0, 50.0)),
+        ):
+            cropped = rf.plot2d(h2, variable).histograms[0]
+            assert cropped.hist.axes[0].size == 5
+            assert cropped.values().sum() == 3
+            assert cropped.values(flow=True)[-1].sum() == 3
         with pytest.raises(ValueError, match="tree applies when filling"):
             rf.plot2d(h2, rf.Variable("mass"), tree="events")
         # the histogram given is untouched by all of this
@@ -2353,10 +2357,10 @@ class TestStoredHistogramPlots:
             rf.plot(mc, bins=3)
         with pytest.raises(BinningError, match=r"no bin edge at 1\.333"):
             rf.plot(mc, bins=(3, 0, 4))
-        with pytest.raises(BinningError, match="range of a histogram that already exists is fixed"):
+        with pytest.raises(BinningError, match="no bin edge at 50"):
             rf.plot(mc, rf.Variable("x", bins=2, range=(0, 100)))
-        with pytest.raises(BinningError, match="axis range is fixed"):
-            rf.plot(mc, range=(0, 2))
+        cropped = rf.plot(mc, range=(0, 2)).histograms[0]
+        np.testing.assert_allclose(cropped.edges, [0, 1, 2])
         # a unit given for histogram objects reaches both axes, once
         p = rf.plot(mc, unit="cm")
         assert p.ax.get_xlabel() == "$x$ [cm]"
@@ -2700,3 +2704,70 @@ class TestSelectiveStacking:
         np.testing.assert_allclose(p.stack.values(), a.values())
         with pytest.raises(BinningError, match="a stack"):
             rf.plot(p.histograms, stack=True)
+
+
+@pytest.mark.parametrize("kind", ["overlay", "stack", "data", "systematics"])
+@pytest.mark.parametrize("logy", [False, True])
+@pytest.mark.parametrize("broken", [False, True])
+def test_y_limits_follow_visible_bins(kind: str, logy: bool, broken: bool) -> None:
+    h = hist.Hist(hist.axis.Regular(6, 0, 6), storage=hist.storage.Weight())
+    h.view().value = [0.001, 1000, 10, 10, 1000, 0.001]
+    h.view().variance = 0
+    wrapped = rf.Histogram(
+        h,
+        label="h",
+        is_data=kind == "data",
+        variations={"s": (h * 1.1, h * 0.9)} if kind == "systematics" else None,
+    )
+    window = {"xlim": (2, 4), "xbreak": (2.5, 3.5)} if broken else {"xlim": (2, 4)}
+    p = rf.plot(wrapped, stack=kind == "stack", logy=logy, style=rf.Style(legend=False), **window)
+    low, high = p.ax.get_ylim()
+    assert high == pytest.approx((11 if kind == "systematics" else 10) * (12 if logy else 1.2))
+    assert low == pytest.approx(5 if logy else 0)
+    p.close()
+
+
+@pytest.mark.parametrize("panel", [True, "significance"])
+@pytest.mark.parametrize("broken", [False, True])
+def test_lower_panel_limits_follow_visible_bins(panel: bool | str, broken: bool) -> None:
+    background = hist.Hist(hist.axis.Regular(6, 0, 6), storage=hist.storage.Weight())
+    background.view().value = 1
+    background.view().variance = 0
+    signal = background.copy()
+    signal.view().value = [100, 100, 1, 1, 100, 100]
+    window = {"xlim": (0, 6), "xbreak": (1, 5)} if broken else {"xlim": (2, 4)}
+    if broken:
+        signal.view().value = [1, 100, 100, 100, 100, 1]
+    p = rf.plot([background, signal], ratio=panel, style=rf.Style(legend=False), **window)
+    assert p.ratio_ax is not None
+    np.testing.assert_allclose(p.ratio_ax.get_ylim(), (0.5, 1.5) if panel is True else (0, 1.25))
+    p.close()
+
+
+def test_book_crops_cached_histogram_independently(stored_dir: Path) -> None:
+    source = stored_dir / "ZH_sel0_histo.root"
+    variables = [
+        rf.Variable("mz", bins=(10, 0, 100), name="low"),
+        rf.Variable("mz", range=(100, 250), name="high"),
+    ]
+    for (_, plot), variable in zip(rf.PlotBook(source, variables).plots(), variables, strict=True):
+        separate = rf.plot(source, variable)
+        np.testing.assert_allclose(plot.histograms[0].edges, separate.histograms[0].edges)
+        np.testing.assert_allclose(
+            plot.histograms[0].values(flow=True), separate.histograms[0].values(flow=True)
+        )
+        np.testing.assert_allclose(
+            plot.histograms[0].variances(flow=True), separate.histograms[0].variances(flow=True)
+        )
+        plot.close()
+        separate.close()
+
+
+@pytest.mark.parametrize("logy", [False, True])
+def test_xbreak_excludes_hidden_extrema(logy: bool) -> None:
+    h = hist.Hist(hist.axis.Regular(6, 0, 6), storage=hist.storage.Weight())
+    h.view().value = [10, 10, 1000, 0.001, 10, 10]
+    h.view().variance = 0
+    p = rf.plot(h, xbreak=(2, 4), logy=logy, style=rf.Style(legend=False))
+    np.testing.assert_allclose(p.ax.get_ylim(), (5, 120) if logy else (0, 12))
+    p.close()

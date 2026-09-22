@@ -33,7 +33,7 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
   numerator of ratios.
 - `xsec` and `ngen` describe simulated processes: the cross section (pb, or a
   string with a unit such as `"1.2 fb"`) and the number of generated events (a
-  number, the name of an object in the file holding it, e.g. FCCAnalyses'
+  number, the name of an object in the file holding it, e.g.
   `"eventsProcessed"` `TParameter` or a sum-of-weights histogram, or `None`
   for the number of entries). With `lumi=` given to `plot()`, `cutflow()`,
   `summarize()`, ... every weight is multiplied by `xsec × lumi / ngen`:
@@ -121,7 +121,8 @@ met = rf.Variable(
   of edges (e.g. `rf.log_bins(30, 1, 1000)`), or a `hist.axis.Regular`/`Variable`.
   Applied to a histogram that already exists (stored in a file, or filled
   earlier and passed back with the variable), an `int` merges its bins down to
-  that count and explicit edges must coincide with its own; see
+  that count and explicit edges must coincide with its own. The histogram is
+  merged and cropped to the requested edges, with the rest in flow bins; see
   [Histograms that already exist](plotting.md#histograms-that-already-exist).
 - `range`: `(low, high)`, `"robust"` (the default: ignores far outliers such as
   `-999` sentinels and cuts a thin tail, both of which then land in the

@@ -173,7 +173,7 @@ def plot(
     are drawn as they are, with ``label`` naming them and ``variable`` optional.
     Options that need event data, such as ``selection`` and ``weight``, raise
     for both. Range inference (``"auto"``, ``"robust"``) is a no-op for them; an
-    explicit range is only meaningful with ``bins`` that merge their bins.
+    explicit range crops their axis, moving the rest into flow bins.
 
     Parameters
     ----------
@@ -187,8 +187,8 @@ def plot(
         Branch name or expression (see :mod:`rootfig.expressions`), the name of
         a histogram stored in the files, or a :class:`~rootfig.model.Variable`
         carrying binning and labels. Optional for histogram objects, where it
-        supplies the labels, unit and ``log`` flag and, through ``bins``, a
-        binning to merge them to.
+        supplies the labels, unit and ``log`` flag and, through ``bins`` and
+        ``range``, a binning to crop and merge them to.
     tree
         Tree name for file inputs; auto-detected when a file holds one tree.
     selection
@@ -206,12 +206,13 @@ def plot(
         already has a luminosity.
     bins
         Binning: an ``int`` (range inferred from the data), ``(n, low, high)``,
-        bin edges, or a ``hist`` axis. Overrides the ``Variable``'s binning. A
+        bin edges, or a ``hist.axis.Regular``/``Variable`` axis. Overrides the
+        ``Variable``'s binning. A
         histogram that already exists (stored or object) keeps its binning
-        unless asked for fewer bins: an ``int`` must divide its count, and
+        unless asked to crop or merge: an ``int`` must divide its count, and
         explicit edges must coincide with its own (a ``Variable`` written for
         the tree describes the histogram filled from it) and merge the bins
-        between them.
+        between them. Content outside the requested edges joins the flow bins.
     range
         Range for integer ``bins``: ``(low, high)``, ``"robust"`` (the default)
         or ``"auto"``. ``"robust"`` ignores values far from the bulk of the data,
@@ -219,7 +220,9 @@ def plot(
         of a tail so a long one does not leave the rest of the distribution in a
         corner of the axis. Nothing is dropped: those values land in the
         under/overflow, which ``flow`` shows. Use ``"auto"`` for the full finite
-        minimum and maximum.
+        minimum and maximum. For existing histograms, an explicit range without
+        bins crops to its ends, which must be existing edges, and keeps the bins
+        between them.
     label
         Legend label(s) for samples given as plain files or as histogram objects.
     observed
@@ -600,6 +603,7 @@ def draw_plot(
         assert outer is not None
         left_range, right_range, break_widths = break_segments(outer, xbreak, logx=logx)
         segments = (left_range, right_range)
+    view = segments if segments is not None else [outer] if outer is not None else None
 
     with style_context(resolved_style) as st:
         want_ratio = bool(ratio)
@@ -616,6 +620,7 @@ def draw_plot(
                 histtype=histtype,
                 errorbars=errorbars,
                 flow=flow,
+                view=view,
             )
         assert drawn is not None
         color_of = dict(zip(map(id, histograms_), drawn.colors, strict=True))
@@ -689,6 +694,7 @@ def draw_plot(
                     kind=kind,
                     colors=[color_of[id(s)] for s in signals],
                     ylim=ratio_ylim,
+                    view=view,
                     ylabel=ratio_label if index == 0 else "",
                 )
                 if logx:
@@ -715,6 +721,7 @@ def draw_plot(
                     uncertainty=uncertainty,
                     colors=[color_of.get(id(h), h.color or foreground()) for h in numerators],
                     ylim=ratio_ylim,
+                    view=view,
                     ylabel=ratio_label if index == 0 else "",
                 )
                 if logx:

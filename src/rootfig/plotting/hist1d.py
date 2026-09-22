@@ -31,6 +31,7 @@ __all__ = [
     "draw_histograms",
     "envelope",
     "fold_flow_bins",
+    "in_view",
     "label_flow_bins",
     "show_flow_bins",
     "split_stack",
@@ -335,6 +336,7 @@ def draw_histograms(
     flow: FlowSpec = "hint",
     stack_uncertainty: bool = True,
     alpha: float | None = None,
+    view: Sequence[tuple[float, float]] | None = None,
 ) -> Drawn:
     """Draw ``histograms`` on ``ax``.
 
@@ -371,6 +373,8 @@ def draw_histograms(
         histograms with variations get a light band in their own colour.
     alpha
         Opacity for filled histograms (default 1 for stacks, 0.45 for overlays).
+    view
+        The x windows whose bins set ``ymin``/``ymax``/``ymin_positive``.
     """
     artists: list[Artist] = []
     labels: list[str] = []
@@ -399,6 +403,7 @@ def draw_histograms(
             colors=[by_histogram[id(h)] for h in stacked],
             flow=flow,
             alpha=alpha,
+            view=view,
             stack_uncertainty=stack_uncertainty,
         )
         artists.extend(added_artists)
@@ -413,12 +418,13 @@ def draw_histograms(
             histtype=histtype,
             errorbars=errorbars,
             alpha=alpha,
+            view=view,
         )
         artists.extend(added_artists)
         labels.extend(added_labels)
         ranges.extend(added_ranges)
     for histogram in data:
-        added_artists, added_labels, added_ranges = _draw_data(histogram, ax, flow=flow)
+        added_artists, added_labels, added_ranges = _draw_data(histogram, ax, flow=flow, view=view)
         artists.extend(added_artists)
         labels.extend(added_labels)
         ranges.extend(added_ranges)
@@ -444,6 +450,7 @@ def _draw_stack(
     flow: FlowSpec,
     alpha: float | None,
     stack_uncertainty: bool,
+    view: Sequence[tuple[float, float]] | None,
 ) -> tuple[list[Artist], list[str], list[tuple[float, float, float]], Histogram]:
     """Draw the filled stack and its total uncertainty band."""
     artists: list[Artist] = []
@@ -469,7 +476,7 @@ def _draw_stack(
     total = sum_histograms(mc)
     summary = uncertainty(total)
     down, up = summary.total_down, summary.total_up
-    ranges.append(_range(total.values(), (down, up)))
+    ranges.append(_range(total.values(), (down, up), total.edges, view))
     if stack_uncertainty and (np.any(up > 0) or np.any(down > 0)):
         label = band_label(systematics=summary.has_systematics)
         band = _histplot(
@@ -499,6 +506,7 @@ def _draw_overlay(
     histtype: HistType | None,
     errorbars: bool | None,
     alpha: float | None,
+    view: Sequence[tuple[float, float]] | None,
 ) -> tuple[list[Artist], list[str], list[tuple[float, float, float]]]:
     """Draw one overlay with its errors and systematic band."""
     artists: list[Artist] = []
@@ -527,7 +535,9 @@ def _draw_overlay(
     drawn = _histplot(histogram.hist, **kwargs)
     artists.extend(_flatten_artists(drawn))
     labels.append(histogram.label)
-    ranges.append(_range(histogram.values(), errors if show_errors else None))
+    ranges.append(
+        _range(histogram.values(), errors if show_errors else None, histogram.edges, view)
+    )
     if histogram.variations:
         summary = uncertainty(histogram)
         bounds = (summary.total_down, summary.total_up)
@@ -544,7 +554,7 @@ def _draw_overlay(
             alpha=0.3,
         )
         artists.extend(_flatten_artists(band))
-        ranges.append(_range(histogram.values(), bounds))
+        ranges.append(_range(histogram.values(), bounds, histogram.edges, view))
 
     return artists, labels, ranges
 
@@ -554,6 +564,7 @@ def _draw_data(
     ax: Axes,
     *,
     flow: FlowSpec,
+    view: Sequence[tuple[float, float]] | None,
 ) -> tuple[list[Artist], list[str], list[tuple[float, float, float]]]:
     """Draw one observed histogram as points with error bars."""
     artists: list[Artist] = []
@@ -572,7 +583,7 @@ def _draw_data(
     )
     artists.extend(_flatten_artists(drawn))
     labels.append(histogram.label)
-    ranges.append(_range(histogram.values(), errors))
+    ranges.append(_range(histogram.values(), errors, histogram.edges, view))
 
     return artists, labels, ranges
 
@@ -582,20 +593,34 @@ def _assign_colors(histograms: Sequence[Histogram], style: Style) -> list[str]:
     return [h.color if h.color else next(cycle) for h in histograms]
 
 
+def in_view(edges: np.ndarray, view: Sequence[tuple[float, float]] | None) -> np.ndarray:
+    """Return a mask of bins overlapping any x window, or every bin for ``None``."""
+    if view is None:
+        return np.ones(len(edges) - 1, dtype=bool)
+    visible = np.zeros(len(edges) - 1, dtype=bool)
+    for low, high in view:
+        visible |= (edges[:-1] < high) & (edges[1:] > low)
+    return visible
+
+
 def _range(
-    values: np.ndarray, errors: np.ndarray | tuple[np.ndarray, np.ndarray] | None
+    values: np.ndarray,
+    errors: np.ndarray | tuple[np.ndarray, np.ndarray] | None,
+    edges: np.ndarray,
+    view: Sequence[tuple[float, float]] | None,
 ) -> tuple[float, float, float]:
     """Lowest and highest drawn value and the smallest positive content.
 
     ``errors`` is symmetric or a ``(down, up)`` pair.
     """
-    finite = values[np.isfinite(values)]
+    visible = np.isfinite(values) & in_view(edges, view)
+    finite = values[visible]
     if finite.size == 0:
         return (0.0, 0.0, float("nan"))
     down, up = errors if isinstance(errors, tuple) else (errors, errors)
     if down is not None and up is not None and up.shape == values.shape:
-        upper = finite + up[np.isfinite(values)]
-        lower = finite - down[np.isfinite(values)]
+        upper = finite + up[visible]
+        lower = finite - down[visible]
     else:
         upper = lower = finite
     positive = finite[finite > 0]

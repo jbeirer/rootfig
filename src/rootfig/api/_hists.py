@@ -10,7 +10,7 @@ import hist
 
 from rootfig._typing import Hist
 from rootfig.histograms import Histogram, as_weight_storage
-from rootfig.model.binning import Bins, RangeSpec, merge_target
+from rootfig.model.binning import Bins, RangeSpec
 
 _UNIT_SUFFIX = re.compile(r"\[([^\[\]]+)\]\s*$")
 
@@ -110,23 +110,13 @@ def rebin_ready_made(
     bins: Sequence[Bins | None],
     ranges: Sequence[RangeSpec] | None = None,
 ) -> list[Histogram]:
-    """Merge the bins of ready-made histograms as the ``bins`` specifications ask, one per axis.
+    """Crop and merge ready-made histograms with one bins/range specification per axis.
 
-    A ready-made histogram (stored in a file or given as an object) keeps its
-    binning unless a specification asks for fewer bins: an integer count merges
-    adjacent bins down to it, and explicit edges (also ``(n, low, high)`` or an
-    ``int`` with a ``(low, high)`` range) must coincide with the existing edges
-    and merge the bins between them, exactly as
-    :func:`~rootfig.histograms.read_stored` does (see
-    :func:`~rootfig.model.binning.merge_target`). ``None`` keeps an axis.
-    ``ranges`` pairs one range specification with each entry of ``bins``.
+    Requested edges must coincide with existing edges; content outside the
+    requested range moves into the flow bins. A range without bins keeps the
+    bins between its ends. See :meth:`~rootfig.histograms.Histogram.rebinned_to`.
     """
-    if ranges is None:
-        ranges = [None] * len(bins)
-    targets = [merge_target(spec, range_) for spec, range_ in zip(bins, ranges, strict=True)]
-    if all(target is None for target in targets):
-        return list(histograms)
-    return [histogram_.rebinned_to(targets) for histogram_ in histograms]
+    return [histogram_.rebinned_to(bins, range=ranges) for histogram_ in histograms]
 
 
 def unit_of(axis_label: str | None) -> str | None:

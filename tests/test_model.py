@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import awkward as ak
+import boost_histogram as bh
 import hist
 import numpy as np
 import pytest
@@ -940,8 +941,7 @@ class TestMergeTarget:
         np.testing.assert_allclose(merge_target((2, 0, 4)), [0.0, 2.0, 4.0])  # type: ignore[arg-type]
         np.testing.assert_allclose(merge_target([0, 1, 4]), [0.0, 1.0, 4.0])  # type: ignore[arg-type]
         np.testing.assert_allclose(merge_target(hist.axis.Regular(2, 0, 4)), [0.0, 2.0, 4.0])  # type: ignore[arg-type]
-        with pytest.raises(BinningError, match="axis range is fixed"):
-            merge_target(None, (0.0, 4.0))
+        assert merge_target(None, (0.0, 4.0)) == (0.0, 4.0)
         with pytest.raises(BinningError, match="strictly increasing"):
             merge_target([0, 4, 1])
         with pytest.raises(BinningError, match="positive"):
@@ -1101,3 +1101,48 @@ class TestAsPlotItems:
         with pytest.raises(TypeError, match="not accepted here"):
             as_samples({"G": group})
         assert as_samples([a]) == [a]
+
+
+@pytest.mark.parametrize("count", [np.int64(3), np.int32(3)])
+def test_numpy_integer_counts(count: np.integer[Any]) -> None:
+    import rootfig as rf
+    from rootfig.model.binning import merge_target
+
+    target = merge_target(count)  # type: ignore[arg-type]
+    assert target == 3
+    assert type(target) is int
+    h = hist.Hist(hist.axis.Regular(6, 0, 6), storage=hist.storage.Weight())
+    assert rf.Histogram(h, label="h").rebinned_to(count).axis.size == 3
+    p = rf.plot(h, bins=count)  # type: ignore[arg-type]
+    assert p.histograms[0].axis.size == 3
+    p.close()
+    x = {"x": np.arange(6.0)}
+    assert rf.histogram(x, "x", bins=count, range=(0, 6)).axes[0].size == 3  # type: ignore[arg-type]
+    # not the edges 3, 10, 20
+    axis = rf.histogram(x, "x", bins=(count, 10, 20)).axes[0]  # type: ignore[arg-type]
+    np.testing.assert_allclose(axis.edges, np.linspace(10, 20, 4))
+
+
+@pytest.mark.parametrize(
+    "axis",
+    [
+        hist.axis.IntCategory([0, 4, 5]),
+        hist.axis.StrCategory(["a", "b"]),
+        hist.axis.Integer(0, 6),
+        hist.axis.Boolean(),
+        bh.axis.Regular(3, 0, 6),
+    ],
+)
+def test_bins_refuses_unsupported_axes(axis: Any) -> None:
+    import rootfig as rf
+    from rootfig.model.binning import validate_bins
+
+    with pytest.raises(BinningError, match=type(axis).__name__):
+        validate_bins(axis, None)
+    with pytest.raises(BinningError, match=r"hist\.axis\.Regular and hist\.axis\.Variable"):
+        validate_bins(axis, None)
+    with pytest.raises(BinningError, match=type(axis).__name__):
+        rf.histogram({"x": np.arange(6)}, "x", bins=axis)
+    h = hist.Hist(hist.axis.Regular(6, 0, 6), storage=hist.storage.Weight())
+    with pytest.raises(BinningError, match=type(axis).__name__):
+        rf.plot(h, bins=axis)

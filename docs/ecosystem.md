@@ -51,6 +51,20 @@ applies its style only inside a `plt.style.context` while drawing, so it does
 not change global rcParams (unless you call `rf.use_style`). Anything you
 would do to a matplotlib figure, you can do to `Plot.fig` and `Plot.ax`.
 
+## Trees and histogram files
+
+rootfig reads trees and stored `TH1`/`TH2` histograms without ROOT, independently
+of the framework that wrote them. A `Sample` identifies each input process,
+a `Group` combines processes into a category, and `stack=` selects the categories
+to stack. Files already scaled to expected yields are read as they are; trees
+can be scaled with `Sample(xsec=..., ngen=...)` and `lumi=`.
+
+The same `Variable` describes a stored histogram and the branch it was filled
+from: its bins and range crop and merge existing bins, moving the rest into
+flow bins. `PlotBook` prepares each variable once for its drawing variants and
+can discover shared histograms with `rf.ALL`. See the
+[complete histogram-file example](batch.md#a-complete-example-histogram-files).
+
 ## When to use something else
 
 - You already have flat NumPy columns or `boost-histogram` objects and want

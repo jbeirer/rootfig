@@ -96,10 +96,13 @@ def plot2d(
     name when the file has none), and ``data`` may be a 2D ``hist.Hist`` or
     :class:`~rootfig.histograms.Histogram`. For such an object ``x`` and ``y``
     are optional and describe its axes as ``variable`` does in :func:`plot`:
-    label, unit, ``log`` flag, a ``name`` for the axis and ``bins`` to merge to;
-    the object itself is left untouched. For both, ``bins`` merges bins per axis
+    label, unit, ``log`` flag, a ``name`` for the axis and ``bins``/``range`` to crop
+    and merge to;
+    the object itself is left untouched. For both, ``bins`` crops and merges bins per axis
     as in :func:`plot`: an integer count, or edges that coincide with the
-    existing ones. ``assume_poisson`` accepts such a histogram without
+    existing ones. A range without bins keeps the bins between its ends, which
+    must be existing edges too; cropped
+    content moves into the flow bins. ``assume_poisson`` accepts such a histogram without
     variances, as in :func:`plot`.
     """
     objects = histogram_objects(data)

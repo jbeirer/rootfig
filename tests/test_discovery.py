@@ -433,10 +433,6 @@ class TestStoredHistograms:
             ({"plot_kwargs": {"stats": True}}, "stats= needs the unbinned statistics"),
             ({"plot_kwargs": {"stats": "upper left"}}, "stats= needs the unbinned statistics"),
             ({"variants": {"a": {}, "b": {"stats": True}}}, "stats= needs the unbinned statistics"),
-            (
-                {"plot_kwargs": {"range": (0.0, 100.0)}},
-                r"range=\(low, high\) without bins= cannot be applied",
-            ),
         ],
     )
     def test_event_data_options_rule_stored_histograms_out(
@@ -1137,3 +1133,17 @@ class TestBranchReplacements:
         assert list(results["x"].histograms[0].variations) == ["shift"]
         for result in results.values():
             result.close()
+
+
+def test_discovery_keeps_stored_histograms_with_crop(stored_dir: Path) -> None:
+    book = rf.PlotBook(
+        stored_dir / "ZH_sel0_histo.root",
+        rf.ALL,
+        include="mz",
+        plot_kwargs={"range": (0.0, 100.0)},
+    )
+    assert _names(book) == ["mz"]
+    for _, plot in book.plots():
+        assert plot.histograms[0].axis.size == 40
+        np.testing.assert_allclose(plot.histograms[0].edges[[0, -1]], [0, 100])
+        plot.close()

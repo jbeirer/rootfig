@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>Publication-quality figures straight from ROOT trees, without ROOT.</strong>
+  <strong>Publication-quality figures straight from ROOT trees and histograms, without ROOT.</strong>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ uv add rootfig
 ```
 
 Python 3.12 or newer. No ROOT installation is needed; `TTree` and `RNTuple`
-files are both supported.
+files and stored `TH1`/`TH2` histograms are all supported.
 
 ## Compare samples in one call
 
@@ -118,43 +118,24 @@ Everything you get back is a standard object: `p.fig` and `p.ax` are
 matplotlib `Figure`/`Axes`, `p.hists` are `hist.Hist` objects, and
 `rf.load(...)` returns Awkward arrays.
 
-Samples that belong to one physics category are drawn as one histogram with
-`rf.Group`. Each keeps its own files, weights, cross section and systematics;
-they are summed only after filling:
+For histogram files, `Group` sums processes and a `Variable` crops and merges
+their bins just as it bins a tree. `PlotBook` draws the variants from one
+preparation; `rf.ALL` discovers every shared histogram for an overview.
 
 ```python
-ww = rf.Sample("ww.root", tree="events", label="WW", weight="mc_weight")
-zz = rf.Sample("zz.root", tree="events", label="ZZ", weight="mc_weight")
-vv = rf.Group([ww, zz], label="VV")
+# Histogram files: one per process, already scaled to 5 ab^-1
+ww = rf.Sample("outputs/p8_ee_WW_ecm240.root", label="WW")
+zz = rf.Sample("outputs/p8_ee_ZZ_ecm240.root", label="ZZ")
+zh = rf.Sample("outputs/p8_ee_ZH_ecm240.root", label="ZH")
+fcc = rf.Style(experiment="FCC-ee", status="Simulation", com="240 GeV", lumi="5 ab^-1")
 
-rf.plot([vv, signal], pt, observed=data, stack=True, ratio=True, style=style)
-```
-
-Whole sets of plots, every variable under each selection in every drawing
-variant, are one `rf.PlotBook`: it runs that same `rf.plot` call per
-combination and writes deterministically named files:
-
-```python
 book = rf.PlotBook(
-    [vv, signal],
-    [pt, rf.Variable("MET", bins=(40, 0, 200), unit="GeV")],
-    selections={"baseline": baseline, "sr": baseline & "MET > 50"},
-    variants={"lin": {}, "log": {"logy": True}},
-    plot_kwargs={"observed": data, "stack": True, "ratio": True, "style": style},
+    [rf.Group([ww, zz], label="VV"), zh],
+    [rf.Variable("zmumu_recoil_m", bins=(200, 120, 140), label="Recoil mass", unit="GeV")],
+    variants={"stack": {"stack": True}, "nostack": {"stack": ["VV"]}},
+    plot_kwargs={"style": fcc},
 )
-book.save("plots/", formats=["pdf", "png"])  # plots/Muon_pt__sr__log.pdf, ...
-book.save_pdf("overview.pdf")  # one automatically arranged multipage PDF
-```
-
-`rf.ALL` discovers the variables instead, from the branch types and stored
-histograms of the files (metadata only), filtered by name:
-
-```python
-book = rf.PlotBook(
-    [vv, signal],
-    variables=rf.ALL,
-    exclude=["*_cov", "*Index"],
-)
+book.save_pdf("zh.pdf")  # rf.ALL in place of the list plots every histogram the files share
 ```
 
 ## What you can do

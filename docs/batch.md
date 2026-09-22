@@ -137,7 +137,7 @@ reports it whatever the variable. A branch that a branch-replacement systematic
 replaces is kept only when its replacement is a plottable branch of the sample,
 since the replacement is read whenever the branch is. Stored histograms
 are left out whenever the book is bound to refuse them: a selection, a
-`weight`, `nonfinite="error"`, a `stats` box, a `range` without `bins`, or a
+`weight`, `nonfinite="error"`, a `stats` box, or a
 systematic varying the weight or branches that applies to a sample (the plot's
 unless the sample's own source of that name replaces it, none for observed
 data), in the book's keywords or in any variant's. A file of stored histograms
@@ -409,6 +409,63 @@ quietly producing an empty book.
 
 An axis the book was built without has the single choice `"all"` (selections)
 or `"default"` (variants); selecting it is a no-op and the axis stays implicit.
+
+## A complete example: histogram files
+
+An analysis can write one histogram file per process. Files that already
+contain expected yields are read as they are.
+A `Group` combines the WW and ZZ processes into the VV background category.
+
+```python
+import rootfig as rf
+
+# Histogram files: one per process, already scaled to 5 ab^-1
+ww = rf.Sample("outputs/p8_ee_WW_ecm240.root", label="WW")
+zz = rf.Sample("outputs/p8_ee_ZZ_ecm240.root", label="ZZ")
+zh = rf.Sample("outputs/p8_ee_ZH_ecm240.root", label="ZH")
+samples = [rf.Group([ww, zz], label="VV"), zh]
+
+fcc = rf.Style(experiment="FCC-ee", status="Simulation", com="240 GeV", lumi="5 ab^-1")
+variants = {
+    "stack": {"stack": True},  # ZH on top of VV
+    "nostack": {"stack": ["VV"]},  # VV stacked, ZH drawn over it
+    "log": {"stack": ["VV"], "logy": True},
+}
+
+# every histogram the files share, at a glance
+rf.PlotBook(samples, rf.ALL, variants=variants, plot_kwargs={"style": fcc}).save_pdf("overview.pdf")
+
+# selected plots, with bins and a range for each histogram
+variables = [
+    rf.Variable("zmumu_recoil_m", bins=(200, 120, 140), label="Recoil mass", unit="GeV"),
+    rf.Variable("zmumu_m", bins=(50, 86, 96), label=r"$m_{\mu\mu}$", unit="GeV"),
+    rf.Variable("zmumu_p", bins=(400, 0, 80), label=r"$p_{\mu\mu}$", unit="GeV"),
+]
+rf.PlotBook(samples, variables, variants=variants, plot_kwargs={"style": fcc}).save_pdf("zh.pdf")
+```
+
+The files are read once per batch of variables. The three variants of each
+variable are drawn from one preparation, so changing the drawing does not
+repeat the reads or the binning.
+
+The stored 1 MeV recoil bins become 0.1 GeV bins between 120 and 140 GeV.
+Everything outside that interval moves into the underflow or overflow bin,
+including its uncertainty. `rf.ALL` keeps each histogram's own binning, which
+suits an overview; explicit `Variable`s choose the ranges and bins to show.
+
+The same plot can be made from ntuples storing the recoil mass as a branch. Give
+the samples cross sections and generated-event counts to scale that plot to
+the same luminosity:
+
+```python
+ww = rf.Sample("ntuples/p8_ee_WW_ecm240/*.root", label="WW", xsec="16.4 pb", ngen="eventsProcessed")
+zz = rf.Sample("ntuples/p8_ee_ZZ_ecm240/*.root", label="ZZ", xsec="1.36 pb", ngen="eventsProcessed")
+zh = rf.Sample(
+    "ntuples/p8_ee_ZH_ecm240/*.root", label="ZH", xsec="0.202 pb", ngen="eventsProcessed"
+)
+recoil = rf.Variable("zed_leptonic_recoil_m", bins=(200, 120, 140), label="Recoil mass", unit="GeV")
+rf.plot([rf.Group([ww, zz], label="VV"), zh], recoil, lumi="5 ab^-1", stack=["VV"], style=fcc)
+```
 
 ## What a book does not do
 

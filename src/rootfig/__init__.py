@@ -1,4 +1,4 @@
-"""rootfig: publication-quality histograms straight from ROOT trees, without ROOT.
+"""rootfig: publication-quality figures straight from ROOT trees and histograms, without ROOT.
 
 The quick path::
 
