@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from rootfig.errors import BinningError
 from rootfig.histograms import (
     COMPARISON_KINDS,
     Comparison,
@@ -18,6 +19,7 @@ from rootfig.histograms import (
     Histogram,
     UncertaintyMode,
     compare,
+    compatible_binning,
     sum_histograms,
 )
 from rootfig.histograms.comparison import BAND_KINDS, SIGNIFICANCE_KINDS
@@ -97,6 +99,8 @@ def resolve(
         ``reference`` naming no drawn histogram or several, data as the
         background of a significance, ``uncertainty`` for a kind without a band,
         and roles the drawn histograms cannot fill.
+    BinningError
+        If a numerator does not share the reference's binning.
     """
     if panel is None:
         if reference is not None:
@@ -128,6 +132,7 @@ def resolve(
         numerators, background = _significance_roles(
             histograms, named, stacked=stacked, overlaid=overlaid
         )
+        _check_binning(numerators, background, kind=kind, stacked=stacked)
         modes: list[UncertaintyMode] = ["propagate"] * len(numerators)
         return PanelPlan(
             kind,
@@ -139,6 +144,7 @@ def resolve(
     numerators, chosen = _ratio_roles(
         histograms, named, kind=kind, stacked=stacked, overlaid=overlaid, data=data
     )
+    _check_binning(numerators, chosen, kind=kind, stacked=stacked)
     reference_is_data = chosen is not None and chosen.is_data
     if kind == "pull":
         modes = ["propagate"] * len(numerators)
@@ -158,6 +164,29 @@ def resolve(
             kind, "MC" if chosen is None else chosen.label, data=over_simulation
         )
     return PanelPlan(kind, tuple(numerators), chosen, tuple(modes), label)
+
+
+def _check_binning(
+    numerators: Sequence[Histogram],
+    reference: Histogram | None,
+    *,
+    kind: ComparisonKind,
+    stacked: Sequence[Histogram],
+) -> None:
+    """Refuse a numerator that does not bin like the reference, before a figure is made.
+
+    The stack total (``reference`` is ``None``) bins like the histograms it
+    sums, so the first of those stands for it.
+    """
+    against = reference if reference is not None else stacked[0]
+    for numerator in numerators:
+        if not compatible_binning(numerator.hist, against.hist):
+            msg = (
+                f"panel={kind!r} compares {numerator.label!r} with {against.label!r}, "
+                "which do not share one binning; give them the same bins= and range= "
+                "(histograms that already exist must be rebinned to match)"
+            )
+            raise BinningError(msg)
 
 
 def _named(histograms: Sequence[Histogram], reference: str) -> Histogram:

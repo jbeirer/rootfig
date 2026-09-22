@@ -198,15 +198,18 @@ variances:
 | `"pull"` | `(n − d) / σ`, `σ² = vn + vd + σ_syst²` | none: 1 by construction | none | symmetric: ±1.1 times the 95th percentile of the magnitudes, at least ±3 and at most ±5 |
 | `"s/sqrt(b)"`, `"s/sqrt(s+b)"` | `S/√B`, `S/√(S+B)` per bin, the reference as background | statistical, propagated | none | 0 to 1.25 times the highest point plus its error |
 
-Ratios, relative and absolute differences are points with error bars over a
-grey band, with a dashed line at their baseline; pulls are filled bars from 0
+Ratios, relative and absolute differences are points with error bars and a
+dashed line at their baseline, over the grey reference band where one is drawn
+(the `"numerator"` mode below); pulls are filled bars from 0
 in the numerator's colour; significances are points without a baseline. Every
 numerator gets its own series, in its histogram's colour. A bin is left empty
 where the value is undefined: an empty reference for a ratio or a relative
 difference, `σ = 0` for a pull, and no background (or no signal plus
 background) for a significance. Only the bins inside the visible x range
-(`xlim`, both segments of `xbreak`) set the automatic range, and statistical
-error bars never do, so a few low-statistics bins cannot squash the panel.
+(`xlim`, both segments of `xbreak`) set the automatic range. Statistical error
+bars do not widen it, so a few low-statistics bins cannot squash the panel; a
+significance is the exception, its upper limit following the highest point
+plus its error.
 
 `σ_syst` of a pull is the combined [systematic
 uncertainty](#systematic-uncertainties) of `n − d`, every source varying both

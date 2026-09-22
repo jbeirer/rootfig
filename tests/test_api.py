@@ -769,6 +769,16 @@ class TestPanelRoles:
             rf.plot(self._hists(data=True), stack=["A"], **kwargs)
         assert plt.get_fignums() == before
 
+    @pytest.mark.parametrize("kwargs", [{}, {"reference": "A"}, {"stack": ["A"]}])
+    def test_mismatched_binning_raises_before_a_figure_exists(self, kwargs: Any) -> None:
+        before = plt.get_fignums()
+        coarse = hist.Hist(hist.axis.Regular(1, 0, 2), storage=hist.storage.Weight())
+        coarse.view().value, coarse.view().variance = 5.0, 5.0
+        hists = [*self._hists(data=False, labels=("A",)), rf.Histogram(coarse, label="B")]
+        with pytest.raises(BinningError, match="do not share one binning"):
+            rf.plot(hists, panel="ratio", **kwargs)
+        assert plt.get_fignums() == before
+
     def test_a_reference_is_one_histogram(self) -> None:
         before = plt.get_fignums()
         hists = self._hists(data=False, labels=("A", "B", "A"))
@@ -1815,7 +1825,7 @@ class TestReviewRegressions:
         )
         assert len(overlay.hists) == 2
         assert overlay.ax.get_ylim()[1] > 1.0
-        with pytest.raises(BinningError, match="identical"):
+        with pytest.raises(BinningError, match="do not share one binning"):
             rf.plot(overlay.hists, panel="ratio")
 
     def test_ratio_colors_follow_the_main_panel(self) -> None:
