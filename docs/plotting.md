@@ -222,6 +222,7 @@ Significance panels use statistical uncertainties only.
 | stack, no data | every overlaid histogram / stack total; a full stack raises | as above |
 | no stack, data | data / the first non-data histogram | the last non-data histogram / the sum of the others |
 | no stack, no data | every histogram after the first / the first | the last non-data histogram / the sum of the others |
+| observed data alone | every data histogram after the first / the first | raises: no non-data histograms |
 
 With the signal last, drawing it inside the stack or over it shows the same
 significance panel, and stacking the backgrounds (`stack=["WW", "ZZ"]`)

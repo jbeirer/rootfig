@@ -86,6 +86,9 @@ class Comparison:
     syst_band
         The reference's systematic uncertainty, in the units of ``band``, as
         ``(down, up)``; ``None`` if the reference has no variations.
+    uncertainty
+        The :data:`UncertaintyMode` of the error bars: with ``"numerator"`` the
+        reference's uncertainty is only in the band, which is then drawn.
     """
 
     kind: ComparisonKind
@@ -97,6 +100,7 @@ class Comparison:
     band: FloatArray | None = None
     syst_errors: tuple[FloatArray, FloatArray] | None = None
     syst_band: tuple[FloatArray, FloatArray] | None = None
+    uncertainty: UncertaintyMode = "propagate"
 
     @property
     def centers(self) -> FloatArray:
@@ -194,6 +198,7 @@ def compare(
         label=num.label,
         reference=ref.label,
         edges=np.asarray(num.hist.axes[0].edges, dtype=float),
+        uncertainty=uncertainty,
         **fields,
     )
 

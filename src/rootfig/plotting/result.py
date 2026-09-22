@@ -50,7 +50,9 @@ class Plot:
         ``hist.Hist``).
     stack
         The summed stacked histograms, labelled ``"Total"``, including variations,
-        or ``None``. The band and automatic panels use this histogram.
+        or ``None``. The stack's band uses this histogram, and so does a lower
+        panel comparing with the stack total (not one with ``reference=``, nor
+        a significance of a fully stacked signal, whose background excludes it).
     comparisons
         The :class:`~rootfig.histograms.Comparison` objects drawn in the lower
         panel, one per numerator.

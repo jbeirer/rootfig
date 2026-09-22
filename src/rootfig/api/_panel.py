@@ -52,11 +52,6 @@ class PanelPlan:
     label: str
 
     @property
-    def band(self) -> bool:
-        """Whether the reference band is drawn: when an error bar leaves the reference out."""
-        return "numerator" in self.modes
-
-    @property
     def observed(self) -> list[bool]:
         """Which numerators are observed data."""
         return [h.is_data for h in self.numerators]
@@ -88,6 +83,8 @@ def resolve(
     ``reference``, a ratio-like kind compares data with the stack total, or the
     overlays with it when there is no data; without a stack, data with the first
     non-data histogram, and without data every further histogram with the first.
+    With observed data alone (nothing to stack), every further data histogram is
+    compared with the first.
     A significance takes the overlays as signals over the stack total, or else
     the last non-data histogram over the sum of the others. ``reference`` names
     the reference (the background) for every other histogram (non-data for a
@@ -239,6 +236,7 @@ def _ratio_roles(
     elif data and overlaid:
         numerators, reference = list(data), overlaid[0]
     else:
+        # all simulation, or all observed data (two run periods): later ones / the first
         numerators, reference = list(histograms[1:]), histograms[0]
     if not numerators:
         msg = f"a {kind} panel needs at least two histograms"

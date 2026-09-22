@@ -650,7 +650,7 @@ class PlotBook:
         **task.kwargs)`` returns, produced in batches: the variables are taken a
         few dozen at a time, the branches they and every selection need are read
         once per sample for the batch, and variants that only change the drawing
-        (``logy``, ``normalize``, ``ratio``, ``style``, ...) are drawn from one
+        (``logy``, ``normalize``, ``panel``, ``style``, ...) are drawn from one
         set of prepared histograms, each from its own copy. A variant that
         changes how the histograms are prepared (``bins``, ``weight``,
         ``observed``, ``systematics``, ...) is prepared on its own. The tasks
@@ -848,7 +848,7 @@ class PlotBook:
         figsize
             Size of a whole page in inches. By default a page is as large as the
             grid of figures the plots would have on their own, so a cell shows its
-            plot at the usual size (a ratio panel makes the cells of its page
+            plot at the usual size (a lower panel makes the cells of its page
             taller, a :class:`~rootfig.model.Style` with a ``figsize`` sets theirs).
             A task's own ``figsize`` cannot apply inside a shared page and raises.
         **savefig_kwargs

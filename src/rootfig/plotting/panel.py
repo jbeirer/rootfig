@@ -88,9 +88,10 @@ def draw_panel(
     ylabel
         Label; defaults to :func:`comparison_label` for the first comparison's reference.
     band
-        Draw the reference's uncertainty band of the first comparison, which
-        belongs in the panel when the error bars leave it out (the ``"numerator"``
-        mode). Defaults to drawing it whenever the comparisons carry one.
+        Draw the reference's uncertainty band of the first comparison that has
+        one. Defaults to drawing it when a comparison's error bars leave the
+        reference out (``uncertainty="numerator"``); with ``"propagate"`` they
+        already include it.
     view
         The x windows whose bins set the automatic y range.
 
@@ -124,7 +125,9 @@ def draw_panel(
         ax.axhline(baseline, color="gray", linestyle="--", linewidth=1.0, zorder=1)
         first = next((c for c in comparisons if c.band is not None), None)
         total = first.total_band() if first is not None else None
-        if (band is None or band) and first is not None and total is not None:
+        if band is None:
+            band = any(c.uncertainty == "numerator" for c in comparisons)
+        if band and first is not None and total is not None:
             band_down, band_up = total
             has_systematics = first.syst_band is not None
             lower = np.where(np.isfinite(band_down), baseline - band_down, baseline)
