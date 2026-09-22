@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 import matplotlib as mpl
@@ -68,7 +68,7 @@ def add_stats_box(
     loc: str = "auto",
     precision: int = 4,
     include_entries: bool = True,
-    colors: Mapping[str, str] | None = None,
+    colors: Sequence[str] | None = None,
     legend: Legend | None = None,
 ) -> list[Text]:
     """Add ``N``, mean and standard deviation for each histogram with statistics.
@@ -76,15 +76,19 @@ def add_stats_box(
     With ``loc="auto"`` the box sits in the upper right corner, directly below
     the legend if there is one there (the classic ROOT layout). Any matplotlib
     legend location string places it in that corner instead. One block of text
-    is drawn per histogram, coloured like the histogram.
+    is drawn per histogram. ``colors`` supplies one colour per input histogram;
+    a length mismatch raises ``ValueError``.
     """
+    if colors is not None and len(colors) != len(histograms):
+        msg = f"got {len(colors)} colours for {len(histograms)} histograms"
+        raise ValueError(msg)
     blocks: list[tuple[str, str]] = []
-    for histogram in histograms:
+    for index, histogram in enumerate(histograms):
         if histogram.stats is None:
             continue
         body = histogram.stats.format(precision, include_entries=include_entries)
         text = f"{histogram.label}\n{body}" if len(histograms) > 1 else body
-        color = colors.get(histogram.label, foreground()) if colors else foreground()
+        color = colors[index] if colors is not None else foreground()
         blocks.append((text, color))
     if not blocks:
         return []

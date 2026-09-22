@@ -227,6 +227,31 @@ def stack_data(mc: list[rf.Sample], data: rf.Sample, pt: rf.Variable, style: rf.
 
 
 @example(
+    "selective_stack",
+    "Stacked backgrounds with a signal overlaid",
+    section=SIMULATION_AND_DATA,
+)
+def selective_stack(
+    signal: rf.Sample, zjets: rf.Sample, diboson: rf.Sample, mll: rf.Variable, style: rf.Style
+) -> rf.Plot:
+    """``stack=`` selects the backgrounds by their legend labels. The signal is
+    drawn as an outline over the stack in the text colour, like data points, so
+    it stands out from the filled backgrounds on light and dark pages; the
+    significance panel compares it with the background total, in the same
+    colour. The hatched band belongs to the backgrounds; the signal's
+    uncertainty is a light band in its own colour."""
+    return rf.plot(
+        [zjets, diboson, signal.replace(color=plt.rcParams["text.color"])],
+        mll,
+        stack=["Z + jets", "Diboson"],
+        ratio="significance",
+        logy=True,
+        systematics={"lumi": 0.02},
+        style=style,
+    )
+
+
+@example(
     "systematics",
     "Systematic uncertainties in a stack and its ratio panel",
     section=SIMULATION_AND_DATA,

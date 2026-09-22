@@ -557,6 +557,11 @@ class TestRatioReference:
         assert ratio_ylabel(p) == "Data / A"
         stacked = rf.plot([data, make(10.0, "A"), make(30.0, "B")], ratio=True, stack=True)
         np.testing.assert_allclose(stacked.ratios[0].values, [0.5, 0.5])  # data / total
+        partial_stack = rf.plot([data, make(10.0, "A"), make(30.0, "B")], ratio=True, stack=["A"])
+        np.testing.assert_allclose(partial_stack.ratios[0].values, [2.0, 2.0])
+        without_data = rf.plot([make(10.0, "A"), make(30.0, "B")], ratio=True, stack=["A"])
+        np.testing.assert_allclose(without_data.ratios[0].values, [3.0, 3.0])
+        np.testing.assert_allclose(without_data.ratios[0].errors, np.sqrt([18.0, 18.0]))
 
 
 class TestBrokenAxis:
@@ -1407,6 +1412,10 @@ class TestEfficiencyProfileSignificance:
         )
         assert p.ratio_ax is not None
         assert ratio_ylabel(p) == "Z"
+        # the signal inside the stack or drawn over it: the same panel
+        overlaid = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack="B", ratio="significance")
+        np.testing.assert_allclose(overlaid.ratios[0].values, result.values)
+        np.testing.assert_allclose(overlaid.ratios[0].errors, result.errors)
         with pytest.raises(ValueError, match="at least two"):
             rf.plot([sig], "MET", bins=(10, 0, 200), ratio="s/sqrt(b)")
         with pytest.raises(ValueError, match="is not one of"):
@@ -2013,13 +2022,14 @@ class TestSystematics:
         with pytest.raises(MissingBranchError, match=r"MC \[jes up\]: replacing 'x'"):
             rf.histograms(replaced, "x", bins=(2, 0, 2))
 
-    def test_uncertainty_of_an_overlay_with_different_binnings_needs_a_label(self) -> None:
+    @pytest.mark.parametrize("bins", [2, 3])
+    def test_uncertainty_of_an_overlay_needs_a_label(self, bins: int) -> None:
         a = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
-        b = hist.Hist(hist.axis.Regular(3, 0, 2), storage=hist.storage.Weight())
+        b = hist.Hist(hist.axis.Regular(bins, 0, 2), storage=hist.storage.Weight())
         p = rf.plot([rf.Histogram(a, "a"), rf.Histogram(b, "b")])
-        with pytest.raises(BinningError, match=r"pass the label of one, e.g. uncertainty\('a'\)"):
+        with pytest.raises(ValueError, match=r"pass the label of one, e.g. uncertainty\('a'\)"):
             p.uncertainty()
-        assert p.uncertainty("b").nominal.size == 3
+        assert p.uncertainty("b").nominal.size == bins
 
     def test_exports(self) -> None:
         assert rf.Systematic.samples("alt.root").kind == "samples"
@@ -2416,6 +2426,20 @@ class TestGroups:
         legend = [t.get_text() for t in p.ax.get_legend().get_texts()]
         assert legend[:2] == ["Signal", "Background"]
         assert len(p.ratios) == 1
+        partial_stack = rf.plot(
+            [background, signal],
+            "x",
+            bins=(20, -4, 6),
+            lumi="5 ab^-1",
+            stack=["Background"],
+            ratio="s/sqrt(b)",
+        )
+        assert len(partial_stack.ratios) == 1
+        assert partial_stack.stack is not None
+        np.testing.assert_allclose(partial_stack.stack.values(), p.histograms[0].values())
+        np.testing.assert_allclose(partial_stack.ratios[0].values, p.ratios[0].values)
+        with pytest.raises(ValueError, match=r"labels: \['Background', 'Signal'\].*Group"):
+            rf.plot([background, signal], "x", bins=10, lumi=1.0, stack=["VV"])
         assert len(rf.plot(background.components, "x", bins=10, lumi=1.0).histograms) == 2
         assert len(rf.plot(background.samples, "x", bins=10, lumi=1.0).histograms) == 4
         p = rf.plot([vv, signal], "x", bins=(20, -4, 6), lumi=1.0, ratio="VV")
@@ -2571,3 +2595,108 @@ class TestPreparedPlot:
         assert draw_plot(prepared).ax.get_xlabel() == "x [cm]"
         with pytest.raises(TypeError, match="needs a variable"):
             prepare_plot({"x": [1.0, 2.0]})
+
+
+class TestSelectiveStacking:
+    @staticmethod
+    def _hist(value: float, label: str, **kwargs: Any) -> rf.Histogram:
+        h = hist.Hist(hist.axis.Regular(2, 0, 4), storage=hist.storage.Weight())
+        h.view().value[:] = value
+        h.view().variance[:] = value
+        return rf.Histogram(h, label=label, **kwargs)
+
+    def _signals(self, observed: bool) -> list[rf.Histogram]:
+        hists = [
+            self._hist(4, "B"),
+            self._hist(6, "S1", color="red"),
+            self._hist(10, "S2", color="blue"),
+        ]
+        if observed:
+            hists.append(self._hist(100, "Data", is_data=True))
+        return hists
+
+    @staticmethod
+    def _panel_colors(p: rf.Plot) -> list[str]:
+        from matplotlib.container import ErrorbarContainer
+
+        assert p.ratio_ax is not None
+        return [
+            c.lines[0].get_color()
+            for c in p.ratio_ax.containers
+            if isinstance(c, ErrorbarContainer)
+        ]
+
+    @pytest.mark.parametrize("observed", [False, True])
+    def test_multiple_signals(self, observed: bool) -> None:
+        p = rf.plot(self._signals(observed), stack=["B"], ratio="significance")
+        assert len(p.ratios) == 2
+        np.testing.assert_allclose(p.ratios[0].values, [3, 3])
+        np.testing.assert_allclose(p.ratios[1].values, [5, 5])
+        assert self._panel_colors(p) == ["red", "blue"]
+
+    @pytest.mark.parametrize("stack", [False, True])
+    @pytest.mark.parametrize("observed", [False, True])
+    def test_without_overlays_on_a_stack_the_last_is_the_signal(
+        self, stack: bool, observed: bool
+    ) -> None:
+        hists = self._signals(observed)
+        p = rf.plot(hists, stack=stack, ratio="significance")
+        named = rf.plot(hists, stack=stack, ratio=("s/sqrt(b)", "S2"))
+        assert len(p.ratios) == 1
+        np.testing.assert_allclose(p.ratios[0].values, np.sqrt([10, 10]))  # 10 / sqrt(4 + 6)
+        np.testing.assert_allclose(p.ratios[0].values, named.ratios[0].values)
+        np.testing.assert_allclose(p.ratios[0].errors, named.ratios[0].errors)
+        assert self._panel_colors(p) == ["blue"]
+
+    def test_stack_uncertainty(self) -> None:
+        from rootfig.histograms import sum_histograms, uncertainty
+
+        samples = [
+            rf.Sample({"x": [0.5, 1.5]}, label=label, scale=scale)
+            for label, scale in [("A", 1), ("B", 2), ("S", 10)]
+        ]
+        p = rf.plot(samples, "x", bins=(2, 0, 2), stack=["B", "A"], systematics={"lumi": 0.02})
+        assert p.stack is not None
+        assert p.stack.label == "Total"
+        expected = uncertainty(sum_histograms(p.histograms[:2]))
+        np.testing.assert_allclose(p.stack.values(), expected.nominal)
+        np.testing.assert_allclose(p.uncertainty().total_up, expected.total_up)
+        np.testing.assert_allclose(p.uncertainty().components["lumi"], expected.components["lumi"])
+        np.testing.assert_allclose(p.uncertainty("S").components["lumi"][0], [0.2, 0.2])
+        assert rf.plot(p.histograms[0]).stack is None
+        np.testing.assert_allclose(rf.plot(p.histograms[0]).uncertainty().nominal, [1, 1])
+
+    @pytest.mark.parametrize("normalize", [True, "unity", "density", 10, 0.5, 0])
+    def test_normalization_refused(self, normalize: Any) -> None:
+        before = plt.get_fignums()
+        with pytest.raises(ValueError, match="would normalise") as exc:
+            rf.plot([self._hist(4, "A"), self._hist(6, "B")], stack=["A"], normalize=normalize)
+        assert str(exc.value) == (
+            f"normalize={normalize!r} would normalise every stacked histogram on its own, "
+            "so the stack would not add up to a normalised total; compare shapes with "
+            "stack=False, draw a combination as one histogram with rf.Group, "
+            "or use normalize='width'"
+        )
+        assert plt.get_fignums() == before
+
+    @pytest.mark.parametrize("normalize", [None, False, "width"])
+    def test_normalization_allowed(self, normalize: Any) -> None:
+        p = rf.plot([self._hist(4, "A"), self._hist(6, "B")], stack="A", normalize=normalize)
+        assert p.stack is not None
+        np.testing.assert_allclose(p.stack.values(), [2, 2] if normalize == "width" else [4, 4])
+
+    @pytest.mark.parametrize("stack", ["missing", "Data", None, 1, [1], {"A"}])
+    def test_invalid_stack_leaves_no_figure(self, stack: Any) -> None:
+        before = plt.get_fignums()
+        with pytest.raises((ValueError, TypeError)):
+            rf.plot([self._hist(4, "A"), self._hist(6, "Data", is_data=True)], stack=stack)
+        assert plt.get_fignums() == before
+
+    def test_only_stack_requires_matching_bins(self) -> None:
+        a = self._hist(4, "A")
+        b = hist.Hist(hist.axis.Regular(3, 0, 4), storage=hist.storage.Weight()).fill([1, 2])
+        p = rf.plot([a, rf.Histogram(b, "B")], stack="A")
+        assert p.stack is not None
+        np.testing.assert_allclose(p.stack.values(), a.values())
+        with pytest.raises(BinningError, match="a stack"):
+            rf.plot(p.histograms, stack=True)

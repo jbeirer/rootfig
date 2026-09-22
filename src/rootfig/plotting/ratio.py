@@ -173,33 +173,43 @@ def _finite(arrays: Sequence[np.ndarray]) -> np.ndarray:
 
 
 def draw_significance_panel(
-    result: Ratio,
+    results: Sequence[Ratio],
     ax: Axes,
     *,
     kind: SignificanceKind = "s/sqrt(b)",
-    color: str | None = None,
+    colors: Sequence[str] | None = None,
     ylim: tuple[float, float] | None = None,
     ylabel: str | None = None,
 ) -> None:
-    """Draw a per-bin significance (from :func:`~rootfig.histograms.significance`) as points."""
-    ok = np.isfinite(result.values)
-    errors = np.where(np.isfinite(result.errors), result.errors, 0.0)
-    ax.errorbar(
-        result.centers[ok],
-        result.values[ok],
-        yerr=errors[ok],
-        xerr=result.half_widths[ok],
-        fmt="o",
-        markersize=4,
-        capsize=0,
-        elinewidth=1.0,
-        color=color or foreground(),
-    )
+    """Draw per-bin significances, one colour per result (default: foreground).
+
+    The default y range covers every result and its errors; the first result
+    supplies the x limits.
+    """
+    if colors is None:
+        colors = [foreground()] * len(results)
+    tops = []
+    for result, color in zip(results, colors, strict=True):
+        ok = np.isfinite(result.values)
+        errors = np.where(np.isfinite(result.errors), result.errors, 0.0)
+        ax.errorbar(
+            result.centers[ok],
+            result.values[ok],
+            yerr=errors[ok],
+            xerr=result.half_widths[ok],
+            fmt="o",
+            markersize=4,
+            capsize=0,
+            elinewidth=1.0,
+            color=color,
+        )
+        if ok.any():
+            tops.append(float(np.max(result.values[ok] + errors[ok])))
     if ylim is None:
-        top = float(np.max(result.values[ok] + errors[ok])) if ok.any() else 1.0
+        top = max(tops, default=1.0)
         ylim = (0.0, 1.25 * top if top > 0 else 1.0)
     ax.set_ylim(*ylim)
-    ax.set_xlim(result.edges[0], result.edges[-1])
+    ax.set_xlim(results[0].edges[0], results[0].edges[-1])
     if ylabel is None:
         ylabel = r"$S/\sqrt{B}$" if kind == "s/sqrt(b)" else r"$S/\sqrt{S+B}$"
     ax.set_ylabel(ylabel, loc="center")

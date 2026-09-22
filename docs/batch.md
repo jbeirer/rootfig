@@ -72,6 +72,10 @@ book = rf.PlotBook(
 ```
 
 draws `lin` with `stack=True, logy=False` and `log` with `stack=True, logy=True`.
+With `variants={"stacked": {"stack": True}, "overlaid": {"stack": ["Background"]}}`,
+every plot is drawn with the signal inside the stack and over it, from one set of
+prepared histograms. With the signal last and `ratio="significance"` in
+`plot_kwargs`, both show the same significance panel.
 
 Every other keyword of `rf.plot` (`observed=`, `normalize=`, `ratio=`,
 `systematics=`, `style=`, ...) goes into `plot_kwargs` or a variant. The keyword
@@ -363,7 +367,7 @@ The book only reads less often than that call would. It runs the tasks in
 batches of a few dozen variables: the branches those variables and every
 selection need are read once per sample for the batch, the files a
 `Systematic.samples` variation fills from included, and variants that only
-change the drawing (`logy`, `normalize`, `ratio`, `style`, ...) are drawn from
+change the drawing (`stack`, `logy`, `normalize`, `ratio`, `style`, ...) are drawn from
 one set of prepared histograms, each figure from its own copy. A variant that
 changes how the histograms are prepared (`bins`, `weight`, `observed`,
 `systematics`, ...) is prepared on its own, still from the batch's read.

@@ -852,7 +852,7 @@ class TestBatching:
         book = rf.PlotBook(
             files,
             ["MET", "Muon_pt"],
-            variants={"lin": {}, "log": {"logy": True}},
+            variants={"lin": {}, "log": {"logy": True}, "overlay": {"stack": ["Background"]}},
             plot_kwargs={"stack": True},
         )
         results = {task.stem: result for task, result in book.plots()}
@@ -865,6 +865,8 @@ class TestBatching:
                 np.testing.assert_array_equal(a.values(flow=True), b.values(flow=True))
                 assert a.hist is not b.hist  # each figure holds its own copy
             assert_same_plot(log, rf.plot(files, variable, stack=True, logy=True))
+
+        assert_same_plot(results["MET__overlay"], rf.plot(files, "MET", stack=["Background"]))
 
     def test_variants_changing_the_preparation_are_prepared_apart(
         self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
@@ -1241,7 +1243,7 @@ def _books(data_dir: Path, stored_dir: Path) -> dict[str, rf.PlotBook]:
         "group_observed_ratio": rf.PlotBook(
             rf.Group([signal, background], label="MC"),
             ["MET", "Muon_pt"],
-            variants={"lin": {}, "norm": {"normalize": True}},
+            variants={"lin": {}, "norm": {"normalize": True, "stack": False}},
             plot_kwargs={"observed": data, "stack": True, "ratio": True},
         ),
         "stored": rf.PlotBook(

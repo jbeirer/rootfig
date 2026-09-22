@@ -9,16 +9,29 @@ objects you already have (see [the end of this page](#histograms-that-already-ex
 - **Overlay** (default): every sample is drawn as an outline (`histtype="step"`).
   Use `histtype="fill"` for translucent filled areas, `"errorbar"` for points,
   `"band"` for uncertainty bands; a `Sample(histtype=...)` overrides per sample.
-- **Stack**: `stack=True` stacks all non-data samples as filled histograms in
-  the given order (first sample at the bottom) and draws a hatched band for
-  the statistical uncertainty of the total.
+- **Stack**: `stack=True` stacks every non-data histogram; a label or a sequence
+  of legend labels selects what is stacked, for example
+  `rf.plot([ww, zz, zh], "mass", stack=["WW", "ZZ"])`. Every histogram carrying
+  a selected label is stacked, in input order with the first at the bottom;
+  the order of the selectors does not matter. The stack is drawn first, then
+  its hatched uncertainty band, then the remaining histograms as overlays in
+  input order, then data. A histogram keeps its colour whether it is stacked
+  or overlaid; explicit colours do not use up entries in the colour cycle.
+  Stacked histograms are always filled: `histtype=`, a sample's or group's own
+  `histtype`, and `errorbars=` apply only to overlays. `False` or `[]` overlays
+  everything. Unknown labels and labels belonging only to observed data raise
+  `ValueError`; anything other than a bool, string or sequence of strings raises
+  `TypeError`. A group is stacked by its own label, not its components' labels.
 - **Data**: samples with `is_data=True` (or passed as `observed=...`) are
   points with error bars, drawn on top and never stacked, in the style's text
   colour (black by default) unless the sample sets `color`.
 - **Groups**: a [`Group`][rootfig.Group] of samples is one histogram of the
   overlay or stack, the sum of its components filled apart; see
   [Group](composable.md#group).
-- `errorbars=True` adds statistical error bars to non-data histograms.
+- `errorbars=True` adds statistical error bars to overlaid non-data histograms.
+
+The [selective-stacking example](gallery/selective_stack.md) shows stacked
+backgrounds with a signal drawn over them and a significance panel.
 
 ## Systematic uncertainties
 
@@ -101,10 +114,13 @@ uncertainty runs off the panel instead of squashing it; pass `ratio_ylim` to
 show it in full). It stays at or above zero unless a central ratio is negative
 (signed weights).
 
-The numbers are part of the result:
+The numbers are part of the result. `Plot.stack` holds the sum of the stacked
+histograms, labelled `"Total"` and including variations, or `None` without a
+stack. `p.uncertainty()` uses that total, or the sole non-data histogram if
+there is no stack; several overlays require a label, such as `p.uncertainty("ZH")`:
 
 ```python
-u = p.uncertainty()  # all simulated histograms summed (the stack total); or one by label
+u = p.uncertainty()  # the stack total (p.stack), or one histogram by label
 u.stat, u.syst_down, u.syst_up  # per bin, visible bins
 u.total_down, u.total_up  # statistical ⊕ systematic
 u.components["jes"]  # signed (up − nominal, down − nominal) shifts
@@ -145,6 +161,11 @@ dataset scaled to the full one, for instance).
 | `"width"` | divide by bin width, no rescaling | `Entries / GeV` |
 | a number | visible bins sum to that number | `Normalised to 100` |
 
+With any histograms stacked, `normalize=True`, `"unity"`, `"density"` and numeric
+targets raise: normalising each component separately would not yield a normalised
+total. Use `stack=False` to compare shapes, `rf.Group` to draw a combination as one
+histogram, or `normalize="width"`; `None` and `False` also pass.
+
 A [`Group`][rootfig.Group] is summed first and normalised as one histogram.
 Variances are scaled consistently. Flow bins scale with the same factor; for
 `"width"` and `"density"` they are divided by the width of the neighbouring
@@ -165,26 +186,31 @@ weights cancel exactly, is left unchanged with a warning and keeps the plain
 
 `ratio=True` adds a lower panel sharing the x axis:
 
-- with a stack: data / total MC, error bars from the data, grey band for the
-  MC statistical uncertainty (`ratio_uncertainty="numerator"`); a stacked
-  ratio needs an `observed=` sample;
-- with data and overlaid samples: data / the first non-data sample (only the
-  data appears in the panel);
-- otherwise: every further sample / the first sample, uncertainties of both
-  propagated in quadrature (`ratio_uncertainty="propagate"`).
+- with a stack and data: data / stack total; overlaid histograms are not part
+  of the prediction and do not appear in the panel;
+- with a stack and no data: every overlaid histogram / stack total; a full
+  stack needs observed data or a histogram outside the stack;
+- without a stack, with data: data / the first non-data histogram;
+- without a stack or data: every histogram after the first / the first.
 
 `ratio="Background"` picks the reference by label (a group's label counts);
-all other histograms, data included, are divided by it. The uncertainty treatment is chosen per histogram:
-data over simulation keeps the reference uncertainty as a band, simulation over
-simulation propagates both sides, so systematic sources they share cancel.
+all other histograms, data included, are divided by it. For every form, the
+uncertainty treatment is chosen per numerator: data over simulation keeps the
+reference uncertainty as a grey band (`"numerator"`), and every other ratio
+propagates both sides (`"propagate"`), so shared systematic sources cancel.
 `ratio_uncertainty=` applies one treatment to all.
 
 `ratio="significance"` (or `"s/sqrt(b)"`, `"s/sqrt(s+b)"`) draws a
 **significance panel** instead: per bin, the signal over the square root of
-the background (or of signal plus background), with propagated
-uncertainties. The signal is the last non-data sample (the top of a stack)
-and the background the sum of the others; `ratio=("s/sqrt(b)", "ZH")` names
-the signal. The values are returned as a `Ratio` in `Plot.ratios`.
+the background (or of signal plus background), with propagated uncertainties.
+With histograms overlaid on a stack, the stack is the background and every
+overlaid non-data histogram is a signal, so stacking the backgrounds compares
+several signals with them. Without a stack, or with everything stacked, the last
+non-data histogram is the signal and the others are summed into the background:
+with the signal last, drawing it inside the stack or over it shows the same panel.
+`ratio=("s/sqrt(b)", "ZH")` names one signal and sums every other non-data histogram
+into the background. `Plot.ratios` holds one `Ratio` per signal, drawn in that
+histogram's colour.
 
 `ratio_ylim` and
 `ratio_label` override the automatic range (at least 0.5 to 1.5, widened to

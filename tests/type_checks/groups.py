@@ -19,5 +19,7 @@ def groups(a: rf.Sample, b: rf.Sample) -> None:
     assert_type(map_samples(outer, lambda s: s.replace(is_data=True)), PlotItem)
     assert_type(build_histograms([outer, a], "x"), list[Histogram])
     assert_type(rf.histograms(outer, "x"), list[Histogram])
+    assert_type(rf.plot([inner, b], "x", stack=["AB"]), rf.Plot)
+    rf.plot(a, "x", stack=1)  # type: ignore[arg-type]
     # Raw file specifications are not components; mypy reports an unused ignore if this loosens.
     rf.Group(["file.root"], label="raw")  # type: ignore[list-item]

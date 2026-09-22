@@ -13,8 +13,7 @@ from matplotlib.axes import Axes
 from matplotlib.backend_bases import FigureCanvasBase
 from matplotlib.figure import Figure
 
-from rootfig.errors import BinningError
-from rootfig.histograms import sum_histograms, uncertainty
+from rootfig.histograms import uncertainty
 
 if TYPE_CHECKING:
     from rootfig._typing import FloatArray
@@ -49,6 +48,9 @@ class Plot:
     histograms
         The :class:`~rootfig.histograms.Histogram` objects drawn (each wraps a
         ``hist.Hist``).
+    stack
+        The summed stacked histograms, labelled ``"Total"``, including variations,
+        or ``None``. The band and automatic panels use this histogram.
     ratios
         The :class:`~rootfig.histograms.Ratio` objects drawn in the ratio panel.
     variable
@@ -72,6 +74,7 @@ class Plot:
     matrix: FloatArray | None = None
     efficiencies: list[Efficiency] = field(default_factory=list)
     profiles: list[Profile] = field(default_factory=list)
+    stack: Histogram | None = None
 
     @property
     def axes(self) -> tuple[Axes, ...]:
@@ -81,44 +84,41 @@ class Plot:
 
     @property
     def hists(self) -> list[Any]:
-        """The underlying ``hist.Hist`` objects, in drawing order."""
+        """The underlying ``hist.Hist`` objects, in input order."""
         return [h.hist for h in self.histograms]
 
     def uncertainty(self, label: str | None = None) -> Uncertainty:
-        """Statistical and systematic uncertainties of a histogram of the plot, or of their sum.
+        """Statistical and systematic uncertainties of the stack or one histogram.
 
         Parameters
         ----------
         label
-            The label of one histogram. ``None`` sums all non-data histograms,
-            with same-named systematic sources added linearly: the stack total
-            of a stacked plot, the one simulated histogram if there is only one,
-            and for an overlay a total that is not drawn, which needs every
-            histogram to share its binning.
+            The label of one histogram. ``None`` selects the stack total, with
+            same-named systematic sources added linearly, or the sole non-data
+            histogram when there is no stack.
 
         Raises
         ------
         KeyError
             If no histogram has ``label``.
         ValueError
-            If ``label`` is ``None`` and there are no non-data histograms.
-        BinningError
-            If ``label`` is ``None`` and the non-data histograms have different
-            binnings (an overlay); pass a ``label`` instead.
+            If ``label`` is ``None`` and there is no stack and either zero or
+            several non-data histograms.
         """
         if label is None:
+            if self.stack is not None:
+                return uncertainty(self.stack)
             simulated = [h for h in self.histograms if not h.is_data]
             if not simulated:
                 msg = "the plot has no non-data histograms; pass the label of a histogram"
                 raise ValueError(msg)
-            try:
-                return uncertainty(sum_histograms(simulated))
-            except BinningError as exc:
+            if len(simulated) > 1:
                 msg = (
-                    f"cannot sum the histograms of this plot ({exc}); pass the label of one, "
-                    f"e.g. uncertainty({simulated[0].label!r})"
+                    f"the plot has no stack and {len(simulated)} overlaid histograms; "
+                    f"pass the label of one, e.g. uncertainty({simulated[0].label!r})"
                 )
-                raise BinningError(msg) from exc
+                raise ValueError(msg)
+            return uncertainty(simulated[0])
         for histogram in self.histograms:
             if histogram.label == label:
                 return uncertainty(histogram)

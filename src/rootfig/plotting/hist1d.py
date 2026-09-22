@@ -26,17 +26,71 @@ __all__ = [
     "DATA_STYLE",
     "Drawn",
     "FlowSpec",
+    "StackSpec",
     "band_label",
     "draw_histograms",
     "envelope",
     "fold_flow_bins",
     "label_flow_bins",
     "show_flow_bins",
+    "split_stack",
 ]
 
 FlowSpec: TypeAlias = Literal["hint", "show", "sum", "none"]
 """How under/overflow is shown (mplhep ``flow``): small arrows hinting at flow content
 (``"hint"``), extra bins (``"show"``), added to the edge bins (``"sum"``), or ignored."""
+
+StackSpec: TypeAlias = bool | str | Sequence[str]
+"""Stack all non-data histograms, none, or those carrying the given legend labels."""
+
+
+def split_stack(
+    histograms: Sequence[Histogram], stack: StackSpec
+) -> tuple[list[Histogram], list[Histogram], list[Histogram]]:
+    """Return stacked, overlaid and observed histograms, each in input order.
+
+    Labels select every non-data histogram carrying them. Unknown labels and
+    labels belonging only to observed data raise ``ValueError``; selectors other
+    than a bool, a string or a sequence of strings raise ``TypeError``.
+    """
+    if isinstance(stack, bool):
+        names = [h.label for h in histograms if not h.is_data] if stack else []
+    elif isinstance(stack, str):
+        names = [stack]
+    elif isinstance(stack, Sequence) and all(isinstance(name, str) for name in stack):
+        names = list(stack)
+    else:
+        msg = f"stack= must be True, False, a label or a list of labels, got {stack!r}"
+        raise TypeError(msg)
+    labels = [h.label for h in histograms]
+    simulated = {h.label for h in histograms if not h.is_data}
+    for name in names:
+        if name in labels and name not in simulated:
+            msg = (
+                f"stack= names {name!r}, which is observed data; "
+                "data is drawn as points and never stacked"
+            )
+            raise ValueError(msg)
+    missing = [name for name in names if name not in labels]
+    if missing:
+        description = (
+            "is not the label of a drawn histogram"
+            if len(missing) == 1
+            else "are not labels of drawn histograms"
+        )
+        msg = (
+            f"stack= names {', '.join(repr(name) for name in missing)}, which {description} "
+            f"(labels: {labels}); a Group is stacked by its own label, "
+            "not by those of its components"
+        )
+        raise ValueError(msg)
+    selected = set(names)
+    return (
+        [h for h in histograms if not h.is_data and h.label in selected],
+        [h for h in histograms if not h.is_data and h.label not in selected],
+        [h for h in histograms if h.is_data],
+    )
+
 
 DATA_STYLE: dict[str, Any] = {"marker": "o", "markersize": 5, "capsize": 0}
 """Default appearance of data points, drawn in the style's ink colour unless a sample sets one."""
@@ -51,9 +105,9 @@ def band_label(*, systematics: bool) -> str:
 class Drawn:
     """What :func:`draw_histograms` produced.
 
-    ``colors`` maps legend labels to colours (for the statistics box);
-    ``histogram_colors`` holds the colour of every input histogram in order, so
-    callers can identify histograms with duplicate labels.
+    ``colors`` holds one colour per input histogram, in input order, so
+    duplicate labels stay distinct. ``stack`` is the summed histogram used for
+    the stack's uncertainty band, including variations, or ``None``.
     """
 
     artists: list[Artist]
@@ -61,8 +115,8 @@ class Drawn:
     ymin: float
     ymax: float
     ymin_positive: float
-    colors: dict[str, str]
-    histogram_colors: list[str]
+    colors: list[str]
+    stack: Histogram | None
 
 
 def _histplot(*args: Any, **kwargs: Any) -> Any:
@@ -237,22 +291,21 @@ def label_flow_bins(ax: Axes, edges: np.ndarray, *, under: bool, over: bool) -> 
     ax.set_xticks(ticks, labels)
 
 
-def envelope(histograms: Sequence[Histogram], *, stack: bool) -> tuple[np.ndarray, np.ndarray]:
+def envelope(histograms: Sequence[Histogram], *, stack: StackSpec) -> tuple[np.ndarray, np.ndarray]:
     """Bin edges and the highest drawn value (content plus uncertainty) per bin.
 
     Used to keep legends and labels clear of the histograms. The uncertainty
-    includes systematic variations, which are drawn as bands. For stacks the
-    stack total counts; otherwise the maximum over all histograms. Overlaid
-    histograms may have different binnings: the envelope is then evaluated on
-    the union of all edges.
+    includes systematic variations, which are drawn as bands. The stack total,
+    every overlaid histogram and every data histogram count separately. Overlaid
+    histograms may have different binnings: the envelope is evaluated on the
+    union of all edges.
     """
-    mc = [h for h in histograms if not h.is_data]
+    stacked, overlaid, data = split_stack(histograms, stack)
     tops: list[tuple[np.ndarray, np.ndarray]] = []
-    if stack and mc:
-        tops.append(_top(sum_histograms(mc)))
-    else:
-        tops.extend(_top(h) for h in mc)
-    tops.extend(_top(h) for h in histograms if h.is_data)
+    if stacked:
+        tops.append(_top(sum_histograms(stacked)))
+    tops.extend(_top(h) for h in overlaid)
+    tops.extend(_top(h) for h in data)
     edges = np.unique(np.concatenate([e for e, _ in tops] or [histograms[0].edges]))
     if not tops:
         return edges, np.zeros(len(edges) - 1)
@@ -276,7 +329,7 @@ def draw_histograms(
     ax: Axes,
     *,
     style: Style,
-    stack: bool = False,
+    stack: StackSpec = False,
     histtype: HistType | None = None,
     errorbars: bool | None = None,
     flow: FlowSpec = "hint",
@@ -291,20 +344,25 @@ def draw_histograms(
     Parameters
     ----------
     histograms
-        Histograms to draw, in legend order.
+        Histograms to draw, in input order.
     ax
         Target axes.
     style
         Style providing the colour cycle.
     stack
-        Stack the non-data histograms (filled).
+        ``True`` stacks every non-data histogram; a label or sequence of labels
+        stacks those histograms. ``False`` or an empty sequence overlays all.
+        Stacks keep input order, first at the bottom, followed by their band,
+        overlays in input order, then data. Colours are assigned over all
+        non-data histograms before splitting; explicit colours do not consume
+        cycle entries. Stacked histograms are always filled.
     histtype
-        Default drawing type for non-data histograms without their own
-        ``histtype``; ``None`` means ``"fill"`` for stacks and ``"step"``
-        otherwise.
+        Default drawing type for overlaid histograms without their own
+        ``histtype``; ``None`` means ``"step"``. Ignored for stacked histograms,
+        as is a histogram's own ``histtype``.
     errorbars
-        Draw statistical error bars on non-data histograms. ``None`` draws them
-        only for ``"errorbar"`` histtypes.
+        Draw statistical error bars on overlaid histograms. ``None`` draws them
+        only for ``"errorbar"`` histtypes. Ignored for stacked histograms.
     flow
         Under/overflow display, see :data:`FlowSpec`.
     stack_uncertainty
@@ -312,7 +370,7 @@ def draw_histograms(
         and systematic where the histograms carry variations. Overlaid
         histograms with variations get a light band in their own colour.
     alpha
-        Opacity for filled histograms (default 1 for stacks, 0.4 for overlays).
+        Opacity for filled histograms (default 1 for stacks, 0.45 for overlays).
     """
     artists: list[Artist] = []
     labels: list[str] = []
@@ -326,113 +384,44 @@ def draw_histograms(
         histograms = fold_flow_bins(histograms)
         flow = "none"
 
-    data = [h for h in histograms if h.is_data]
+    stacked, overlaid, data = split_stack(histograms, stack)
     mc = [h for h in histograms if not h.is_data]
     colors = _assign_colors(mc, style)
-    used_colors: dict[str, str] = {h.label: c for h, c in zip(mc, colors, strict=True)}
-    used_colors.update({h.label: (h.color or foreground()) for h in data})
     by_histogram = {id(h): c for h, c in zip(mc, colors, strict=True)}
     by_histogram.update({id(h): (h.color or foreground()) for h in data})
     histogram_colors = [by_histogram[id(h)] for h in histograms]
 
-    if mc and stack:
-        _require_same_binning(mc, "a stack")
-        fill_alpha = 1.0 if alpha is None else alpha
-        stacked = _histplot(
-            [h.hist for h in mc],
-            ax=ax,
-            stack=True,
-            histtype="fill",
-            label=[h.label for h in mc],
-            color=colors,
+    total = None
+    if stacked:
+        added_artists, added_labels, added_ranges, total = _draw_stack(
+            stacked,
+            ax,
+            colors=[by_histogram[id(h)] for h in stacked],
             flow=flow,
-            yerr=False,
-            alpha=fill_alpha,
-            edgecolor=foreground(),
-            linewidth=0.5,
+            alpha=alpha,
+            stack_uncertainty=stack_uncertainty,
         )
-        artists.extend(_flatten_artists(stacked))
-        labels.extend(h.label for h in mc)
-        total = sum_histograms(mc)
-        summary = uncertainty(total)
-        down, up = summary.total_down, summary.total_up
-        ranges.append(_range(total.values(), (down, up)))
-        if stack_uncertainty and (np.any(up > 0) or np.any(down > 0)):
-            label = band_label(systematics=summary.has_systematics)
-            band = _histplot(
-                total.hist,
-                ax=ax,
-                histtype="band",
-                yerr=[down, up] if summary.has_systematics else up,
-                flow=flow,
-                facecolor="none",
-                edgecolor=foreground(),
-                hatch="////",
-                linewidth=0.0,
-                alpha=0.5,
-                label=label,
-            )
-            artists.extend(_flatten_artists(band))
-            labels.append(label)
-    elif mc:
-        default_type: HistType = histtype or "step"
-        for histogram, color in zip(mc, colors, strict=True):
-            kind: HistType = histogram.histtype or default_type
-            errors = histogram.errors()
-            show_errors = errorbars if errorbars is not None else kind == "errorbar"
-            kwargs: dict[str, Any] = {
-                "ax": ax,
-                "histtype": kind,
-                "label": histogram.label,
-                "color": color,
-                "flow": flow,
-                "yerr": errors if show_errors else False,
-            }
-            if kind == "fill":
-                kwargs["alpha"] = 0.45 if alpha is None else alpha
-                kwargs["edgecolor"] = color
-                kwargs["linewidth"] = 1.0
-            elif kind == "errorbar":
-                kwargs.update({"marker": "o", "markersize": 4, "capsize": 0})
-            elif kind == "step" and show_errors:
-                kwargs["linewidth"] = 1.6
-            drawn = _histplot(histogram.hist, **kwargs)
-            artists.extend(_flatten_artists(drawn))
-            labels.append(histogram.label)
-            ranges.append(_range(histogram.values(), errors if show_errors else None))
-            if histogram.variations:
-                summary = uncertainty(histogram)
-                bounds = (summary.total_down, summary.total_up)
-                band = _histplot(
-                    histogram.hist,
-                    ax=ax,
-                    histtype="band",
-                    yerr=list(bounds),
-                    flow=flow,
-                    facecolor=color,
-                    edgecolor="none",
-                    hatch="",
-                    linewidth=0.0,
-                    alpha=0.3,
-                )
-                artists.extend(_flatten_artists(band))
-                ranges.append(_range(histogram.values(), bounds))
-
+        artists.extend(added_artists)
+        labels.extend(added_labels)
+        ranges.extend(added_ranges)
+    for histogram in overlaid:
+        added_artists, added_labels, added_ranges = _draw_overlay(
+            histogram,
+            ax,
+            color=by_histogram[id(histogram)],
+            flow=flow,
+            histtype=histtype,
+            errorbars=errorbars,
+            alpha=alpha,
+        )
+        artists.extend(added_artists)
+        labels.extend(added_labels)
+        ranges.extend(added_ranges)
     for histogram in data:
-        errors = histogram.errors()
-        drawn = _histplot(
-            histogram.hist,
-            ax=ax,
-            histtype="errorbar",
-            yerr=errors,
-            xerr=False,
-            label=histogram.label,
-            flow=flow,
-            **{**DATA_STYLE, "color": histogram.color or foreground()},
-        )
-        artists.extend(_flatten_artists(drawn))
-        labels.append(histogram.label)
-        ranges.append(_range(histogram.values(), errors))
+        added_artists, added_labels, added_ranges = _draw_data(histogram, ax, flow=flow)
+        artists.extend(added_artists)
+        labels.extend(added_labels)
+        ranges.extend(added_ranges)
 
     if any(flow_shown):
         label_flow_bins(ax, histograms[0].edges, under=flow_shown[0], over=flow_shown[1])
@@ -444,7 +433,148 @@ def draw_histograms(
         ymin_positive = min(positives) if positives else float("nan")
     else:
         ymin, ymax, ymin_positive = 0.0, 0.0, float("nan")
-    return Drawn(artists, labels, ymin, ymax, ymin_positive, used_colors, histogram_colors)
+    return Drawn(artists, labels, ymin, ymax, ymin_positive, histogram_colors, total)
+
+
+def _draw_stack(
+    mc: Sequence[Histogram],
+    ax: Axes,
+    *,
+    colors: list[str],
+    flow: FlowSpec,
+    alpha: float | None,
+    stack_uncertainty: bool,
+) -> tuple[list[Artist], list[str], list[tuple[float, float, float]], Histogram]:
+    """Draw the filled stack and its total uncertainty band."""
+    artists: list[Artist] = []
+    labels: list[str] = []
+    ranges: list[tuple[float, float, float]] = []
+    _require_same_binning(mc, "a stack")
+    fill_alpha = 1.0 if alpha is None else alpha
+    stacked = _histplot(
+        [h.hist for h in mc],
+        ax=ax,
+        stack=True,
+        histtype="fill",
+        label=[h.label for h in mc],
+        color=colors,
+        flow=flow,
+        yerr=False,
+        alpha=fill_alpha,
+        edgecolor=foreground(),
+        linewidth=0.5,
+    )
+    artists.extend(_flatten_artists(stacked))
+    labels.extend(h.label for h in mc)
+    total = sum_histograms(mc)
+    summary = uncertainty(total)
+    down, up = summary.total_down, summary.total_up
+    ranges.append(_range(total.values(), (down, up)))
+    if stack_uncertainty and (np.any(up > 0) or np.any(down > 0)):
+        label = band_label(systematics=summary.has_systematics)
+        band = _histplot(
+            total.hist,
+            ax=ax,
+            histtype="band",
+            yerr=[down, up] if summary.has_systematics else up,
+            flow=flow,
+            facecolor="none",
+            edgecolor=foreground(),
+            hatch="////",
+            linewidth=0.0,
+            alpha=0.5,
+            label=label,
+        )
+        artists.extend(_flatten_artists(band))
+        labels.append(label)
+    return artists, labels, ranges, total
+
+
+def _draw_overlay(
+    histogram: Histogram,
+    ax: Axes,
+    *,
+    color: str,
+    flow: FlowSpec,
+    histtype: HistType | None,
+    errorbars: bool | None,
+    alpha: float | None,
+) -> tuple[list[Artist], list[str], list[tuple[float, float, float]]]:
+    """Draw one overlay with its errors and systematic band."""
+    artists: list[Artist] = []
+    labels: list[str] = []
+    ranges: list[tuple[float, float, float]] = []
+    default_type: HistType = histtype or "step"
+    kind: HistType = histogram.histtype or default_type
+    errors = histogram.errors()
+    show_errors = errorbars if errorbars is not None else kind == "errorbar"
+    kwargs: dict[str, Any] = {
+        "ax": ax,
+        "histtype": kind,
+        "label": histogram.label,
+        "color": color,
+        "flow": flow,
+        "yerr": errors if show_errors else False,
+    }
+    if kind == "fill":
+        kwargs["alpha"] = 0.45 if alpha is None else alpha
+        kwargs["edgecolor"] = color
+        kwargs["linewidth"] = 1.0
+    elif kind == "errorbar":
+        kwargs.update({"marker": "o", "markersize": 4, "capsize": 0})
+    elif kind == "step" and show_errors:
+        kwargs["linewidth"] = 1.6
+    drawn = _histplot(histogram.hist, **kwargs)
+    artists.extend(_flatten_artists(drawn))
+    labels.append(histogram.label)
+    ranges.append(_range(histogram.values(), errors if show_errors else None))
+    if histogram.variations:
+        summary = uncertainty(histogram)
+        bounds = (summary.total_down, summary.total_up)
+        band = _histplot(
+            histogram.hist,
+            ax=ax,
+            histtype="band",
+            yerr=list(bounds),
+            flow=flow,
+            facecolor=color,
+            edgecolor="none",
+            hatch="",
+            linewidth=0.0,
+            alpha=0.3,
+        )
+        artists.extend(_flatten_artists(band))
+        ranges.append(_range(histogram.values(), bounds))
+
+    return artists, labels, ranges
+
+
+def _draw_data(
+    histogram: Histogram,
+    ax: Axes,
+    *,
+    flow: FlowSpec,
+) -> tuple[list[Artist], list[str], list[tuple[float, float, float]]]:
+    """Draw one observed histogram as points with error bars."""
+    artists: list[Artist] = []
+    labels: list[str] = []
+    ranges: list[tuple[float, float, float]] = []
+    errors = histogram.errors()
+    drawn = _histplot(
+        histogram.hist,
+        ax=ax,
+        histtype="errorbar",
+        yerr=errors,
+        xerr=False,
+        label=histogram.label,
+        flow=flow,
+        **{**DATA_STYLE, "color": histogram.color or foreground()},
+    )
+    artists.extend(_flatten_artists(drawn))
+    labels.append(histogram.label)
+    ranges.append(_range(histogram.values(), errors))
+
+    return artists, labels, ranges
 
 
 def _assign_colors(histograms: Sequence[Histogram], style: Style) -> list[str]:
