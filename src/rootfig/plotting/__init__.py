@@ -16,7 +16,6 @@ from rootfig.plotting.figure import (
 )
 from rootfig.plotting.finish import Finish, finish_figure, finishing_together
 from rootfig.plotting.hist1d import (
-    DATA_STYLE,
     Drawn,
     FlowSpec,
     StackSpec,
@@ -38,21 +37,17 @@ from rootfig.plotting.style import (
     DEFAULT_COLORS,
     ROOTFIG_STYLE,
     add_experiment_label,
-    align_experiment_label,
-    align_experiment_labels,
     color_cycle,
     dark_theme,
     foreground,
     legend_location,
     pin_fonts,
-    resolve_rc,
     style_context,
     use_style,
 )
 
 __all__ = [
     "DARK_THEME",
-    "DATA_STYLE",
     "DEFAULT_COLORS",
     "ROOTFIG_STYLE",
     "AxesLike",
@@ -67,8 +62,6 @@ __all__ = [
     "add_legend",
     "add_stats_box",
     "add_text",
-    "align_experiment_label",
-    "align_experiment_labels",
     "apply_xbreak",
     "break_segments",
     "color_cycle",
@@ -99,7 +92,6 @@ __all__ = [
     "plan_pages",
     "raise_ylim_above",
     "require_same_binning",
-    "resolve_rc",
     "show_flow_bins",
     "split_stack",
     "style_context",

@@ -60,7 +60,7 @@ def finish_figure(fig: Figure, plots: Sequence[Finish]) -> None:
     then on, so for the size the figure has at each draw; on a figure without one
     (axes the caller made) always below, once, which holds at any size. Layout
     passes serve every plot: the lower panels' y labels are fitted, the experiment
-    labels are aligned (:func:`~rootfig.plotting.align_experiment_labels`, whose
+    labels are aligned (:func:`~rootfig.plotting.style.align_experiment_labels`, whose
     passes are shared too), and then each plot's headroom is raised, so it measures
     the labels where they end up. A raised limit can change the y axis' offset text
     and hence the axes geometry, so one more shared layout/headroom pass follows a

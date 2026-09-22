@@ -24,7 +24,6 @@ from rootfig.errors import (
 )
 from rootfig.io import ArraySource, FileSource
 from rootfig.model import (
-    DEFAULT_RANGE,
     Cut,
     Group,
     Sample,
@@ -37,7 +36,6 @@ from rootfig.model import (
     as_style,
     as_systematics,
     as_variable,
-    auto_range,
     check_file_stem,
     leaf_samples,
     log_bins,
@@ -45,7 +43,7 @@ from rootfig.model import (
     resolve_axis,
     safe_file_stem,
 )
-from rootfig.model.binning import ROBUST_COVERAGE_BUDGET
+from rootfig.model.binning import DEFAULT_RANGE, ROBUST_COVERAGE_BUDGET, auto_range
 
 
 class TestCut:

@@ -29,23 +29,21 @@ from rootfig.histograms import (
     build_histograms,
     build_histograms_2d,
     combined_selection,
-    combined_weight,
     compare,
     compatible_binning,
     correlation_matrix,
     describe_table,
     fill,
-    from_sample,
-    group_histogram,
     load_columns,
-    normalization_label,
     normalize,
-    normalize_hist,
-    regroup_histograms,
     sum_histograms,
     summarize,
     uncertainty,
 )
+from rootfig.histograms.build import from_sample
+from rootfig.histograms.groups import group_histogram, regroup_histograms
+from rootfig.histograms.normalize import normalization_label, normalize_hist
+from rootfig.histograms.pipeline import combined_weight
 from rootfig.model import Cut, Group, Sample, Systematic, Variable
 from rootfig.selection import Columns, prepare
 
@@ -1359,7 +1357,7 @@ class TestConstantExpressions:
         assert cols.sum_weights == 6.0
 
     def test_custom_source_without_num_entries(self) -> None:
-        from rootfig.histograms import source_length
+        from rootfig.histograms.pipeline import source_length
 
         class Custom:
             def branches(self) -> list[str]:

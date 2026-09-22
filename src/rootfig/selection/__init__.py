@@ -8,7 +8,6 @@ from rootfig.selection.columns import (
     event_mask,
     event_weights,
     prepare,
-    same_structure,
 )
 
 __all__ = [
@@ -19,5 +18,4 @@ __all__ = [
     "event_mask",
     "event_weights",
     "prepare",
-    "same_structure",
 ]
