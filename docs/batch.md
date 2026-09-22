@@ -72,10 +72,10 @@ book = rf.PlotBook(
 ```
 
 draws `lin` with `stack=True, logy=False` and `log` with `stack=True, logy=True`.
-With `variants={"stack": {"stack": True}, "overlay": {"stack": ["VV"]}}`, the
-FCCAnalyses `stacksig` pair draws the signal stacked or overlaid over the VV
-background, with the histograms prepared once. To show the same significance
-comparison in both views, set `ratio=("s/sqrt(b)", "Signal")` in `plot_kwargs`.
+With `variants={"stacked": {"stack": True}, "overlaid": {"stack": ["Background"]}}`,
+every plot is drawn with the signal inside the stack and over it, from one set of
+prepared histograms. With the signal last and `ratio="significance"` in
+`plot_kwargs`, both show the same significance panel.
 
 Every other keyword of `rf.plot` (`observed=`, `normalize=`, `ratio=`,
 `systematics=`, `style=`, ...) goes into `plot_kwargs` or a variant. The keyword

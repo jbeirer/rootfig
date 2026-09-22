@@ -251,7 +251,7 @@ def plot(
         A label selects the reference for every other histogram, including data.
         ``"significance"`` (``S/sqrt(B)``), ``"s/sqrt(b)"`` or ``"s/sqrt(s+b)"``
         uses the stack as background and every overlaid non-data histogram as a
-        signal; a full stack raises. Without a stack, the last non-data
+        signal. Without a stack, or with everything stacked, the last non-data
         histogram is the signal and the others are summed into the background.
         ``("s/sqrt(b)", "Signal")`` names one signal and sums every other
         non-data histogram into its background.
@@ -804,17 +804,13 @@ def _significance_setup(
 ) -> tuple[list[Histogram], Histogram]:
     """Pick signals and their background from stack membership or an explicit label.
 
-    Without either, the last non-data histogram is the signal and the others are
-    summed into the background, as if it had been named.
+    Histograms overlaid on a stack are the signals and the stack is their
+    background. Without that split (no stack, or everything stacked) the last
+    non-data histogram is the signal and the others are summed into the
+    background, as if it had been named.
     """
     mc = [h for h in hists if not h.is_data]
-    if signal_label is None and stacked:
-        if not overlaid:
-            msg = (
-                "a significance panel needs a signal outside the stack: stack only the "
-                "backgrounds (stack=[...their labels...]) and the others are the signals"
-            )
-            raise ValueError(msg)
+    if signal_label is None and stacked and overlaid:
         assert total is not None
         return overlaid, total
     if len(mc) < 2:

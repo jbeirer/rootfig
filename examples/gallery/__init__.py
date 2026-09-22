@@ -364,7 +364,7 @@ def luminosity(mll: rf.Variable) -> rf.Plot:
         lumi="10.8 ab^-1",
         stack=True,
         logy=True,
-        ratio=("s/sqrt(b)", "ZH"),
+        ratio="significance",
         style=fcc,
     )
 

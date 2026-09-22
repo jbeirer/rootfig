@@ -1398,7 +1398,7 @@ class TestEfficiencyProfileSignificance:
     def test_significance_panel(self, signal_file: Path, background_file: Path) -> None:
         sig = rf.Sample(signal_file, tree="events", label="S", scale=0.1)
         bkg = rf.Sample(background_file, tree="events", label="B")
-        p = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack=["B"], ratio="significance")
+        p = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack=True, ratio="significance")
         assert p.ratio_ax is not None
         assert ratio_ylabel(p) == r"$S/\sqrt{B}$"
         assert len(p.ratios) == 1
@@ -1412,8 +1412,10 @@ class TestEfficiencyProfileSignificance:
         )
         assert p.ratio_ax is not None
         assert ratio_ylabel(p) == "Z"
-        with pytest.raises(ValueError, match="outside the stack"):
-            rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack=True, ratio="significance")
+        # the signal inside the stack or drawn over it: the same panel
+        overlaid = rf.plot([bkg, sig], "MET", bins=(10, 0, 200), stack="B", ratio="significance")
+        np.testing.assert_allclose(overlaid.ratios[0].values, result.values)
+        np.testing.assert_allclose(overlaid.ratios[0].errors, result.errors)
         with pytest.raises(ValueError, match="at least two"):
             rf.plot([sig], "MET", bins=(10, 0, 200), ratio="s/sqrt(b)")
         with pytest.raises(ValueError, match="is not one of"):
@@ -1508,7 +1510,7 @@ class TestReviewRegressions:
         assert p.ax.get_ylim()[1] > 21
         np.testing.assert_allclose(p.histograms[1].values(), [1.0, 21.0])
         stacked = rf.plot(
-            [ref, num], label=["ref", "num"], flow="sum", stack=["ref"], ratio="s/sqrt(b)"
+            [ref, num], label=["ref", "num"], flow="sum", stack=True, ratio="s/sqrt(b)"
         )
         np.testing.assert_allclose(stacked.ratios[0].values, [1.0, 21.0])
 
@@ -2282,7 +2284,7 @@ class TestStoredHistogramPlots:
             "M": stored_dir / "mixed_storage.root",
             "S": stored_dir / "WW_sel0_histo.root",
         }
-        p = rf.plot(samples, "mz", stack=["ZH", "M"], ratio="s/sqrt(b)")
+        p = rf.plot(samples, "mz", stack=True, ratio="s/sqrt(b)")
         assert p.ratio_ax is not None
         assert np.nansum(p.ratios[0].values) > 0
         axis = hist.axis.Regular(4, 0, 4, name="x", label="A")
@@ -2632,11 +2634,14 @@ class TestSelectiveStacking:
         np.testing.assert_allclose(p.ratios[1].values, [5, 5])
         assert self._panel_colors(p) == ["red", "blue"]
 
+    @pytest.mark.parametrize("stack", [False, True])
     @pytest.mark.parametrize("observed", [False, True])
-    def test_without_a_stack_the_last_is_the_signal(self, observed: bool) -> None:
+    def test_without_overlays_on_a_stack_the_last_is_the_signal(
+        self, stack: bool, observed: bool
+    ) -> None:
         hists = self._signals(observed)
-        p = rf.plot(hists, ratio="significance")
-        named = rf.plot(hists, ratio=("s/sqrt(b)", "S2"))
+        p = rf.plot(hists, stack=stack, ratio="significance")
+        named = rf.plot(hists, stack=stack, ratio=("s/sqrt(b)", "S2"))
         assert len(p.ratios) == 1
         np.testing.assert_allclose(p.ratios[0].values, np.sqrt([10, 10]))  # 10 / sqrt(4 + 6)
         np.testing.assert_allclose(p.ratios[0].values, named.ratios[0].values)

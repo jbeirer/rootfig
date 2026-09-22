@@ -203,14 +203,14 @@ propagates both sides (`"propagate"`), so shared systematic sources cancel.
 `ratio="significance"` (or `"s/sqrt(b)"`, `"s/sqrt(s+b)"`) draws a
 **significance panel** instead: per bin, the signal over the square root of
 the background (or of signal plus background), with propagated uncertainties.
-The stack is the background and every overlaid non-data histogram is a signal;
-a full stack raises because it has no signal outside the stack. Without a stack,
-the last non-data histogram is the signal and the others are summed into the
-background; stack the backgrounds to compare several signals with them.
+With histograms overlaid on a stack, the stack is the background and every
+overlaid non-data histogram is a signal, so stacking the backgrounds compares
+several signals with them. Without a stack, or with everything stacked, the last
+non-data histogram is the signal and the others are summed into the background:
+with the signal last, drawing it inside the stack or over it shows the same panel.
 `ratio=("s/sqrt(b)", "ZH")` names one signal and sums every other non-data histogram
-into the background. Use this explicit signal label to keep the same comparison
-when switching between a full stack and an overlaid signal. `Plot.ratios` holds
-one `Ratio` per signal, drawn in that histogram's colour.
+into the background. `Plot.ratios` holds one `Ratio` per signal, drawn in that
+histogram's colour.
 
 `ratio_ylim` and
 `ratio_label` override the automatic range (at least 0.5 to 1.5, widened to
