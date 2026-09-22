@@ -251,8 +251,8 @@ def plot(
         A label selects the reference for every other histogram, including data.
         ``"significance"`` (``S/sqrt(B)``), ``"s/sqrt(b)"`` or ``"s/sqrt(s+b)"``
         uses the stack as background and every overlaid non-data histogram as a
-        signal; a full stack raises. Without a stack, the first non-data
-        histogram is the background and every further one a signal.
+        signal; a full stack raises. Without a stack, the last non-data
+        histogram is the signal and the others are summed into the background.
         ``("s/sqrt(b)", "Signal")`` names one signal and sums every other
         non-data histogram into its background.
     ratio_ylim, ratio_label, ratio_uncertainty
@@ -802,7 +802,11 @@ def _significance_setup(
     overlaid: list[Histogram],
     total: Histogram | None,
 ) -> tuple[list[Histogram], Histogram]:
-    """Pick signals and their background from stack membership or an explicit label."""
+    """Pick signals and their background from stack membership or an explicit label.
+
+    Without either, the last non-data histogram is the signal and the others are
+    summed into the background, as if it had been named.
+    """
     mc = [h for h in hists if not h.is_data]
     if signal_label is None and stacked:
         if not overlaid:
@@ -817,12 +821,13 @@ def _significance_setup(
         msg = "a significance panel needs at least two non-data histograms (signal and background)"
         raise ValueError(msg)
     if signal_label is None:
-        return overlaid[1:], overlaid[0]
-    matches = [h for h in mc if h.label == signal_label]
-    if not matches:
-        msg = f"signal {signal_label!r} is not one of {[h.label for h in mc]}"
-        raise ValueError(msg)
-    signal = matches[0]
+        signal = mc[-1]
+    else:
+        matches = [h for h in mc if h.label == signal_label]
+        if not matches:
+            msg = f"signal {signal_label!r} is not one of {[h.label for h in mc]}"
+            raise ValueError(msg)
+        signal = matches[0]
     others = [h for h in mc if h is not signal]
     # summed like a stack total: bin by bin, whatever the axis names and labels, checked
     return [signal], sum_histograms(others, label="Background")

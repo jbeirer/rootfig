@@ -205,7 +205,8 @@ propagates both sides (`"propagate"`), so shared systematic sources cancel.
 the background (or of signal plus background), with propagated uncertainties.
 The stack is the background and every overlaid non-data histogram is a signal;
 a full stack raises because it has no signal outside the stack. Without a stack,
-the first non-data histogram is the background and every further one is a signal.
+the last non-data histogram is the signal and the others are summed into the
+background; stack the backgrounds to compare several signals with them.
 `ratio=("s/sqrt(b)", "ZH")` names one signal and sums every other non-data histogram
 into the background. Use this explicit signal label to keep the same comparison
 when switching between a full stack and an overlaid signal. `Plot.ratios` holds

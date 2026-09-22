@@ -2603,11 +2603,7 @@ class TestSelectiveStacking:
         h.view().variance[:] = value
         return rf.Histogram(h, label=label, **kwargs)
 
-    @pytest.mark.parametrize("stack", [False, ["B"]])
-    @pytest.mark.parametrize("observed", [False, True])
-    def test_multiple_signals(self, stack: Any, observed: bool) -> None:
-        from matplotlib.container import ErrorbarContainer
-
+    def _signals(self, observed: bool) -> list[rf.Histogram]:
         hists = [
             self._hist(4, "B"),
             self._hist(6, "S1", color="red"),
@@ -2615,17 +2611,37 @@ class TestSelectiveStacking:
         ]
         if observed:
             hists.append(self._hist(100, "Data", is_data=True))
-        p = rf.plot(hists, stack=stack, ratio="significance")
-        assert len(p.ratios) == 2
-        np.testing.assert_allclose(p.ratios[0].values, [3, 3])
-        np.testing.assert_allclose(p.ratios[1].values, [5, 5])
+        return hists
+
+    @staticmethod
+    def _panel_colors(p: rf.Plot) -> list[str]:
+        from matplotlib.container import ErrorbarContainer
+
         assert p.ratio_ax is not None
-        colors = [
+        return [
             c.lines[0].get_color()
             for c in p.ratio_ax.containers
             if isinstance(c, ErrorbarContainer)
         ]
-        assert colors == ["red", "blue"]
+
+    @pytest.mark.parametrize("observed", [False, True])
+    def test_multiple_signals(self, observed: bool) -> None:
+        p = rf.plot(self._signals(observed), stack=["B"], ratio="significance")
+        assert len(p.ratios) == 2
+        np.testing.assert_allclose(p.ratios[0].values, [3, 3])
+        np.testing.assert_allclose(p.ratios[1].values, [5, 5])
+        assert self._panel_colors(p) == ["red", "blue"]
+
+    @pytest.mark.parametrize("observed", [False, True])
+    def test_without_a_stack_the_last_is_the_signal(self, observed: bool) -> None:
+        hists = self._signals(observed)
+        p = rf.plot(hists, ratio="significance")
+        named = rf.plot(hists, ratio=("s/sqrt(b)", "S2"))
+        assert len(p.ratios) == 1
+        np.testing.assert_allclose(p.ratios[0].values, np.sqrt([10, 10]))  # 10 / sqrt(4 + 6)
+        np.testing.assert_allclose(p.ratios[0].values, named.ratios[0].values)
+        np.testing.assert_allclose(p.ratios[0].errors, named.ratios[0].errors)
+        assert self._panel_colors(p) == ["blue"]
 
     def test_stack_uncertainty(self) -> None:
         from rootfig.histograms import sum_histograms, uncertainty

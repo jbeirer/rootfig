@@ -84,7 +84,7 @@ class Plot:
 
     @property
     def hists(self) -> list[Any]:
-        """The underlying ``hist.Hist`` objects, in drawing order."""
+        """The underlying ``hist.Hist`` objects, in input order."""
         return [h.hist for h in self.histograms]
 
     def uncertainty(self, label: str | None = None) -> Uncertainty:
