@@ -29,8 +29,10 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
 - `selection` and `weight` belong to the sample and combine with the ones
   given to `plot()` (`&` and `*` respectively).
 - `is_data=True` draws points with error bars (in the style's text colour
-  unless `color` is set), keeps the sample out of stacks and makes it the
-  numerator of the [lower panel](plotting.md#lower-panel).
+  unless `color` is set) and keeps the sample out of stacks. In a ratio,
+  difference or pull panel it is compared with the prediction by default;
+  `reference=` can name it as the reference instead, and a significance
+  never takes data as a signal (see [the roles](plotting.md#lower-panel)).
 - `xsec` and `ngen` describe simulated processes: the cross section (pb, or a
   string with a unit such as `"1.2 fb"`) and the number of generated events (a
   number, the name of an object in the file holding it, e.g.

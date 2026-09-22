@@ -222,8 +222,9 @@ def plot(
         Legend label(s) for samples given as plain files or as histogram objects.
     observed
         A sample or group of observed data (or the file(s) for one; histogram
-        objects when ``data`` are) drawn as points, excluded from stacks and
-        compared with the prediction in the lower panel.
+        objects when ``data`` are) drawn as points, excluded from stacks and,
+        without ``reference=``, compared with the prediction in a ratio,
+        difference or pull panel.
     xlabel, ylabel, unit, title
         Axis labels; defaults come from the variable (or the stored axis title),
         the normalisation and the bin width (``Events / 2 GeV``).

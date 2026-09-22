@@ -154,7 +154,9 @@ def resolve(
             "numerator" if h.is_data and not reference_is_data else "propagate" for h in numerators
         ]
     if label is None:
-        over_simulation = any(h.is_data for h in numerators) and not reference_is_data
+        # a named reference can mix data and simulation in the panel: only a panel of
+        # data alone is labelled as data
+        over_simulation = all(h.is_data for h in numerators) and not reference_is_data
         label = comparison_label(
             kind, "MC" if chosen is None else chosen.label, data=over_simulation
         )

@@ -241,9 +241,12 @@ one mode to all numerators; it raises for a pull or a significance, which have
 no band.
 
 **Range and label.** `panel_ylim` and `panel_label` override the automatic
-range and label. The label names the reference, `MC` for the stack total:
+range and label. The label names the reference, `MC` for the stack total, and
+is worded for data only when every numerator is observed data and the reference
+is simulated; a named reference with simulation and data compared with it keeps
+the general label:
 
-| `panel=` | Data over simulation | Otherwise |
+| `panel=` | Data alone over simulation | Otherwise |
 | --- | --- | --- |
 | `"ratio"` | `Data / MC` | `Ratio to X` |
 | `"relative_difference"` | `(Data − MC) / MC` | `Rel. difference to X` |

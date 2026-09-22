@@ -663,10 +663,15 @@ class TestPanelRoles:
         p = rf.plot(self._hists(data=True), panel="ratio", reference="B")
         assert [c.label for c in p.comparisons] == ["A", "C", "Data"]  # data included
         np.testing.assert_allclose(p.comparisons[0].values, 10 / 30)
-        assert panel_ylabel(p) == "Data / B"
+        assert panel_ylabel(p) == "Ratio to B"  # A / B and C / B are drawn too, not only data
         stacked = rf.plot(self._hists(data=True), stack=True, panel="difference", reference="A")
         assert [c.label for c in stacked.comparisons] == ["B", "C", "Data"]
         np.testing.assert_allclose(stacked.comparisons[0].values, 20.0)
+        assert panel_ylabel(stacked) == "Difference to A"
+        only_data = rf.plot(self._hists(data=True, labels=("A",)), panel="ratio", reference="A")
+        assert [c.label for c in only_data.comparisons] == ["Data"]
+        assert panel_ylabel(only_data) == "Data / A"
+        only_data.close()
         significance = rf.plot(self._hists(data=True), panel="s/sqrt(s+b)", reference="B")
         assert [c.label for c in significance.comparisons] == ["A", "C"]  # signals: no data
         np.testing.assert_allclose(significance.comparisons[0].values, 10 / np.sqrt(40))

@@ -36,8 +36,9 @@ _LABELS: dict[str, str] = {
 def comparison_label(kind: ComparisonKind, reference: str, *, data: bool = False) -> str:
     """Return the default y label of a ``kind`` panel comparing with ``reference``.
 
-    ``data`` words it for observed data over a simulated reference
-    (``"Data / MC"``); a pull and a significance are labelled by their kind alone.
+    ``data`` words it for a panel of observed data alone over a simulated
+    reference (``"Data / MC"``); a pull and a significance are labelled by
+    their kind alone.
     """
     minus = "\N{MINUS SIGN}"
     if data:
