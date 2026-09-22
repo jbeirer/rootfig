@@ -1,9 +1,11 @@
-"""Tests for the plotting layer: styles, layout, drawing, ratio panel, annotations."""
+"""Tests for the plotting layer: styles, layout, drawing, lower panel, annotations."""
 
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from functools import partial
+from typing import Any
 
 import hist
 import matplotlib
@@ -13,6 +15,7 @@ import pytest
 from matplotlib import font_manager
 from matplotlib.axes import Axes
 from matplotlib.collections import PolyCollection
+from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties, findfont
 from matplotlib.gridspec import GridSpec
@@ -20,7 +23,15 @@ from matplotlib.patches import StepPatch
 from matplotlib.text import Text
 
 from rootfig.errors import BinningError, RootfigWarning
-from rootfig.histograms import Histogram, fill, summarize, uncertainty
+from rootfig.histograms import (
+    Comparison,
+    ComparisonKind,
+    Histogram,
+    compare,
+    fill,
+    summarize,
+    uncertainty,
+)
 from rootfig.model import Style
 from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
@@ -42,7 +53,7 @@ from rootfig.plotting import (
     draw_correlation,
     draw_hist2d,
     draw_histograms,
-    draw_ratio_panel,
+    draw_panel,
     envelope,
     finish_axes,
     finish_figure,
@@ -51,8 +62,8 @@ from rootfig.plotting import (
     label_flow_bins,
     make_figure,
     overlay_artists,
+    panel_ylim,
     raise_ylim_above,
-    ratio_ylim,
     resolve_rc,
     show_flow_bins,
     split_stack,
@@ -61,15 +72,16 @@ from rootfig.plotting import (
     ylabel_for,
 )
 from rootfig.plotting.figure import (
-    RATIO_HEIGHT_FRACTION,
-    RATIO_LABEL_MIN_SCALE,
+    PANEL_HEIGHT_FRACTION,
+    PANEL_LABEL_MIN_SCALE,
     _balanced_wrap,
     _renderer,
     figure_size,
     fit_ylabel,
     without_redraw,
 )
-from rootfig.plotting.style import pin_fonts
+from rootfig.plotting.panel import comparison_label
+from rootfig.plotting.style import foreground, pin_fonts
 from rootfig.selection import Columns
 
 
@@ -164,7 +176,7 @@ class TestStyle:
         # matplotlib walks the whole family list on every draw and logs a warning per
         # miss, so a family that cannot be resolved must never be pinned.
         with style_context(Style(experiment=experiment)):
-            layout = make_figure(Style(), ratio=False)
+            layout = make_figure(Style(), panel=False)
             layout.main.set_xlabel("x")
             pin_fonts(layout.fig)
             families = [name for text in layout.fig.findobj(Text) for name in text.get_fontfamily()]
@@ -178,7 +190,7 @@ class TestStyle:
         # mplhep's LHCb2 sheet spells it "Tex Gyre Termes", which is not among the
         # installed font names but does resolve; filtering must not drop it.
         with style_context(Style(rc={"font.family": ["Tex Gyre Termes"]})):
-            layout = make_figure(Style(), ratio=False)
+            layout = make_figure(Style(), panel=False)
             layout.main.set_xlabel("x")
             pin_fonts(layout.fig)
             assert layout.main.xaxis.label.get_fontfamily() == ["Tex Gyre Termes"]
@@ -187,7 +199,7 @@ class TestStyle:
     @pytest.mark.parametrize("rc_key", ["font.family", "font.sans-serif"])
     def test_pin_fonts_falls_back_when_nothing_is_installed(self, rc_key: str) -> None:
         with style_context(Style(rc={rc_key: ["No Such Font XYZ"]})):
-            layout = make_figure(Style(), ratio=False)
+            layout = make_figure(Style(), panel=False)
             layout.main.set_xlabel("x")
             with pytest.warns(RootfigWarning, match="none of the requested fonts") as caught:
                 pin_fonts(layout.fig)
@@ -201,7 +213,7 @@ class TestStyle:
         with style_context(Style(rc={"font.family": ["No Such Font XYZ"]})):
             # Each figure should report its missing configurations independently.
             for _ in range(2):
-                layout = make_figure(Style(), ratio=False)
+                layout = make_figure(Style(), panel=False)
                 for y in (0.3, 0.6):
                     layout.main.text(0.5, y, "label", fontfamily=["Another Missing Font XYZ"])
                 with pytest.warns(RootfigWarning, match="none of the requested fonts") as caught:
@@ -290,109 +302,109 @@ class TestStyle:
 class TestFigure:
     def test_make_figure_single(self) -> None:
         with style_context():
-            layout = make_figure(Style(), ratio=False)
+            layout = make_figure(Style(), panel=False)
         assert isinstance(layout, Layout)
         assert isinstance(layout.fig, Figure)
         assert isinstance(layout.main, Axes)
-        assert layout.ratio is None
+        assert layout.panel is None
         assert not layout.is_broken
         assert layout.main_axes == (layout.main,)
-        assert layout.ratio_axes == ()
+        assert layout.panel_axes == ()
         assert layout.legend_axes is layout.main
         assert layout.xlabel_axes is layout.main
         assert tuple(layout.fig.get_size_inches()) == pytest.approx(ROOTFIG_STYLE["figure.figsize"])
 
-    def test_make_figure_ratio(self) -> None:
+    def test_make_figure_panel(self) -> None:
         with style_context():
-            layout = make_figure(Style(), ratio=True, figsize=(5, 6))
-        assert layout.ratio is not None
-        assert layout.ratio.get_shared_x_axes().joined(layout.main, layout.ratio)
-        assert layout.xlabel_axes is layout.ratio
+            layout = make_figure(Style(), panel=True, figsize=(5, 6))
+        assert layout.panel is not None
+        assert layout.panel.get_shared_x_axes().joined(layout.main, layout.panel)
+        assert layout.xlabel_axes is layout.panel
         assert tuple(layout.fig.get_size_inches()) == (5, 6)
 
     def test_make_figure_broken(self) -> None:
         with style_context():
-            layout = make_figure(Style(), ratio=True, break_widths=(0.7, 0.3))
+            layout = make_figure(Style(), panel=True, break_widths=(0.7, 0.3))
         assert layout.is_broken
         assert layout.main_right is not None
-        assert layout.ratio_right is not None
+        assert layout.panel_right is not None
         assert len(layout.fig.axes) == 4
         assert layout.main_right.get_shared_y_axes().joined(layout.main, layout.main_right)
-        assert layout.ratio_right.get_shared_x_axes().joined(layout.main_right, layout.ratio_right)
+        assert layout.panel_right.get_shared_x_axes().joined(layout.main_right, layout.panel_right)
         assert layout.legend_axes is layout.main_right
-        assert layout.xlabel_axes is layout.ratio_right
+        assert layout.xlabel_axes is layout.panel_right
         left_width = layout.main.get_position().width
         right_width = layout.main_right.get_position().width
         assert left_width / right_width == pytest.approx(0.7 / 0.3, rel=0.05)
 
     def test_make_figure_existing_axes(self) -> None:
         fig, axes = plt.subplots(2)
-        assert make_figure(Style(), ratio=False, ax=axes[0]).main is axes[0]
-        layout = make_figure(Style(), ratio=True, ax=(axes[0], axes[1]))
-        assert (layout.main, layout.ratio) == (axes[0], axes[1])
-        assert make_figure(Style(), ratio=False, ax=(axes[0], axes[1])).ratio is None
+        assert make_figure(Style(), panel=False, ax=axes[0]).main is axes[0]
+        layout = make_figure(Style(), panel=True, ax=(axes[0], axes[1]))
+        assert (layout.main, layout.panel) == (axes[0], axes[1])
+        assert make_figure(Style(), panel=False, ax=(axes[0], axes[1])).panel is None
         with pytest.raises(ValueError, match="two axes"):
-            make_figure(Style(), ratio=True, ax=axes[0])
+            make_figure(Style(), panel=True, ax=axes[0])
         with pytest.raises(ValueError, match="pair"):
-            make_figure(Style(), ratio=True, ax=(axes[0],))
+            make_figure(Style(), panel=True, ax=(axes[0],))
         with pytest.raises(ValueError, match="existing axes"):
-            make_figure(Style(), ratio=False, ax=axes[0], break_widths=(0.5, 0.5))
+            make_figure(Style(), panel=False, ax=axes[0], break_widths=(0.5, 0.5))
 
     def test_figure_size(self) -> None:
         with style_context():
             width, height = ROOTFIG_STYLE["figure.figsize"]
-            assert figure_size(Style(), ratio=False) == pytest.approx((width, height))
-            assert figure_size(Style(), ratio=True) == pytest.approx(
-                (width, height * (1 + RATIO_HEIGHT_FRACTION * 0.85))
+            assert figure_size(Style(), panel=False) == pytest.approx((width, height))
+            assert figure_size(Style(), panel=True) == pytest.approx(
+                (width, height * (1 + PANEL_HEIGHT_FRACTION * 0.85))
             )
-            assert figure_size(Style(figsize=(5, 4)), ratio=True) == (5, 4)  # the style's, as is
-            assert figure_size(Style(figsize=(5, 4)), ratio=False, figsize=(3, 2)) == (3, 2)
+            assert figure_size(Style(figsize=(5, 4)), panel=True) == (5, 4)  # the style's, as is
+            assert figure_size(Style(figsize=(5, 4)), panel=False, figsize=(3, 2)) == (3, 2)
 
     def test_layout_axes_in_reading_order(self) -> None:
         with style_context():
-            layout = make_figure(Style(), ratio=True, break_widths=(0.7, 0.3))
-            single = make_figure(Style(), ratio=False)
-        assert layout.axes == (layout.main, layout.main_right, layout.ratio, layout.ratio_right)
+            layout = make_figure(Style(), panel=True, break_widths=(0.7, 0.3))
+            single = make_figure(Style(), panel=False)
+        assert layout.axes == (layout.main, layout.main_right, layout.panel, layout.panel_right)
         assert single.axes == (single.main,)
         plt.close(layout.fig)
         plt.close(single.fig)
 
-    @pytest.mark.parametrize("ratio", [False, True])
+    @pytest.mark.parametrize("panel", [False, True])
     @pytest.mark.parametrize("break_widths", [None, (0.7, 0.3)])
     def test_make_figure_in_a_cell(
-        self, ratio: bool, break_widths: tuple[float, float] | None
+        self, panel: bool, break_widths: tuple[float, float] | None
     ) -> None:
         page = plt.figure(figsize=(12, 8), layout="constrained")
         outer = page.add_gridspec(1, 2)
         with style_context():
-            left = make_figure(Style(), ratio=ratio, break_widths=break_widths, cell=outer[0, 0])
-            right = make_figure(Style(), ratio=ratio, break_widths=break_widths, cell=outer[0, 1])
+            left = make_figure(Style(), panel=panel, break_widths=break_widths, cell=outer[0, 0])
+            right = make_figure(Style(), panel=panel, break_widths=break_widths, cell=outer[0, 1])
         assert left.fig is page
         assert right.fig is page
         assert page.get_size_inches().tolist() == [12, 8]  # the page keeps its size
-        expected = (1 + ratio) * (2 if break_widths else 1)
+        expected = (1 + panel) * (2 if break_widths else 1)
         assert len(left.axes) == len(right.axes) == expected
         assert len(page.axes) == 2 * expected
         for layout, spec in ((left, outer[0, 0]), (right, outer[0, 1])):
             assert layout.is_broken is (break_widths is not None)
-            assert (layout.ratio is not None) is ratio
+            assert (layout.panel is not None) is panel
             for ax in layout.axes:
                 subplotspec = ax.get_subplotspec()
                 assert subplotspec is not None
                 assert subplotspec.get_topmost_subplotspec() == spec
-        if ratio:
-            assert left.ratio is not None
-            assert left.ratio.get_shared_x_axes().joined(left.main, left.ratio)
+        if panel:
+            assert left.panel is not None
+            assert left.panel.get_shared_x_axes().joined(left.main, left.panel)
         page.canvas.draw()
         # the same relative geometry as on a figure of its own, inside the cell
         if break_widths:
             assert left.main_right is not None
             ratio_of_widths = left.main.get_position().width / left.main_right.get_position().width
             assert ratio_of_widths == pytest.approx(0.7 / 0.3, rel=0.05)
-        if ratio:
-            assert left.ratio is not None
-            heights = left.ratio.get_position().height / left.main.get_position().height
-            assert heights == pytest.approx(RATIO_HEIGHT_FRACTION, rel=0.05)
+        if panel:
+            assert left.panel is not None
+            heights = left.panel.get_position().height / left.main.get_position().height
+            assert heights == pytest.approx(PANEL_HEIGHT_FRACTION, rel=0.05)
         assert max(ax.get_position().x1 for ax in left.axes) < min(
             ax.get_position().x0 for ax in right.axes
         )
@@ -402,12 +414,12 @@ class TestFigure:
         page = plt.figure()
         cell = page.add_gridspec(1, 1)[0, 0]
         with pytest.raises(ValueError, match="page"):
-            make_figure(Style(), ratio=False, cell=cell, figsize=(3, 3))
+            make_figure(Style(), panel=False, cell=cell, figsize=(3, 3))
         with pytest.raises(ValueError, match="one of them"):
-            make_figure(Style(), ratio=False, cell=cell, ax=page.add_subplot(cell))
+            make_figure(Style(), panel=False, cell=cell, ax=page.add_subplot(cell))
         plt.close(page)
         with pytest.raises(TypeError, match="grid on a figure"):
-            make_figure(Style(), ratio=False, cell=GridSpec(1, 1)[0, 0])
+            make_figure(Style(), panel=False, cell=GridSpec(1, 1)[0, 0])
 
     def test_break_segments(self) -> None:
         left, right, widths = break_segments((0.0, 100.0), (20.0, 80.0))
@@ -694,10 +706,10 @@ class TestFitYlabel:
 
     @staticmethod
     def _panel(label: str, *, figsize: tuple[float, float] = (7.0, 7.0)) -> Axes:
-        layout = make_figure(Style(), ratio=True, figsize=figsize)
-        assert layout.ratio is not None
-        layout.ratio.set_ylabel(label, loc="center")
-        return layout.ratio
+        layout = make_figure(Style(), panel=True, figsize=figsize)
+        assert layout.panel is not None
+        layout.panel.set_ylabel(label, loc="center")
+        return layout.panel
 
     @staticmethod
     def _overflow(ax: Axes) -> float:
@@ -742,7 +754,7 @@ class TestFitYlabel:
             ax = self._panel("Ratio to Conformal seeding with ITk layout v2", figsize=(4, 3.2))
             before = ax.yaxis.label.get_fontsize()
             fit_ylabel(ax)  # cannot fit; must not shrink to nothing
-            assert ax.yaxis.label.get_fontsize() >= before * RATIO_LABEL_MIN_SCALE
+            assert ax.yaxis.label.get_fontsize() >= before * PANEL_LABEL_MIN_SCALE
         plt.close(ax.figure)
 
     def test_empty_label_and_missing_renderer_are_skipped(
@@ -772,75 +784,269 @@ class TestFitYlabel:
         assert _balanced_wrap(text) == expected
 
 
-class TestRatioPanel:
+def comparison(
+    values: Any,
+    *,
+    kind: ComparisonKind = "ratio",
+    errors: Any = None,
+    band: Any = None,
+    syst_errors: Any = None,
+) -> Comparison:
+    """A comparison over the bins ``0, 1, ..., len(values)``."""
+    values = np.asarray(values, dtype=float)
+    return Comparison(
+        kind=kind,
+        label="N",
+        reference="R",
+        values=values,
+        errors=np.zeros_like(values) if errors is None else np.asarray(errors, dtype=float),
+        edges=np.arange(len(values) + 1.0),
+        band=band,
+        syst_errors=syst_errors,
+    )
+
+
+class TestPanel:
     def test_ratio_panel_propagate(self, mc_hists: list[Histogram]) -> None:
-        with style_context() as st:
-            fig, (ax, rax) = plt.subplots(2)
-            ratios = draw_ratio_panel(
-                [mc_hists[1]], mc_hists[0], rax, style=st, uncertainty="propagate"
-            )
-        assert len(ratios) == 1
+        fig, (ax, rax) = plt.subplots(2)
+        # propagated error bars already hold the reference uncertainty: no band by default
+        draw_panel([compare(mc_hists[1], mc_hists[0])], rax)
         assert rax.get_ylabel() == "Ratio to A"
         assert rax.get_xlim() == (0.0, 4.0)
         assert not [c for c in rax.collections if isinstance(c, PolyCollection)]  # no band
+        (baseline,) = rax.lines[:1]
+        assert baseline.get_ydata() == [1.0, 1.0]
+        plt.close(fig)
+
+    def test_the_band_follows_the_uncertainty_mode(self, mc_hists: list[Histogram]) -> None:
+        propagated = compare(mc_hists[1], mc_hists[0])
+        split = compare(mc_hists[1], mc_hists[0], uncertainty="numerator")
+        assert (propagated.uncertainty, split.uncertainty) == ("propagate", "numerator")
+        bands = []
+        for comparison, band in (
+            (propagated, None),
+            (split, None),
+            (propagated, True),
+            (split, False),
+        ):
+            fig, rax = plt.subplots()
+            draw_panel([comparison], rax, band=band)
+            bands.append(len([c for c in rax.collections if isinstance(c, PolyCollection)]))
+            plt.close(fig)
+        assert bands == [0, 1, 1, 0]  # the default follows the mode, band= overrides it
 
     def test_ratio_panel_numerator_band(
         self, mc_hists: list[Histogram], data_hist: Histogram
     ) -> None:
-        with style_context() as st:
-            fig, (ax, rax) = plt.subplots(2)
-            draw_ratio_panel(
-                [data_hist],
-                mc_hists[0],
-                rax,
-                style=st,
-                uncertainty="numerator",
-                ylim=(0, 2),
-                ylabel="custom",
-            )
+        fig, (ax, rax) = plt.subplots(2)
+        result = compare(data_hist, mc_hists[0], uncertainty="numerator")
+        draw_panel([result], rax, observed=[True], ylim=(0, 2), ylabel="custom")
         assert rax.get_ylabel() == "custom"
         assert rax.get_ylim() == (0.0, 2.0)
         assert len([c for c in rax.collections if isinstance(c, PolyCollection)]) == 1  # band
+        (container,) = rax.containers
+        assert container.lines[0].get_markersize() == 5  # observed data: larger markers
+        assert container.lines[0].get_color() == foreground()
+        plt.close(fig)
 
-    def test_ratio_label_data_mc(self, mc_hists: list[Histogram], data_hist: Histogram) -> None:
-        total = Histogram(mc_hists[0].hist + mc_hists[1].hist, label="Total")
-        with style_context() as st:
-            fig, (ax, rax) = plt.subplots(2)
-            draw_ratio_panel([data_hist], total, rax, style=st, uncertainty="numerator")
-        assert rax.get_ylabel() == "Data / MC"
+    def test_references_varied_differently_are_not_one_reference(
+        self, mc_hists: list[Histogram]
+    ) -> None:
+        # the panel draws one band, so the references must come to the same band as well
+        fig, ax = plt.subplots()
+        reference = mc_hists[0]
+        varied = reference.replace(variations={"s": (reference.hist * 1.5, None)})
+        others = reference.replace(variations={"other": (reference.hist * 1.2, None)})
+        numerator = mc_hists[1]
+        against = [
+            compare(numerator, h, uncertainty="numerator") for h in (varied, others, reference)
+        ]
+        for pair in ((against[0], against[1]), (against[0], against[2])):
+            with pytest.raises(ValueError, match="one reference"):
+                draw_panel(list(pair), ax)
+        # the same nominal contents and the same variations: one band, so one reference
+        copied = Histogram(reference.hist.copy(), label=reference.label).replace(
+            variations={"s": (reference.hist * 1.5, None)}
+        )
+        draw_panel([against[0], compare(numerator, copied, uncertainty="numerator")], ax)
+        plt.close(fig)
+
+    def test_category_references_must_list_the_same_categories(self) -> None:
+        # a category axis reports numeric index edges, which say nothing about its categories
+        def categories(names: str, value: float) -> Any:
+            h = hist.Hist(hist.axis.StrCategory(list(names)), storage=hist.storage.Weight())
+            h.view().value, h.view().variance = value, value
+            return h
+
+        fig, ax = plt.subplots()
+        first = compare(categories("ab", 4.0), categories("ab", 2.0))
+        other = compare(categories("cd", 4.0), categories("cd", 2.0))
+        assert first.edges.tolist() == other.edges.tolist()  # the same indices, other categories
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel([first, other], ax)
+        draw_panel([first, compare(categories("ab", 6.0), categories("ab", 2.0))], ax)
+        plt.close(fig)
+
+    @pytest.mark.parametrize(
+        ("kind", "baseline"), [("ratio", 1.0), ("relative_difference", 0.0), ("difference", 0.0)]
+    )
+    def test_baselines_and_bands(
+        self, mc_hists: list[Histogram], data_hist: Histogram, kind: Any, baseline: float
+    ) -> None:
+        fig, (ax, rax) = plt.subplots(2)
+        result = compare(data_hist, mc_hists[0], kind=kind, uncertainty="numerator")
+        draw_panel([result], rax)
+        assert rax.lines[0].get_ydata() == [baseline, baseline]
+        assert rax.lines[0].get_linestyle() == "--"
+        (band,) = [c for c in rax.collections if isinstance(c, PolyCollection)]
+        vertices = band.get_paths()[0].vertices
+        assert result.band is not None
+        filled = np.isfinite(result.band)
+        spread = result.band[filled].max()
+        assert vertices[:, 1].max() == pytest.approx(baseline + spread)  # around the baseline
+        assert vertices[:, 1].min() == pytest.approx(baseline - spread)
+        (container,) = rax.containers
+        drawn = container.lines[0].get_ydata()
+        np.testing.assert_allclose(drawn, result.values[np.isfinite(result.values)])
+        plt.close(fig)
+
+    def test_pull_draws_filled_steps_without_error_bars(self) -> None:
+        fig, ax = plt.subplots()
+        pull = comparison([1.5, np.nan, -2.0, 0.5], kind="pull", errors=[1, np.nan, 1, 1])
+        draw_panel([pull], ax, colors=["red"])
+        (steps,) = [p for p in ax.patches if isinstance(p, StepPatch)]
+        assert steps.get_fill()
+        assert steps.get_alpha() == pytest.approx(0.6)
+        assert to_hex(steps.get_facecolor()) == to_hex("red")
+        np.testing.assert_allclose(steps.get_data().values, [1.5, 0.0, -2.0, 0.5])  # nan: empty
+        np.testing.assert_allclose(steps.get_data().edges, pull.edges)
+        assert steps.get_data().baseline == 0.0
+        assert not ax.containers  # no error bars: a pull's uncertainty is 1
+        assert ax.lines[0].get_ydata() == [0.0, 0.0]
+        assert ax.get_ylabel() == "Pull"
+        plt.close(fig)
+
+    def test_significance_draws_points_without_baseline(self) -> None:
+        fig, ax = plt.subplots()
+        draw_panel([comparison([1.0, 2.0], kind="s/sqrt(b)", errors=[0.1, 0.2])], ax)
+        assert not [line for line in ax.lines if line.get_linestyle() == "--"]  # no baseline
+        assert len(ax.containers) == 1
+        assert ax.get_ylabel() == r"$S/\sqrt{B}$"
+        plt.close(fig)
+
+    def test_one_kind_per_panel(self) -> None:
+        fig, ax = plt.subplots()
+        with pytest.raises(ValueError, match="one kind"):
+            draw_panel([comparison([1.0]), comparison([0.0], kind="pull")], ax)
+        with pytest.raises(ValueError, match="at least one"):
+            draw_panel([], ax)
+        plt.close(fig)
+
+    def test_one_reference_and_one_binning_per_panel(
+        self, mc_hists: list[Histogram], data_hist: Histogram
+    ) -> None:
+        # the label and the band come from the first comparison, so the rest must share them
+        fig, ax = plt.subplots()
+        against_a = compare(mc_hists[1], mc_hists[0])
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel([against_a, compare(mc_hists[1], data_hist)], ax)
+        # the reference is the histogram, not its label: plain hists carry none at all
+        plain = [compare(mc_hists[1].hist, h.hist) for h in (mc_hists[0], data_hist)]
+        assert [c.reference for c in plain] == ["", ""]
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel(plain, ax)
+        with pytest.raises(ValueError, match="one reference"):  # and labels alone, without one
+            draw_panel([comparison([1.0]), replace(comparison([1.0]), reference="other")], ax)
+        # one reference under another name, or copied: the same band, so the panel is drawn
+        renamed = Histogram(mc_hists[0].hist, label="Renamed")
+        copied = Histogram(mc_hists[0].hist.copy(), label="A")
+        draw_panel([against_a, compare(mc_hists[1], renamed), compare(mc_hists[1], copied)], ax)
+        # comparing with one histogram gives one binning; hand-built ones are checked too
+        with pytest.raises(ValueError, match="one binning"):
+            draw_panel([comparison([1.0, 2.0]), comparison([1.0])], ax)
+        plt.close(fig)
+
+    @pytest.mark.parametrize(
+        ("kind", "data", "expected"),
+        [
+            ("ratio", True, "Data / MC"),
+            ("ratio", False, "Ratio to MC"),
+            ("relative_difference", True, "(Data \N{MINUS SIGN} MC) / MC"),
+            ("relative_difference", False, "Rel. difference to MC"),
+            ("difference", True, "Data \N{MINUS SIGN} MC"),
+            ("difference", False, "Difference to MC"),
+            ("pull", True, "Pull"),
+            ("pull", False, "Pull"),
+            ("s/sqrt(b)", False, r"$S/\sqrt{B}$"),
+            ("s/sqrt(s+b)", False, r"$S/\sqrt{S+B}$"),
+        ],
+    )
+    def test_default_labels(self, kind: Any, data: bool, expected: str) -> None:
+        assert comparison_label(kind, "MC", data=data) == expected
 
     def test_ratio_ylim(self) -> None:
-        from rootfig.histograms import Ratio
-
-        edges = np.arange(5.0)
-        tight = Ratio(np.array([0.9, 1.0, 1.1, 1.0]), np.zeros(4), np.zeros(4), edges)
-        assert ratio_ylim([tight]) == (0.5, 1.5)
-        wide = Ratio(np.array([0.2, 2.0, np.nan, 50.0]), np.zeros(4), np.zeros(4), edges)
-        low, high = ratio_ylim([wide])
+        tight = comparison([0.9, 1.0, 1.1, 1.0])
+        assert panel_ylim([tight]) == (0.5, 1.5)
+        wide = comparison([0.2, 2.0, np.nan, 50.0])
+        low, high = panel_ylim([wide])
         assert low < 0.2
         assert high == 3.0
-        assert ratio_ylim([]) == (0.5, 1.5)
-        syst = Ratio(
-            np.ones(4), np.zeros(4), np.zeros(4), edges, syst_errors=(np.full(4, 0.8),) * 2
-        )
-        low, high = ratio_ylim([syst])  # a propagated systematic without a band
+        assert panel_ylim([]) == (0.5, 1.5)
+        syst = comparison(np.ones(4), syst_errors=(np.full(4, 0.8),) * 2)
+        low, high = panel_ylim([syst])  # a propagated systematic without a band
         assert low < 0.2
         assert high > 1.8
-        signed = Ratio(np.array([-0.5, 1.0, 1.0, 1.0]), np.zeros(4), np.zeros(4), edges)
-        low, high = ratio_ylim([signed])
+        signed = comparison([-0.5, 1.0, 1.0, 1.0])
+        low, high = panel_ylim([signed])
         assert low < -0.5
         assert high == 1.5
-        deep = Ratio(
-            np.ones(4), np.zeros(4), np.zeros(4), edges, syst_errors=(np.full(4, 1.5),) * 2
-        )
-        low, _ = ratio_ylim([deep])  # a systematic reaching below zero on positive ratios
+        deep = comparison(np.ones(4), syst_errors=(np.full(4, 1.5),) * 2)
+        low, _ = panel_ylim([deep])  # a systematic reaching below zero on positive ratios
         assert low == 0.0
-        low, _ = ratio_ylim([wide], band=(np.full(4, 0.9), np.full(4, 1.1)))
+        low, _ = panel_ylim([wide], band=(np.full(4, 0.9), np.full(4, 1.1)))
         assert low < 0.2  # a narrow band never narrows the range
         wide_band = (np.full(4, 0.2), np.full(4, 1.8))
-        low, high = ratio_ylim([tight], band=wide_band)
+        low, high = panel_ylim([tight], band=wide_band)
         assert low < 0.2
         assert high > 1.8
+
+    def test_relative_difference_ylim_is_the_ratio_range_shifted(self) -> None:
+        kind: ComparisonKind = "relative_difference"
+        assert panel_ylim([comparison([-0.1, 0.0, 0.1, 0.0], kind=kind)]) == (-0.5, 0.5)
+        _, high = panel_ylim([comparison([-0.8, 1.0, np.nan, 49.0], kind=kind)])
+        assert high == 2.0  # clipped like a ratio at 3
+        low, _ = panel_ylim([comparison([-9.0, 0.0, 0.0, 0.0], kind=kind)])
+        assert low == -4.0  # a negative ratio: clipped at -3 as a ratio
+        low, _ = panel_ylim([comparison([-0.9, 0.0, 0.0, 0.0], kind=kind)])
+        assert low >= -1.0  # positive ratios stay above -1
+        for values in ([0.3, 0.0, 0.1, 0.2], [-0.5, 0.2, 0.4, 0.1]):
+            shifted = panel_ylim([comparison(np.add(values, 1.0))])
+            low, high = panel_ylim([comparison(values, kind=kind)])
+            assert (low, high) == pytest.approx((shifted[0] - 1.0, shifted[1] - 1.0))
+
+    def test_difference_ylim_is_symmetric(self) -> None:
+        values = np.linspace(-2.0, 10.0, 100)
+        low, high = panel_ylim([comparison(values, kind="difference")])
+        assert low == -high
+        assert high == pytest.approx(1.1 * np.percentile(values, 95))
+        assert panel_ylim([comparison(np.zeros(4), kind="difference")]) == (-1.0, 1.0)
+        with_syst = comparison(
+            np.zeros(4), kind="difference", syst_errors=(np.full(4, 2.0), np.full(4, 3.0))
+        )
+        assert panel_ylim([with_syst]) == pytest.approx((-3.3, 3.3))
+        band = (np.full(4, -4.0), np.full(4, 4.0))
+        assert panel_ylim([comparison(np.zeros(4), kind="difference")], band=band) == (
+            pytest.approx((-4.4, 4.4))
+        )
+
+    def test_pull_ylim(self) -> None:
+        assert panel_ylim([comparison([0.5, -1.0, 1.0, 0.2], kind="pull")]) == (-3.0, 3.0)
+        values = np.linspace(-4.0, 1.0, 101)
+        low, high = panel_ylim([comparison(values, kind="pull")])
+        assert high == pytest.approx(1.1 * np.percentile(np.abs(values), 95))
+        assert low == -high
+        assert panel_ylim([comparison([-40.0, 30.0, 50.0], kind="pull")]) == (-5.0, 5.0)
+        assert panel_ylim([comparison([np.nan], kind="pull")]) == (-3.0, 3.0)
 
 
 class TestAnnotations:
@@ -1242,30 +1448,18 @@ class TestLabelUnits:
 
 class TestSignificancePanelAndPoints:
     def test_significance_panel(self) -> None:
-        from rootfig.histograms import Ratio
-        from rootfig.plotting import draw_significance_panel
-
-        result = Ratio(
-            values=np.array([1.0, 2.0, np.nan]),
-            errors=np.array([0.1, 0.2, np.nan]),
-            band=np.full(3, np.nan),
-            edges=np.array([0.0, 1.0, 2.0, 3.0]),
-        )
+        result = comparison([1.0, 2.0, np.nan], kind="s/sqrt(b)", errors=[0.1, 0.2, np.nan])
         fig, ax = plt.subplots()
-        draw_significance_panel([result], ax)
+        draw_panel([result], ax)
         assert ax.get_ylabel() == r"$S/\sqrt{B}$"
         assert ax.get_ylim() == (0.0, pytest.approx(1.25 * 2.2))
         assert ax.get_xlim() == (0.0, 3.0)
-        large = Ratio(
-            values=result.values * 3,
-            errors=result.errors * 2,
-            band=result.band,
-            edges=result.edges,
-        )
-        draw_significance_panel([result, large], ax, colors=["red", "blue"])
+        large = comparison(result.values * 3, kind="s/sqrt(b)", errors=result.errors * 2)
+        draw_panel([result, large], ax, colors=["red", "blue"])
         assert ax.get_ylim() == (0.0, pytest.approx(1.25 * 6.4))
         assert [c.lines[0].get_color() for c in ax.containers[-2:]] == ["red", "blue"]
-        draw_significance_panel([result], ax, kind="s/sqrt(s+b)", ylim=(0, 5), ylabel="Z")
+        other = comparison([1.0, 2.0, np.nan], kind="s/sqrt(s+b)", errors=[0.1, 0.2, np.nan])
+        draw_panel([other], ax, ylim=(0, 5), ylabel="Z")
         assert ax.get_ylabel() == "Z"
         assert ax.get_ylim() == (0.0, 5.0)
         plt.close(fig)
@@ -1369,7 +1563,7 @@ class TestEnvelopeAndColors:
         assert heights[1] == pytest.approx(2 + np.sqrt(2))
         assert heights[-1] == pytest.approx(2.0)  # only the fine histogram is there
 
-    def test_ratio_panel_reuses_main_colors(self) -> None:
+    def test_panel_reuses_main_colors(self) -> None:
         from matplotlib.colors import to_rgba
 
         hists = [
@@ -1377,20 +1571,13 @@ class TestEnvelopeAndColors:
             make_hist([0.5], label="B"),
             make_hist([0.5], label="C"),
         ]
-        fig, (ax, ratio_ax) = plt.subplots(2)
+        fig, (ax, panel_ax) = plt.subplots(2)
         drawn = draw_histograms(hists, ax, style=Style())
         assert drawn.colors == color_cycle(3, Style())
-        draw_ratio_panel(
-            hists[1:],
-            hists[0],
-            ratio_ax,
-            style=Style(),
-            uncertainty="propagate",
-            colors=drawn.colors[1:],
-        )
+        draw_panel([compare(h, hists[0]) for h in hists[1:]], panel_ax, colors=drawn.colors[1:])
         drawn_colors = [
             to_rgba(c.lines[0].get_color())
-            for c in ratio_ax.containers
+            for c in panel_ax.containers
             if isinstance(c, matplotlib.container.ErrorbarContainer)
         ]
         assert drawn_colors == [to_rgba(c) for c in drawn.colors[1:]]
@@ -1480,11 +1667,9 @@ class TestSystematicDrawing:
         self, mc_hists: list[Histogram], data_hist: Histogram
     ) -> None:
         reference = with_variation(mc_hists[0], 1.5)
-        with style_context() as st:
-            fig, ax = plt.subplots()
-            (result,) = draw_ratio_panel(
-                [with_variation(mc_hists[1], 1.2)], reference, ax, style=st, uncertainty="numerator"
-            )
+        fig, ax = plt.subplots()
+        result = compare(with_variation(mc_hists[1], 1.2), reference, uncertainty="numerator")
+        draw_panel([result], ax)
         assert result.syst_band is not None
         assert result.syst_errors is not None
         band = next(c for c in ax.collections if isinstance(c, PolyCollection))
@@ -1649,19 +1834,11 @@ def test_no_bins_in_view_is_empty() -> None:
 
 @pytest.mark.parametrize("source", ["points", "band"])
 def test_ratio_range_uses_only_visible_uncertainties(source: str) -> None:
-    from rootfig.histograms import Ratio
-
     errors = np.array([10, 0.1, 0.1, 10])
-    result = Ratio(
-        np.ones(4),
-        np.zeros(4),
-        np.zeros(4),
-        np.arange(5.0),
-        syst_errors=(errors, errors) if source == "points" else None,
-    )
+    result = comparison(np.ones(4), syst_errors=(errors, errors) if source == "points" else None)
     band = (1 - errors, 1 + errors) if source == "band" else None
-    assert ratio_ylim([result], band=band) == (0, 3)
-    assert ratio_ylim([result], band=band, view=[(1, 3)]) == (0.5, 1.5)
-    assert ratio_ylim([result], band=band, view=[(5, 6)]) == (0.5, 1.5)
+    assert panel_ylim([result], band=band) == (0, 3)
+    assert panel_ylim([result], band=band, view=[(1, 3)]) == (0.5, 1.5)
+    assert panel_ylim([result], band=band, view=[(5, 6)]) == (0.5, 1.5)
     if band is not None:
-        assert ratio_ylim([], band=band) == (0, 3)
+        assert panel_ylim([], band=band) == (0, 3)

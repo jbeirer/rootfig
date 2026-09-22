@@ -29,8 +29,11 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
 - `selection` and `weight` belong to the sample and combine with the ones
   given to `plot()` (`&` and `*` respectively).
 - `is_data=True` draws points with error bars (in the style's text colour
-  unless `color` is set), keeps the sample out of stacks and makes it the
-  numerator of ratios.
+  unless `color` is set) and keeps the sample out of stacks. In a ratio,
+  relative difference, difference or pull panel it is compared with the
+  prediction by default; `reference=` can name it as the reference instead,
+  and a significance never takes data as a signal (see
+  [the roles](plotting.md#lower-panel)).
 - `xsec` and `ngen` describe simulated processes: the cross section (pb, or a
   string with a unit such as `"1.2 fb"`) and the number of generated events (a
   number, the name of an object in the file holding it, e.g.
@@ -195,7 +198,7 @@ samples = [bkg, sig]
 variables = [pt, met, rf.Variable("nMuon", bins=(8, -0.5, 7.5))]
 
 for var in variables:
-    p = rf.plot(samples, var, observed=data, selection=sr, stack=True, ratio=True, style=atlas)
+    p = rf.plot(samples, var, observed=data, selection=sr, stack=True, panel="ratio", style=atlas)
     p.save("plots/")  # plots/Muon_pt.pdf, plots/met.pdf, plots/nMuon.pdf
     p.close()
 ```
@@ -209,6 +212,6 @@ rf.PlotBook(
     variables,
     selections={"baseline": base, "sr": sr},
     variants={"lin": {}, "log": {"logy": True}},
-    plot_kwargs={"observed": data, "stack": True, "ratio": True, "style": atlas},
+    plot_kwargs={"observed": data, "stack": True, "panel": "ratio", "style": atlas},
 ).save("plots/")  # plots/Muon_pt__sr__log.pdf, ...
 ```

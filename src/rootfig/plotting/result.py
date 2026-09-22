@@ -17,7 +17,7 @@ from rootfig.histograms import uncertainty
 
 if TYPE_CHECKING:
     from rootfig._typing import FloatArray
-    from rootfig.histograms import Efficiency, Histogram, Profile, Ratio, Uncertainty
+    from rootfig.histograms import Comparison, Efficiency, Histogram, Profile, Uncertainty
     from rootfig.model import Variable
 
 __all__ = ["Plot", "normalize_formats"]
@@ -41,18 +41,21 @@ class Plot:
         The :class:`matplotlib.figure.Figure`.
     ax
         The main :class:`matplotlib.axes.Axes`.
-    ratio_ax
-        The ratio panel axes, or ``None``.
-    ax_right, ratio_ax_right
+    panel_ax
+        The lower panel's axes (``panel=``), or ``None``.
+    ax_right, panel_ax_right
         The right-hand segments when the x axis is broken (``xbreak``), else ``None``.
     histograms
         The :class:`~rootfig.histograms.Histogram` objects drawn (each wraps a
         ``hist.Hist``).
     stack
         The summed stacked histograms, labelled ``"Total"``, including variations,
-        or ``None``. The band and automatic panels use this histogram.
-    ratios
-        The :class:`~rootfig.histograms.Ratio` objects drawn in the ratio panel.
+        or ``None``. The stack's band uses this histogram, and so does a lower
+        panel comparing with the stack total (not one with ``reference=``, nor
+        a significance of a fully stacked signal, whose background excludes it).
+    comparisons
+        The :class:`~rootfig.histograms.Comparison` objects drawn in the lower
+        panel, one per numerator.
     variable
         The :class:`~rootfig.model.Variable` (x axis) if known; used for default
         file names.
@@ -65,11 +68,11 @@ class Plot:
 
     fig: Figure
     ax: Axes
-    ratio_ax: Axes | None = None
+    panel_ax: Axes | None = None
     ax_right: Axes | None = None
-    ratio_ax_right: Axes | None = None
+    panel_ax_right: Axes | None = None
     histograms: list[Histogram] = field(default_factory=list)
-    ratios: list[Ratio] = field(default_factory=list)
+    comparisons: list[Comparison] = field(default_factory=list)
     variable: Variable | None = None
     matrix: FloatArray | None = None
     efficiencies: list[Efficiency] = field(default_factory=list)
@@ -78,8 +81,8 @@ class Plot:
 
     @property
     def axes(self) -> tuple[Axes, ...]:
-        """All axes in reading order: main (left, right), then ratio (left, right)."""
-        candidates = (self.ax, self.ax_right, self.ratio_ax, self.ratio_ax_right)
+        """All axes in reading order: main (left, right), then the lower panel (left, right)."""
+        candidates = (self.ax, self.ax_right, self.panel_ax, self.panel_ax_right)
         return tuple(a for a in candidates if a is not None)
 
     @property
@@ -180,7 +183,7 @@ class Plot:
 
     def __repr__(self) -> str:
         labels = ", ".join(repr(h.label) for h in self.histograms)
-        panels = "main+ratio" if self.ratio_ax is not None else "main"
+        panels = "main+panel" if self.panel_ax is not None else "main"
         return f"Plot(histograms=[{labels}], panels={panels})"
 
 

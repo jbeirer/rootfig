@@ -279,9 +279,9 @@ class TestPages:
     ) -> None:
         pages = _pages(monkeypatch)
         variables = [X.replace(name=f"x{i}") for i in range(5)]
-        rf.PlotBook(samples, variables, plot_kwargs={"ratio": True}).save_pdf(tmp_path / "p.pdf")
-        assert [len(page.axes) for page in pages] == [8, 2]  # main and ratio axes per cell
-        cell_height = CELL[1] * (1 + 0.3 * 0.85)  # as make_figure enlarges a ratio figure
+        rf.PlotBook(samples, variables, plot_kwargs={"panel": "ratio"}).save_pdf(tmp_path / "p.pdf")
+        assert [len(page.axes) for page in pages] == [8, 2]  # main and panel axes per cell
+        cell_height = CELL[1] * (1 + 0.3 * 0.85)  # as make_figure enlarges a figure with a panel
         assert tuple(pages[0].get_size_inches()) == pytest.approx(
             page_size((2, 2), (CELL[0], cell_height))
         )
@@ -317,9 +317,9 @@ class TestPages:
     def test_cells_are_sized_once_for_the_document(
         self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # a ratio panel makes every cell taller, also on the page without one
+        # a lower panel makes every cell taller, also on the page without one
         pages = _pages(monkeypatch)
-        book = rf.PlotBook(samples, [X, Y], variants={"plain": {}, "ratio": {"ratio": True}})
+        book = rf.PlotBook(samples, [X, Y], variants={"plain": {}, "ratio": {"panel": "ratio"}})
         book.save_pdf(tmp_path / "plots.pdf", layout=(1, 2))
         cell_height = CELL[1] * (1 + 0.3 * 0.85)
         assert [tuple(page.get_size_inches()) for page in pages] == [
@@ -352,20 +352,20 @@ class TestPages:
 class TestCells:
     """Each cell holds what the standalone plot would, in its own axes."""
 
-    def test_ratio_cells_have_their_own_panels(
+    def test_panel_cells_have_their_own_panels(
         self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         drawn = _drawn(monkeypatch)
-        kwargs: dict[str, Any] = {"ratio": True, "stack": False}
+        kwargs: dict[str, Any] = {"panel": "ratio", "stack": False}
         rf.PlotBook(samples, [X, Y], plot_kwargs=kwargs).save_pdf(tmp_path / "plots.pdf")
         assert len(drawn) == 2
-        axes = [ax for _, result in drawn for ax in (result.ax, result.ratio_ax)]
+        axes = [ax for _, result in drawn for ax in (result.ax, result.panel_ax)]
         assert all(isinstance(ax, Axes) for ax in axes)
         assert len({id(ax) for ax in axes}) == 4
         for task, result in drawn:
-            assert result.ratio_ax is not None
-            assert result.ratio_ax.get_shared_x_axes().joined(result.ax, result.ratio_ax)
-            assert _cell(result.ax) == _cell(result.ratio_ax)
+            assert result.panel_ax is not None
+            assert result.panel_ax.get_shared_x_axes().joined(result.ax, result.panel_ax)
+            assert _cell(result.ax) == _cell(result.panel_ax)
             assert result.ax.get_title() == ""  # no task caption is added
             assert_same_plot(result, rf.plot(samples, task.variable, **kwargs))
 
@@ -373,17 +373,22 @@ class TestCells:
         self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         drawn = _drawn(monkeypatch)
-        kwargs: dict[str, Any] = {"ratio": ("s/sqrt(b)", "B"), "title": "Signal B"}
+        # B overlaid on the stack of A: the signal B over the background A
+        kwargs: dict[str, Any] = {"panel": "s/sqrt(b)", "stack": ["A"], "title": "Signal B"}
         rf.PlotBook(samples, [X, Y], plot_kwargs=kwargs).save_pdf(tmp_path / "plots.pdf")
         for task, result in drawn:
-            assert result.ratios
-            assert result.ratio_ax is not None
+            assert result.comparisons
+            assert result.panel_ax is not None
             assert result.ax.get_title() == "Signal B"
             assert_same_plot(result, rf.plot(samples, task.variable, **kwargs))
 
-    @pytest.mark.parametrize("ratio", [False, True])
+    @pytest.mark.parametrize("panel", [None, "ratio"])
     def test_broken_axes_stay_within_their_cell(
-        self, samples: list[rf.Sample], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ratio: bool
+        self,
+        samples: list[rf.Sample],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        panel: str | None,
     ) -> None:
         drawn = _drawn(monkeypatch)
         positions: dict[str, list[tuple[float, float]]] = {}
@@ -398,16 +403,16 @@ class TestCells:
             return original(self, figure, **kwargs)
 
         monkeypatch.setattr(backend_pdf.PdfPages, "savefig", measuring)
-        kwargs: dict[str, Any] = {"xbreak": (0.4, 0.6), "ratio": ratio}
+        kwargs: dict[str, Any] = {"xbreak": (0.4, 0.6), "panel": panel}
         book = rf.PlotBook(samples, [X, X.replace(name="x2")], plot_kwargs=kwargs)
         book.save_pdf(tmp_path / "plots.pdf")
         (first, left), (second, right) = drawn
         for result in (left, right):
             assert result.ax_right is not None
-            assert (result.ratio_ax_right is not None) is ratio
-            assert len(result.axes) == (4 if ratio else 2)
+            assert (result.panel_ax_right is not None) is (panel is not None)
+            assert len(result.axes) == (4 if panel else 2)
             assert result.ax_right.get_shared_y_axes().joined(result.ax, result.ax_right)
-        assert len({id(ax) for r in (left, right) for ax in r.axes}) == (8 if ratio else 4)
+        assert len({id(ax) for r in (left, right) for ax in r.axes}) == (8 if panel else 4)
         # every axes of the left cell ends before any axes of the right cell begins
         assert max(x1 for _, x1 in positions[first.stem]) < min(
             x0 for x0, _ in positions[second.stem]
@@ -419,13 +424,13 @@ class TestCells:
     ) -> None:
         pages = _pages(monkeypatch)
         drawn = _drawn(monkeypatch)
-        book = rf.PlotBook(samples, [X, Y], variants={"plain": {}, "ratio": {"ratio": True}})
+        book = rf.PlotBook(samples, [X, Y], variants={"plain": {}, "ratio": {"panel": "ratio"}})
         book.save_pdf(tmp_path / "plots.pdf")
         assert len(pages) == 1
-        assert len(pages[0].axes) == 6  # two plain cells plus two cells of main and ratio
+        assert len(pages[0].axes) == 6  # two plain cells plus two cells of main and panel
         by_variant = {task.variant_name: result for task, result in drawn}
-        assert by_variant["plain"].ratio_ax is None
-        assert by_variant["ratio"].ratio_ax is not None
+        assert by_variant["plain"].panel_ax is None
+        assert by_variant["ratio"].panel_ax is not None
         assert [_cell(result.ax) for _, result in drawn] == [(0, 0), (0, 1), (1, 0), (1, 1)]
         for task, result in drawn:
             assert_same_plot(result, rf.plot(samples, task.variable, **task.kwargs))
@@ -563,11 +568,11 @@ class TestLayoutIndependence:
     @pytest.mark.parametrize(
         "kwargs",
         [
-            pytest.param({"ratio": True}, id="ratio"),
-            pytest.param({"ratio": True, "style": CMS}, id="experiment-label"),
-            pytest.param({"ratio": True, "style": OWN}, id="own-style"),
+            pytest.param({"panel": "ratio"}, id="ratio"),
+            pytest.param({"panel": "ratio", "style": CMS}, id="experiment-label"),
+            pytest.param({"panel": "ratio", "style": OWN}, id="own-style"),
             pytest.param({"stats": True, "text": ["a line", "another"]}, id="stats-text"),
-            pytest.param({"xbreak": (0.4, 0.6), "ratio": True}, id="xbreak"),
+            pytest.param({"xbreak": (0.4, 0.6), "panel": "ratio"}, id="xbreak"),
         ],
     )
     def test_cells_equal_their_own_figures(
@@ -615,7 +620,7 @@ class TestLayoutIndependence:
             original(self, renderer)
 
         monkeypatch.setattr(Figure, "draw", counting)
-        kwargs = {"ratio": True, "style": style}
+        kwargs = {"panel": "ratio", "style": style}
         one = rf.PlotBook(samples, [X], plot_kwargs=kwargs)
         one.save_pdf(tmp_path / "one.pdf", layout=(1, 1))
         per_page = len(draws)
@@ -742,8 +747,10 @@ class TestFailures:
         existing = plt.figure()
         target = tmp_path / "plots.pdf"
         target.write_bytes(b"old")
-        book = rf.PlotBook(samples, X, variants={"good": {}, "bad": {"ratio": "missing"}})
-        with pytest.raises(ValueError, match="ratio reference 'missing'") as info:
+        book = rf.PlotBook(
+            samples, X, variants={"good": {}, "bad": {"panel": "ratio", "reference": "missing"}}
+        )
+        with pytest.raises(ValueError, match="reference='missing' is not the label") as info:
             book.save_pdf(target)
         assert info.value.__notes__ == [
             "while running PlotBook task variable='x', selection='all', variant='bad'",
@@ -812,11 +819,12 @@ class TestFailures:
 
 
 class TestPlan:
-    def test_complexity_follows_ratio_and_xbreak(self) -> None:
+    def test_complexity_follows_panel_and_xbreak(self) -> None:
         assert not _pdf.is_complex({})
-        assert not _pdf.is_complex({"ratio": False, "xbreak": None})
-        assert _pdf.is_complex({"ratio": True})
-        assert _pdf.is_complex({"ratio": "significance"})
+        assert not _pdf.is_complex({"panel": None, "xbreak": None})
+        assert _pdf.is_complex({"panel": "ratio"})
+        assert _pdf.is_complex({"panel": "s/sqrt(b)"})
+        assert _pdf.is_complex({"panel": "pull"})
         assert _pdf.is_complex({"xbreak": (1, 2)})
 
     def test_pages_of_a_book(self, samples: list[rf.Sample]) -> None:

@@ -61,7 +61,7 @@ rf.plot(
     tree="events",
     bins=(50, 0, 200),
     normalize=True,
-    ratio=True,
+    panel="ratio",
 )
 ```
 
@@ -86,7 +86,7 @@ rf.plot(
     "MET",
     observed=data,
     stack=True,
-    ratio=True,
+    panel="ratio",
     logy=True,
     bins=(40, 0, 400),
     unit="GeV",

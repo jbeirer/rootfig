@@ -56,22 +56,27 @@ def task_note(task: PlotTask, doing: str) -> Iterator[None]:
         raise
 
 
+def has_panel(kwargs: Mapping[str, Any]) -> bool:
+    """Whether ``plot(**kwargs)`` draws a lower panel."""
+    return kwargs.get("panel") is not None
+
+
 def is_complex(kwargs: Mapping[str, Any]) -> bool:
     """Whether ``plot(**kwargs)`` draws a lower panel or a broken x axis, which need room."""
-    return bool(kwargs.get("ratio", False)) or kwargs.get("xbreak") is not None
+    return has_panel(kwargs) or kwargs.get("xbreak") is not None
 
 
 def cell_size(tasks: Sequence[PlotTask]) -> tuple[float, float]:
     """Return the cell size for ``tasks``: the largest width and height of their own figures.
 
     Each task's figure size is what :func:`~rootfig.plot` gives it on its own
-    (its style's, taller with a ratio panel), so a cell shows its plot at that
+    (its style's, taller with a lower panel), so a cell shows its plot at that
     size; one size for every cell of the document keeps the pages alike.
     """
     sizes = []
     for task in tasks:
         with task_note(task, "sizing"), style_context(task.kwargs.get("style")) as st:
-            sizes.append(figure_size(st, ratio=bool(task.kwargs.get("ratio", False))))
+            sizes.append(figure_size(st, panel=has_panel(task.kwargs)))
     return (max(width for width, _ in sizes), max(height for _, height in sizes))
 
 

@@ -12,9 +12,8 @@
 ::: rootfig.cutflow
 ::: rootfig.efficiency
 ::: rootfig.profile
-::: rootfig.significance
 ::: rootfig.evaluate
-::: rootfig.ratio
+::: rootfig.compare
 ::: rootfig.log_bins
 ::: rootfig.use_style
 ::: rootfig.dark_theme
@@ -41,7 +40,7 @@
 
 ::: rootfig.Plot
 ::: rootfig.Histogram
-::: rootfig.Ratio
+::: rootfig.Comparison
 ::: rootfig.Uncertainty
 ::: rootfig.Summary
 ::: rootfig.SummaryTable

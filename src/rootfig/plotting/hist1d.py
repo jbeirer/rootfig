@@ -15,8 +15,7 @@ from matplotlib.axes import Axes
 
 from rootfig._storage import is_category
 from rootfig.errors import BinningError
-from rootfig.histograms.build import Histogram
-from rootfig.histograms.ratio import compatible_binning
+from rootfig.histograms.build import Histogram, compatible_binning
 from rootfig.histograms.systematics import sum_histograms, uncertainty
 from rootfig.model.samples import HistType
 from rootfig.model.style import Style
@@ -33,6 +32,7 @@ __all__ = [
     "fold_flow_bins",
     "in_view",
     "label_flow_bins",
+    "require_same_binning",
     "show_flow_bins",
     "split_stack",
 ]
@@ -150,7 +150,7 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
     """
     if not histograms:
         return [], (False, False)
-    _require_same_binning(histograms, "flow='show'")
+    require_same_binning(histograms, "flow='show'")
     _reject_category_flow(histograms, "flow='show'")
     edges = histograms[0].edges
     under = any(_flow_content(h, 0) for h in histograms)
@@ -259,7 +259,15 @@ def _reject_category_flow(histograms: Sequence[Histogram], what: str) -> None:
             raise BinningError(msg)
 
 
-def _require_same_binning(histograms: Sequence[Histogram], what: str) -> None:
+def require_same_binning(histograms: Sequence[Histogram], what: str, *, flow: bool = False) -> None:
+    """Refuse histograms ``what`` must combine bin by bin but which bin differently.
+
+    Fewer than two histograms are always compatible. ``flow`` also asks for the
+    same under- and overflow bins, which summing them needs; drawing them does
+    not, and ``flow="show"`` gives them the flow bins itself.
+    """
+    if not histograms:
+        return
     first = histograms[0].hist
     for histogram in histograms[1:]:
         if not compatible_binning(first, histogram.hist):
@@ -268,6 +276,20 @@ def _require_same_binning(histograms: Sequence[Histogram], what: str) -> None:
                 f"and {histogram.label!r} differ"
             )
             raise BinningError(msg)
+        if flow and not _same_flow_bins(first, histogram.hist):
+            msg = (
+                f"{what} needs histograms with the same flow bins; {histograms[0].label!r} "
+                f"and {histogram.label!r} differ (hist.axis.Regular(..., underflow=, overflow=))"
+            )
+            raise BinningError(msg)
+
+
+def _same_flow_bins(a: Any, b: Any) -> bool:
+    """Whether two one-dimensional histograms have their flow bins alike."""
+    return (a.axes[0].traits.underflow, a.axes[0].traits.overflow) == (
+        b.axes[0].traits.underflow,
+        b.axes[0].traits.overflow,
+    )
 
 
 def label_flow_bins(ax: Axes, edges: np.ndarray, *, under: bool, over: bool) -> None:
@@ -456,7 +478,7 @@ def _draw_stack(
     artists: list[Artist] = []
     labels: list[str] = []
     ranges: list[tuple[float, float, float]] = []
-    _require_same_binning(mc, "a stack")
+    require_same_binning(mc, "a stack")
     fill_alpha = 1.0 if alpha is None else alpha
     stacked = _histplot(
         [h.hist for h in mc],

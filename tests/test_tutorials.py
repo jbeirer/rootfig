@@ -57,7 +57,12 @@ def test_higgs_data_two_trees(tutorials_dir: Path) -> None:
     sig = rf.Sample(f"{path}:sig_tree", label="Signal")
     bkg = rf.Sample(f"{path}:bkg_tree", label="Background")
     p = rf.plot(
-        [sig, bkg], "`jet1_b-tag`", selection="lepton_pT > 1", bins=10, normalize=True, ratio=True
+        [sig, bkg],
+        "`jet1_b-tag`",
+        selection="lepton_pT > 1",
+        bins=10,
+        normalize=True,
+        panel="ratio",
     )
-    assert p.ratio_ax is not None
+    assert p.panel_ax is not None
     assert all(h.integral == pytest.approx(1.0) for h in p.histograms)
