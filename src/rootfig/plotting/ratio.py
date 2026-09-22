@@ -12,7 +12,7 @@ from matplotlib.ticker import MaxNLocator
 from rootfig.histograms.build import Histogram
 from rootfig.histograms.ratio import Ratio, RatioUncertainty, SignificanceKind, ratio
 from rootfig.model.style import Style
-from rootfig.plotting.hist1d import band_label
+from rootfig.plotting.hist1d import band_label, in_view
 from rootfig.plotting.style import color_cycle, foreground
 
 __all__ = ["draw_ratio_panel", "draw_significance_panel", "ratio_ylim"]
@@ -31,6 +31,7 @@ def draw_ratio_panel(
     ylim: tuple[float, float] | None = None,
     ylabel: str | None = None,
     band: bool | None = None,
+    view: Sequence[tuple[float, float]] | None = None,
 ) -> list[Ratio]:
     """Draw ``numerator / reference`` for every numerator and return the ratios.
 
@@ -58,6 +59,8 @@ def draw_ratio_panel(
         the points.
     ylabel
         Label; defaults to ``"Ratio to <reference>"`` or ``"Data / MC"``.
+    view
+        The x windows whose bins set the automatic y range.
     band
         Draw the reference uncertainty band. Defaults to ``True`` when any
         numerator uses ``uncertainty="numerator"``.
@@ -113,7 +116,7 @@ def draw_ratio_panel(
             **marker,
         )
 
-    ax.set_ylim(*(ylim if ylim is not None else ratio_ylim(ratios, band=band_edges)))
+    ax.set_ylim(*(ylim if ylim is not None else ratio_ylim(ratios, band=band_edges, view=view)))
     ax.set_xlim(reference.edges[0], reference.edges[-1])
     if ylabel is None:
         if any(h.is_data for h in numerators) and not reference.is_data:
@@ -126,31 +129,36 @@ def draw_ratio_panel(
 
 
 def ratio_ylim(
-    ratios: Sequence[Ratio], *, band: tuple[np.ndarray, np.ndarray] | None = None
+    ratios: Sequence[Ratio],
+    *,
+    band: tuple[np.ndarray, np.ndarray] | None = None,
+    view: Sequence[tuple[float, float]] | None = None,
 ) -> tuple[float, float]:
     """Choose a ratio range: at least (0.5, 1.5), widened to cover the bulk of what is drawn.
 
     The bulk is the 5th to 95th percentile, padded by 10 percent, of the finite
-    ratio values, of the systematic extent of the points and of the edges of the
-    reference ``band`` when one is drawn. Each is judged on its own, so it can
-    widen the range but never narrow it. Statistical error bars do not count: a
-    few low-statistics bins with huge uncertainties would otherwise squash the
+    ratio values in the x windows ``view``, of the systematic extent of the
+    points and of the edges of the reference ``band`` when one is drawn.
+    Each is judged on its own, so it can widen the range but never narrow it.
+    Statistical error bars do not count: a few low-statistics bins with huge
+    uncertainties would otherwise squash the
     panel. The result is clipped to ``[0, 3]``, or to ``[-3, 3]`` with negative
     ratios (signed weights), whose lowest value then stays in view.
     """
     low, high = DEFAULT_RATIO_YLIM
-    values = _finite([r.values for r in ratios])
+    values = _finite([r.values[in_view(r.edges, view)] for r in ratios])
     ranges = [(values, values)]
     with_syst = [r for r in ratios if r.syst_errors is not None]
     if with_syst:
         ranges.append(
             (
-                _finite([r.values - r.syst_errors[0] for r in with_syst]),  # type: ignore[index]
-                _finite([r.values + r.syst_errors[1] for r in with_syst]),  # type: ignore[index]
+                _finite([(r.values - r.syst_errors[0])[in_view(r.edges, view)] for r in with_syst]),  # type: ignore[index]
+                _finite([(r.values + r.syst_errors[1])[in_view(r.edges, view)] for r in with_syst]),  # type: ignore[index]
             )
         )
     if band is not None:
-        ranges.append((_finite([band[0]]), _finite([band[1]])))
+        visible = in_view(ratios[0].edges, view) if ratios else np.ones_like(band[0], dtype=bool)
+        ranges.append((_finite([band[0][visible]]), _finite([band[1][visible]])))
     for lower, upper in ranges:
         if lower.size and upper.size:
             q_low = float(np.percentile(lower, 5))
@@ -180,11 +188,12 @@ def draw_significance_panel(
     colors: Sequence[str] | None = None,
     ylim: tuple[float, float] | None = None,
     ylabel: str | None = None,
+    view: Sequence[tuple[float, float]] | None = None,
 ) -> None:
     """Draw per-bin significances, one colour per result (default: foreground).
 
-    The default y range covers every result and its errors; the first result
-    supplies the x limits.
+    The default y range covers results and errors in the x windows ``view``;
+    the first result supplies the x limits.
     """
     if colors is None:
         colors = [foreground()] * len(results)
@@ -203,6 +212,7 @@ def draw_significance_panel(
             elinewidth=1.0,
             color=color,
         )
+        ok &= in_view(result.edges, view)
         if ok.any():
             tops.append(float(np.max(result.values[ok] + errors[ok])))
     if ylim is None:

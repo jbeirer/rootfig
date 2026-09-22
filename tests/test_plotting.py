@@ -1616,3 +1616,52 @@ class TestFinishing:
         assert fig.canvas.draw is custom_draw
         fig.canvas.draw()
         assert calls == [1]
+
+
+@pytest.mark.parametrize(
+    ("view", "expected"),
+    [
+        (None, [True] * 4),
+        ([(1, 3)], [False, True, True, False]),
+        ([(0.5, 1.5), (3, 4)], [True, True, False, True]),
+        ([(4, 5)], [False] * 4),
+        ([], [False] * 4),
+    ],
+)
+def test_bins_overlapping_view(
+    view: list[tuple[float, float]] | None, expected: list[bool]
+) -> None:
+    from rootfig.plotting.hist1d import in_view
+
+    np.testing.assert_array_equal(in_view(np.arange(5), view), expected)
+
+
+def test_no_bins_in_view_is_empty() -> None:
+    from rootfig.plotting import draw_histograms
+
+    h = hist.Hist(hist.axis.Regular(4, 0, 4), storage=hist.storage.Weight()).fill([0.5])
+    fig, ax = plt.subplots()
+    drawn = draw_histograms([Histogram(h, label="h")], ax, style=Style(), view=[(5, 6)])
+    assert (drawn.ymin, drawn.ymax) == (0, 0)
+    assert np.isnan(drawn.ymin_positive)
+    plt.close(fig)
+
+
+@pytest.mark.parametrize("source", ["points", "band"])
+def test_ratio_range_uses_only_visible_uncertainties(source: str) -> None:
+    from rootfig.histograms import Ratio
+
+    errors = np.array([10, 0.1, 0.1, 10])
+    result = Ratio(
+        np.ones(4),
+        np.zeros(4),
+        np.zeros(4),
+        np.arange(5.0),
+        syst_errors=(errors, errors) if source == "points" else None,
+    )
+    band = (1 - errors, 1 + errors) if source == "band" else None
+    assert ratio_ylim([result], band=band) == (0, 3)
+    assert ratio_ylim([result], band=band, view=[(1, 3)]) == (0.5, 1.5)
+    assert ratio_ylim([result], band=band, view=[(5, 6)]) == (0.5, 1.5)
+    if band is not None:
+        assert ratio_ylim([], band=band) == (0, 3)

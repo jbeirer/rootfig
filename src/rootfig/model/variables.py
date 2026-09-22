@@ -30,14 +30,17 @@ class Variable:
         names a histogram stored in a file. An integer asks for that many bins;
         a stored histogram is then merged down to that count. Explicit edges
         (also ``(n, low, high)`` or an integer with a ``(low, high)`` range)
-        must coincide with a stored histogram's edges and merge the bins
-        between them (:func:`~rootfig.model.binning.merge_target`), so one
+        must coincide with a stored histogram's edges, crop its axis and merge
+        the bins between them, with the rest in flow bins
+        (:func:`~rootfig.model.binning.merge_target`), so one
         variable describes the tree and the histograms filled from it alike.
     range
         Range used when ``bins`` is an integer, see :data:`RangeSpec`. Defaults
         to :data:`DEFAULT_RANGE` (``"robust"``), which ignores far outliers such
         as ``-999`` sentinels and cuts the thin end of a tail; ``"auto"`` uses
-        the full finite minimum and maximum instead.
+        the full finite minimum and maximum instead. For existing histograms,
+        an explicit range without bins crops to its ends, which must be edges
+        of the histogram, and keeps the bins between them.
     label
         Axis label; may contain matplotlib math text. Defaults to the
         expression.

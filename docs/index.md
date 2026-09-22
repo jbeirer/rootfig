@@ -1,6 +1,6 @@
 # rootfig
 
-**Publication-quality figures straight from ROOT trees, without ROOT.**
+**Publication-quality figures straight from ROOT trees and histograms, without ROOT.**
 
 ```python
 import rootfig as rf

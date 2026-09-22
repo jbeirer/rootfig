@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import builtins
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 
+import boost_histogram as bh
 import hist
 import numpy as np
 
@@ -14,6 +16,7 @@ from rootfig._storage import as_weight_storage, is_category, same_axis, same_bin
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, SystematicError
 from rootfig.histograms.stats import Summary
+from rootfig.model.binning import Bins, RangeSpec, merge_target
 
 if TYPE_CHECKING:
     from rootfig.model.binning import Axis
@@ -22,17 +25,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Histogram",
-    "RebinTarget",
     "as_weight_storage",
     "compatible_binning",
     "fill",
     "from_sample",
     "mirror",
 ]
-
-RebinTarget: TypeAlias = int | Sequence[float] | np.ndarray | None
-"""What :meth:`Histogram.rebinned_to` makes of one axis: a bin count, the edges to merge to,
-or ``None`` to keep it."""
 
 
 def compatible_binning(a: Hist, b: Hist) -> bool:
@@ -311,8 +309,8 @@ class Histogram:
         """
         if self.normalization is not None:
             msg = (
-                f"histogram {self.label!r} is normalised ({self.normalization}); rebin before "
-                "normalising"
+                f"histogram {self.label!r} is normalised ({self.normalization}); "
+                "crop and rebin before normalising"
             )
             raise BinningError(msg)
         # typed loosely: the checks below are what rejects floats, bools and strings at runtime
@@ -347,59 +345,92 @@ class Histogram:
 
         return self.map_hists(merge)
 
-    def rebinned_to(self, bins: RebinTarget | Sequence[RebinTarget]) -> Histogram:
-        """Return a copy whose axes are merged to ``bins``: a bin count or edges per axis.
+    def rebinned_to(
+        self,
+        bins: Bins | Sequence[Bins | None] | None,
+        range: RangeSpec | Sequence[RangeSpec] = None,
+    ) -> Histogram:
+        """Crop and merge axes using the same ``bins`` and ``range`` as a Variable.
 
-        A count merges adjacent bins as :meth:`rebinned` does, so it must divide
-        the axis' bin count (the message names the counts that would). Edges
-        must each coincide with an edge of the axis, the first and last with its
-        ends, and the bins between two of them are merged into one; uniform
-        groups keep the axis type (a ``Regular`` axis stays ``Regular``), others
-        give a ``Variable`` axis. Edges that are exactly the axis' own, or its
-        bin count, leave it unchanged, also when the histogram is normalised.
-        ``None`` keeps an axis. A one-dimensional histogram takes the
-        count or the edges directly; otherwise give one entry per axis.
+        For 1D, give one binning and range specification. For multiple axes,
+        give one of each per axis; a single ``None`` or integer bin count, and a
+        single range (``None``, a string or ``(low, high)``), apply to every
+        axis. A range without bins keeps the existing bins between its ends.
+        Requested edges, range ends included, must coincide with existing
+        edges. Cropped values and variances
+        join the flow bins, and variations follow the same transformation.
+        Uniform merges preserve Regular axes and their transforms; uneven
+        merges produce Variable axes. Unbinned statistics describe the entries
+        and are kept. Asking for the existing bins returns ``self``.
 
         Raises
         ------
         BinningError
-            If a count does not divide the axis' bin count or is not a positive
-            integer, an edge is not one of the axis' edges or the first and last
-            are not its ends (the range of an existing histogram is fixed), the
-            sequence does not have one entry per axis, or the axis is
-            categorical; and whatever :meth:`rebinned` refuses.
+            If edges do not coincide, a count does not divide the axis size,
+            specifications do not match the dimensionality, a categorical axis
+            is merged, a cropped side lacks its flow bin, or a histogram is
+            normalised. Crop and rebin before normalising.
         """
         wanted = _targets_per_axis(bins, self.ndim)
-        factors: list[int] = []
-        boundaries: list[np.ndarray | None] = []
-        for axis, target in zip(self.hist.axes, wanted, strict=True):
-            groups: np.ndarray | None = None
-            if target is None:
-                factor = 1
-            elif _is_edges(target):
-                groups = _merge_boundaries(axis, np.asarray(target, dtype=float))
-                steps = np.diff(groups)
-                # uniform groups are a plain rebin, which keeps the axis type and transform
-                factor, groups = (int(steps[0]), None) if np.all(steps == steps[0]) else (1, groups)
-            elif not _is_positive_integer(target) or axis.size % int(target):
-                possible = [axis.size // d for d in range(1, axis.size + 1) if axis.size % d == 0]
-                msg = (
-                    f"axis {axis.label or axis.name!r} has {axis.size} bins, which can be merged "
-                    f"into {possible} bins, not {target!r}"
-                )
-                raise BinningError(msg)
-            else:
-                factor = axis.size // int(target)
-            factors.append(factor)
-            boundaries.append(groups)
-        if all(factor == 1 for factor in factors) and all(groups is None for groups in boundaries):
-            # the axes already have these bins: nothing to merge, so a normalised histogram
-            # passes too (its Variable still describes it); any real merge is refused below
+        ranges = _ranges_per_axis(range, self.ndim)
+        crops = []
+        merges = []
+        changed = False
+        for axis, spec, range_ in zip(self.hist.axes, wanted, ranges, strict=True):
+            target = merge_target(spec, cast("RangeSpec", range_))
+            start, stop, factor = 0, axis.size, 1
+            steps = None
+            if isinstance(target, int):
+                if axis.size % target:
+                    possible = [
+                        axis.size // n
+                        for n in builtins.range(1, axis.size + 1)
+                        if axis.size % n == 0
+                    ]
+                    msg = (
+                        f"axis {axis.label or axis.name!r} has {axis.size} bins, which can be "
+                        f"merged into {possible} bins, not {target!r}"
+                    )
+                    raise BinningError(msg)
+                factor = axis.size // target
+            elif target is not None:
+                positions = _merge_boundaries(axis, np.asarray(target, dtype=float))
+                start, stop = int(positions[0]), int(positions[-1])
+                if not isinstance(target, tuple):
+                    steps = np.diff(positions)
+                    if np.all(steps == steps[0]):
+                        factor, steps = int(steps[0]), None
+            axis_changed = start != 0 or stop != axis.size or factor != 1 or steps is not None
+            if axis_changed:
+                name = axis.label or axis.name
+                if is_category(axis):
+                    msg = f"cannot merge the categories of axis {name!r}"
+                    raise BinningError(msg)
+                for cropped, side in ((start > 0, "underflow"), (stop < axis.size, "overflow")):
+                    if cropped and not getattr(axis.traits, side):
+                        msg = f"cannot crop axis {name!r}: its {side} bin is missing"
+                        raise BinningError(msg)
+                if self.normalization is not None:
+                    msg = (
+                        f"histogram {self.label!r}, axis {name!r}, is normalised "
+                        f"({self.normalization}); crop and rebin before normalising"
+                    )
+                    raise BinningError(msg)
+            changed |= axis_changed
+            crops.append(slice(start, stop) if start != 0 or stop != axis.size else slice(None))
+            merge = hist.rebin(groups=steps.tolist()) if steps is not None else hist.rebin(factor)
+            merges.append(
+                slice(None, None, merge) if steps is not None or factor != 1 else slice(None)
+            )
+        if not changed:
             return self
-        result = self.rebinned(factors)
-        if all(groups is None for groups in boundaries):
-            return result
-        return result.map_hists(lambda h: _merge_to_edges(h, boundaries))
+
+        def transform(h: Hist) -> Hist:
+            # Separate indexing preserves cropped values and variances in the flow bins.
+            cropped = cast("Hist", h[tuple(crops)])
+            return cast("Hist", cropped[tuple(merges)])
+
+        return self.map_hists(transform)
 
 
 def _is_positive_integer(value: object) -> bool:
@@ -424,19 +455,39 @@ def _is_edges(value: object) -> bool:
 
 
 def _targets_per_axis(bins: Any, ndim: int) -> list[Any]:
-    """Return one :data:`RebinTarget` per axis for the ``bins`` given to :meth:`rebinned_to`."""
-    if bins is None or _is_number(bins):
+    """Return one binning specification per axis for the ``bins`` given to :meth:`rebinned_to`."""
+    if bins is None or isinstance(bins, int | float | np.number | str):
         return [bins] * ndim
-    if ndim == 1 and _is_edges(bins):
+    if ndim == 1 and (isinstance(bins, bh.axis.Axis) or _is_edges(bins)):
         return [bins]
     wanted = list(bins)
     if len(wanted) != ndim:
         msg = (
-            f"got {len(wanted)} bin counts for a {ndim}D histogram; give one count or edge "
-            "sequence per axis"
+            f"got {len(wanted)} bin specifications for a {ndim}D histogram; give one "
+            "binning specification per axis"
         )
         raise BinningError(msg)
     return wanted
+
+
+def _ranges_per_axis(range_: Any, ndim: int) -> list[Any]:
+    """Return one range specification per axis for the ``range`` given to :meth:`rebinned_to`.
+
+    ``None``, a string or a pair of numbers is one range for every axis; anything
+    else is a sequence with one range per axis.
+    """
+    single = (
+        range_ is None
+        or isinstance(range_, str)
+        or (isinstance(range_, Sequence) and len(range_) == 2 and all(map(_is_number, range_)))
+    )
+    if single:
+        return [range_] * ndim
+    ranges = list(range_)
+    if len(ranges) != ndim:
+        msg = f"got {len(ranges)} ranges for a {ndim}D histogram; give one per axis"
+        raise BinningError(msg)
+    return ranges
 
 
 def _merge_boundaries(axis: Any, edges: np.ndarray) -> np.ndarray:
@@ -444,8 +495,7 @@ def _merge_boundaries(axis: Any, edges: np.ndarray) -> np.ndarray:
 
     Every requested edge must coincide with one of the axis' edges (to a
     millionth of its smallest bin width, as :func:`~rootfig._storage.same_axis`
-    compares), the first and last with its ends: the range of a histogram that
-    already exists cannot change.
+    compares). The first and last edges bound the cropped axis.
     """
     name = axis.label or axis.name
     if is_category(axis):
@@ -456,13 +506,6 @@ def _merge_boundaries(axis: Any, edges: np.ndarray) -> np.ndarray:
         raise BinningError(msg)
     own = np.asarray(axis.edges, dtype=float)
     extent = f"its {axis.size} bins run from {own[0]:g} to {own[-1]:g}"
-    if not (np.isclose(edges[0], own[0]) and np.isclose(edges[-1], own[-1])):
-        msg = (
-            f"the range of a histogram that already exists is fixed: {extent}, and bins from "
-            f"{edges[0]:g} to {edges[-1]:g} were asked for. Use xlim= to zoom, or edges that end "
-            "where the axis does"
-        )
-        raise BinningError(msg)
     positions = np.clip(np.searchsorted(own, edges), 1, own.size - 1)
     positions = np.where(
         np.abs(own[positions - 1] - edges) < np.abs(own[positions] - edges),
@@ -473,8 +516,8 @@ def _merge_boundaries(axis: Any, edges: np.ndarray) -> np.ndarray:
     missing = edges[np.abs(own[positions] - edges) > tolerance]
     if missing.size:
         msg = (
-            f"axis {name!r} has no bin edge at {missing[0]:g}: {extent} and only its own edges "
-            "can be kept when merging its bins. Fill from the tree to bin freely"
+            f"axis {name!r} has no bin edge at {missing[0]:g}: {extent}, and cropping or "
+            "merging keeps only its own edges. Fill from the tree to bin freely"
         )
         raise BinningError(msg)
     if np.any(np.diff(positions) <= 0):
@@ -487,44 +530,6 @@ def _merge_boundaries(axis: Any, edges: np.ndarray) -> np.ndarray:
         )
         raise BinningError(msg)
     return positions
-
-
-def _merge_to_edges(h: Hist, boundaries: Sequence[np.ndarray | None]) -> Hist:
-    """Merge the bins of ``h`` between the ``boundaries`` of each axis (``None`` keeps an axis).
-
-    Contents and variances add up and the flow bins are kept; a merged axis
-    becomes a ``Variable`` axis with the same name, label and flow bins.
-    """
-    axes = []
-    values = np.asarray(h.values(flow=True), dtype=float)
-    variances = np.asarray(h.variances(flow=True), dtype=float)
-    for index, (axis, groups) in enumerate(zip(h.axes, boundaries, strict=True)):
-        if groups is None:
-            axes.append(axis)
-            continue
-        traits = axis.traits
-        axes.append(
-            hist.axis.Variable(
-                np.asarray(axis.edges, dtype=float)[groups],
-                name=axis.name,
-                label=axis.label,
-                underflow=traits.underflow,
-                overflow=traits.overflow,
-            )
-        )
-        # groups are visible edge positions; in flow coordinates the underflow cell comes
-        # first and the overflow cell last, each as a group of its own
-        offset = 1 if traits.underflow else 0
-        starts = [*([0] if traits.underflow else []), *(offset + groups[:-1])]
-        if traits.overflow:
-            starts.append(offset + axis.size)
-        values = np.add.reduceat(values, starts, axis=index)
-        variances = np.add.reduceat(variances, starts, axis=index)
-    merged = hist.Hist(*axes, storage=hist.storage.Weight())
-    view: Any = merged.view(flow=True)
-    view.value = values
-    view.variance = variances
-    return merged
 
 
 def from_sample(

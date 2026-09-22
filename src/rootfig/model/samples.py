@@ -61,7 +61,7 @@ class Sample:
     ngen
         Number of generated events the cross section refers to: a number, the
         name of an object in the file(s) holding it (a sum-of-weights histogram
-        or a ``TParameter`` such as FCCAnalyses' ``"eventsProcessed"``), or
+        or a ``TParameter`` such as ``"eventsProcessed"``), or
         ``None`` to use the number of entries in the source.
     entry_start, entry_stop
         Read only this range of entries (counted across files).

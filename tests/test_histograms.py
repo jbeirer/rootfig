@@ -989,9 +989,9 @@ class TestRebinnedTo:
         assert Histogram(h, label="h").rebinned_to([None, None]) is not None
         with pytest.raises(BinningError, match=r"has 12 bins.*\[12, 6, 4, 3, 2, 1\].*not 5"):
             Histogram(h, label="h").rebinned_to([5, None])
-        with pytest.raises(BinningError, match=r"not 2\.5"):
+        with pytest.raises(BinningError, match="bin edges must be one-dimensional"):
             Histogram(h, label="h").rebinned_to([2.5, None])  # type: ignore[list-item]
-        with pytest.raises(BinningError, match="got 1 bin counts for a 2D"):
+        with pytest.raises(BinningError, match="got 1 bin specifications for a 2D"):
             Histogram(h, label="h").rebinned_to([3])
 
     def test_category_axis_keeps_its_count_only(self) -> None:
@@ -1028,13 +1028,27 @@ class TestRebinnedTo:
         np.testing.assert_allclose(
             histogram.rebinned_to(np.array([0.0, 3.0, 6.0])).values(), [6.0, 4.0]
         )
+        cropped = histogram.rebinned_to([1, 3, 6])
+        np.testing.assert_allclose(cropped.values(flow=True), [2, 5, 4, 1])
+        np.testing.assert_allclose(cropped.variances(flow=True), [2, 13, 16, 1])
+        np.testing.assert_allclose(cropped.variations["s"][0].values(), [10, 8])
+        cropped = histogram.rebinned_to(None, range=(1, 4))
+        assert isinstance(cropped.axis, hist.axis.Regular)
+        np.testing.assert_allclose(cropped.edges, [1, 2, 3, 4])
+        np.testing.assert_allclose(cropped.values(flow=True), [2, 2, 3, 0, 5])
+        merged_crop = histogram.rebinned_to((2, 2, 6))
+        assert isinstance(merged_crop.axis, hist.axis.Regular)
+        np.testing.assert_allclose(merged_crop.values(flow=True), [4, 3, 4, 1])
+        normalised = normalize(histogram.replace(variations={}), "unity")
+        assert normalised.rebinned_to(histogram.edges) is normalised
+        with pytest.raises(BinningError, match=r"axis 'X'.*crop and rebin before normalising"):
+            normalised.rebinned_to(None, range=(1, 4))
         for bad, message in (
             ([0, 2.5, 6], "no bin edge at 2.5"),
-            ([1, 3, 6], "range of a histogram that already exists is fixed"),
-            ([0, 3, 7], "range of a histogram that already exists is fixed"),
+            ([0, 3, 7], "no bin edge at 7"),
             ([0, 6, 3], "strictly increasing"),
             ([0, 2.9999999, 3.0000001, 6], "resolve to the same edge 3"),
-            ([3, None], "got 2 bin counts for a 1D"),
+            ([3, None], "got 2 bin specifications for a 1D"),
         ):
             with pytest.raises(BinningError, match=message):
                 histogram.rebinned_to(bad)
@@ -1046,6 +1060,51 @@ class TestRebinnedTo:
         kept = Histogram(log, label="l").rebinned_to([1, 100, 1e4]).axis
         assert isinstance(kept, hist.axis.Regular)
         np.testing.assert_allclose(kept.edges, [1, 100, 1e4])
+        cropped_log = Histogram(log, label="l").rebinned_to(None, range=(10, 1000)).axis
+        assert isinstance(cropped_log, hist.axis.Regular)
+        assert cropped_log.transform == log.axes[0].transform
+        np.testing.assert_allclose(cropped_log.edges, [10, 100, 1000])
+
+    @pytest.mark.parametrize(
+        ("bins", "window"),
+        [
+            ((2, 2, 6), None),
+            (2, (2, 6)),
+            ([2, 4, 6], None),
+            (hist.axis.Regular(2, 2, 6), None),
+            (hist.axis.Variable([2, 4, 6]), None),
+        ],
+    )
+    def test_crop_specifications_and_statistics(self, bins: Any, window: Any) -> None:
+        [original] = build_histograms(
+            [Sample({"x": [0.5, 2.5, 5.5, 7.0]})], Variable("x", bins=(6, 0, 6))
+        )
+        cropped = original.rebinned_to(bins, range=window)
+        np.testing.assert_allclose(cropped.values(flow=True), [1, 1, 1, 1])
+        assert cropped.stats is original.stats
+        assert cropped.entries == 4
+        np.testing.assert_allclose(original.values(flow=True), [0, 1, 0, 1, 0, 0, 1, 1])
+
+    def test_invalid_specs(self) -> None:
+        h = Histogram(
+            hist.Hist(hist.axis.Regular(6, 0, 6, name="x"), storage=hist.storage.Weight()),
+            label="h",
+        )
+        with pytest.raises(BinningError, match="got a bool"):
+            h.rebinned_to(True)
+        with pytest.raises(BinningError, match="got 2 ranges for a 1D"):
+            h.rebinned_to(None, range=[None, None])
+        with pytest.raises(BinningError, match=r"range must be \(low, high\).*got \[1, 3\]"):
+            h.rebinned_to(None, range=[1, 3])
+
+    def test_one_range_for_every_axis(self) -> None:
+        axes = [hist.axis.Regular(4, 0, 4, name=name) for name in "xy"]
+        h = Histogram(hist.Hist(*axes, storage=hist.storage.Weight()), label="h")
+        for axis in h.rebinned_to(None, range=(1, 3)).hist.axes:
+            np.testing.assert_allclose(axis.edges, [1, 2, 3])
+        assert h.rebinned_to(None, range="robust") is h
+        one = Histogram(hist.Hist(axes[0], storage=hist.storage.Weight()), label="one")
+        np.testing.assert_allclose(one.rebinned_to([None], range=((1, 3),)).edges, [1, 2, 3])
 
     def test_edges_per_axis_and_flowless_axes(self) -> None:
         h = hist.Hist(
@@ -1062,7 +1121,7 @@ class TestRebinnedTo:
         ]
         np.testing.assert_allclose(merged.values(), [[1, 0, 0], [1, 0, 2]])
         assert merged.hist.values(flow=True).sum() == h.values(flow=True).sum()
-        with pytest.raises(BinningError, match="got 3 bin counts for a 2D"):
+        with pytest.raises(BinningError, match="got 3 bin specifications for a 2D"):
             Histogram(h, label="h").rebinned_to([0, 1, 4])
         no_flow = hist.Hist(
             hist.axis.Regular(4, 0, 4, name="x", flow=False), storage=hist.storage.Weight()
@@ -1071,6 +1130,13 @@ class TestRebinnedTo:
         np.testing.assert_allclose(merged.values(), [1.0, 1.0])
         assert not merged.axis.traits.underflow
         assert not merged.axis.traits.overflow
+        for window, side in (((1, 4), "underflow"), ((0, 3), "overflow")):
+            with pytest.raises(BinningError, match=f"axis 'x'.*{side} bin is missing"):
+                Histogram(no_flow, label="n").rebinned_to(None, range=window)
+        cropped = Histogram(h, label="h").rebinned_to(None, range=[(1, 3), None])
+        np.testing.assert_allclose(cropped.hist.axes[0].edges, [1, 2, 3])
+        np.testing.assert_allclose(cropped.values(flow=True).sum(), h.values(flow=True).sum())
+        np.testing.assert_allclose(cropped.variances(flow=True).sum(), h.variances(flow=True).sum())
 
 
 class TestAxisRenaming:
@@ -1890,13 +1956,15 @@ class TestStoredHistograms:
         assert isinstance(h.axis, hist.axis.Variable)
         np.testing.assert_allclose(h.edges, [0, 100, 150, 250])
         assert h.sum_weights == pytest.approx(0.5 * 4000)
-        # the stored range is fixed and only its own edges can be kept
-        with pytest.raises(BinningError, match="range of a histogram that already exists is fixed"):
-            build_histograms([zh], Variable("mz", bins=(10, 0, 100)))
+        (h,) = build_histograms([zh], Variable("mz", bins=(10, 0, 100)))
+        assert h.axis.size == 10
+        assert h.edges[[0, -1]].tolist() == [0, 100]
+        assert h.sum_weights == pytest.approx(0.5 * 4000)
         with pytest.raises(BinningError, match="no bin edge at 101"):
             build_histograms([zh], Variable("mz", bins=[0, 101, 250]))
-        with pytest.raises(BinningError, match="axis range is fixed"):
-            build_histograms([zh], Variable("mz", range=(0, 100)))
+        (h,) = build_histograms([zh], Variable("mz", range=(0, 100)))
+        assert h.axis.size == 40
+        assert h.sum_weights == pytest.approx(0.5 * 4000)
 
     def test_event_options_are_refused(self, stored_dir: Path) -> None:
         zh = self._zh(stored_dir)
@@ -2536,3 +2604,18 @@ class TestPrefetch:
         self._assert_same(
             build_histograms(samples, "MET", cache=cache), build_histograms(samples, "MET")
         )
+
+
+def test_tree_and_ready_made_variable_agree() -> None:
+    import rootfig as rf
+
+    x = np.random.default_rng(73).uniform(-10, 220, 30000)
+    variable = rf.Variable("x", bins=(20, 120, 140))
+    [tree] = rf.histograms({"x": x}, variable)
+    fine = hist.Hist(hist.axis.Regular(2000, 0, 200, name="x"), storage=hist.storage.Weight())
+    fine.fill(x)
+    plot = rf.plot(fine, variable)
+    [ready] = plot.histograms
+    np.testing.assert_allclose(ready.values(flow=True), tree.values(flow=True))
+    np.testing.assert_allclose(ready.variances(flow=True), tree.variances(flow=True))
+    plot.close()

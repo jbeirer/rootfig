@@ -201,10 +201,12 @@ def read_stored(
 
     One :class:`~rootfig.histograms.Histogram` per sample, in ``Weight``
     storage, scaled by the sample's ``scale`` and luminosity factor. A
-    variable's ``bins`` merges the stored bins: an integer count, or edges that
-    coincide with the stored ones (see
-    :func:`~rootfig.model.binning.merge_target`); ``label`` and ``unit``
-    replace the stored axis title. Systematics of kind ``"norm"`` scale the
+    variable's ``bins`` and ``range`` crop and merge the stored bins. An integer
+    count merges the whole axis; explicit edges must coincide with stored ones,
+    and a range without bins keeps the stored bins between its ends, which must
+    be stored edges too. Cropped content joins the
+    flow bins (see :func:`~rootfig.model.binning.merge_target`). ``label`` and
+    ``unit`` replace the stored axis title. Systematics of kind ``"norm"`` scale the
     histogram and ``Systematic.samples`` reads the same name from other files,
     which are checked like the nominal ones; the other kinds need event data.
     ``include_systematics=False`` reads the nominal histograms only and leaves
@@ -217,11 +219,10 @@ def read_stored(
     ------
     SelectionError
         For a selection, weight or ``nonfinite="error"`` request: those act on
-        event data, which a stored histogram no longer has.
+        event data, which a stored histogram does not contain.
     BinningError
-        If ``bins`` asks for anything but a merge of the stored bins, or a
-        ``(low, high)`` range comes without bins (the stored range is fixed;
-        ``xlim=`` zooms).
+        If requested edges do not coincide with stored edges, a count does
+        not divide the stored bin count, or a cropped side lacks a flow bin.
     SystematicError
         For weight or branch-replacement systematics, or a variation whose
         sample addresses a tree or in-memory data instead of stored histograms.
@@ -239,8 +240,9 @@ def read_stored(
         )
         raise SourceError(msg)
     _reject_event_options(name, selection=selection, weight=weight, nonfinite=nonfinite)
-    # what each axis is merged to; checked before any file is read
-    targets = [merge_target(variable.bins, variable.range) for variable in variables]
+    # Validate binning specifications before any file is read.
+    for variable in variables:
+        merge_target(variable.bins, variable.range)
     plot_level = as_systematics(systematics, "plot") or {}
     result = []
     for sample in samples:
@@ -268,7 +270,9 @@ def read_stored(
             for syst_name, syst in sources.items()
         }
         histogram = from_sample(sample, nominal, variations=variations)
-        result.append(histogram.rebinned_to(targets))
+        result.append(
+            histogram.rebinned_to([v.bins for v in variables], range=[v.range for v in variables])
+        )
     return result
 
 

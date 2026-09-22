@@ -4,7 +4,8 @@ Muons and jets are jagged per event, ``MET``, ``m_ll``, ``lep_iso`` and the
 ``weight`` are per event. ``weight_pu_up``/``weight_pu_down`` and
 ``MET_jesUp``/``MET_jesDown`` are systematic variations of the weight and of
 ``MET``. Nothing here is specific to rootfig; it only produces
-small ``TTree`` files the examples can read.
+small ``TTree`` files and scaled histogram files the examples
+can read.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import awkward as ak
+import hist
 import numpy as np
 import uproot
 
@@ -103,7 +105,7 @@ def write_tree(path: Path, columns: dict[str, Any], tree: str = "events") -> Non
 
 
 def write_dataset(out: Path) -> None:
-    """Write signal.root, background.root, diboson.root and data.root into ``out``."""
+    """Write the toy trees and process histograms into ``out``."""
     out.mkdir(parents=True, exist_ok=True)
     write_tree(out / "signal.root", make_events("signal", N_EVENTS, seed=1))
     write_tree(out / "background.root", make_events("zjets", N_EVENTS, seed=2))
@@ -114,3 +116,24 @@ def write_dataset(out: Path) -> None:
     )
     observed["weight"] = np.ones(len(observed["event"]))
     write_tree(out / "data.root", observed)
+    write_histograms(out)
+
+
+def write_histograms(out: Path) -> None:
+    """Write one scaled file of Weight histograms per process."""
+    for process, kind, seed, xsec in (
+        ("WW", "zjets", 6, 16.4),
+        ("ZZ", "diboson", 7, 1.4),
+        ("ZH", "signal", 8, 0.2),
+    ):
+        events = make_events(kind, N_EVENTS, seed=seed)
+        weights = events["weight"] * xsec * 1.08e7 / N_EVENTS
+        with uproot.recreate(out / f"p8_ee_{process}_ecm240.root") as file:
+            for name, bins, title in (
+                ("m_ll", (1000, 0, 250), "m_{ll} [GeV]"),
+                ("MET", (400, 0, 400), "MET"),
+            ):
+                h = hist.Hist(
+                    hist.axis.Regular(*bins, name=name, label=title), storage=hist.storage.Weight()
+                )
+                file[name] = h.fill(events[name], weight=weights)

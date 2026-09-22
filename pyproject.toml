@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "rootfig"
 dynamic = ["version"]
-description = "Publication-quality figures straight from ROOT trees, without ROOT: uproot + Awkward + hist + mplhep with a TTree::Draw-like API."
+description = "Publication-quality figures straight from ROOT trees and histograms, without ROOT: uproot + Awkward + hist + mplhep with a TTree::Draw-like API."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

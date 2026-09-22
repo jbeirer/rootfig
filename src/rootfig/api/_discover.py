@@ -72,7 +72,7 @@ def discover(
     boolean leaves, lists and fixed-size arrays of them) or as a stored ``TH1``
     that :func:`~rootfig.histograms.stored_mode` reads, and when nothing is bound
     to refuse it that way: a selection, a weight, ``nonfinite="error"``, a stats
-    box, a ``(low, high)`` range without bins, or a systematic varying event data
+    box or a systematic varying event data
     that applies to the sample (the plot's, unless the sample's own source of
     that name replaces it; none for observed data) rules stored histograms out.
     The data a ``Systematic.samples`` variation fills or reads from is surveyed
@@ -168,8 +168,7 @@ class _Constraints:
             blocker = f"nonfinite={options['nonfinite']!r} needs event data"
         elif options.get("stats"):
             blocker = "stats= needs the unbinned statistics collected while filling from event data"
-        elif isinstance(options.get("range"), tuple) and options.get("bins") is None:
-            blocker = "range=(low, high) without bins= cannot be applied to a stored histogram"
+
         try:
             systematics = as_systematics(options.get("systematics"), "plot") or {}
         except RootfigError:
