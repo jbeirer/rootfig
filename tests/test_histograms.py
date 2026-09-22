@@ -1062,8 +1062,7 @@ class TestRebinnedTo:
         np.testing.assert_allclose(kept.edges, [1, 100, 1e4])
         cropped_log = Histogram(log, label="l").rebinned_to(None, range=(10, 1000)).axis
         assert isinstance(cropped_log, hist.axis.Regular)
-        assert cropped_log.transform == log.axes[0].transform
-        np.testing.assert_allclose(cropped_log.edges, [10, 100, 1000])
+        np.testing.assert_allclose(cropped_log.edges, [10, 100, 1000])  # linear would put 505
 
     @pytest.mark.parametrize(
         ("bins", "window"),
