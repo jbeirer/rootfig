@@ -102,7 +102,7 @@ def draw_panel(
     ValueError
         Without comparisons, or with comparisons of different kinds, references
         or binnings: one panel shows one kind against one reference, whose
-        label and uncertainty band it draws, so references varied differently
+        label and uncertainty band it draws, so references whose bands differ
         are refused too.
     """
     if not comparisons:
@@ -118,7 +118,7 @@ def draw_panel(
             msg = (
                 "draw_panel draws one reference, whose label and uncertainty band the panel "
                 f"shows; got {first.reference!r} and {comparison.reference!r}, which differ in "
-                "their bins, their contents or their variations"
+                "their bins, their contents or their uncertainty bands"
             )
             raise ValueError(msg)
         if not same_edges(comparison.edges, first.edges):
@@ -180,12 +180,14 @@ def _same_reference(comparison: Comparison, other: Comparison) -> bool:
     The panel draws one band, so the references must agree on it: the
     histograms themselves when they carry them (:func:`compare` keeps the
     reference), one standing for the other when they bin alike and their
-    contents agree, and in either case the band the comparisons carry, which
-    holds the reference's statistical and systematic uncertainty. Binning alike
-    is what :func:`~rootfig.histograms.compatible_binning` means, so two
-    category axes must list the same categories, which their numeric edges do
-    not say. A hand-built :class:`~rootfig.histograms.Comparison` has only its
-    label and its band.
+    contents agree, and in either case the band the comparisons carry. That
+    band is the drawn uncertainty, statistical and systematic together, not the
+    sources behind it: references varied by different sources that come to the
+    same band are the same reference to draw. Binning alike is what
+    :func:`~rootfig.histograms.compatible_binning` means, so two category axes
+    must list the same categories, which their numeric edges do not say. A
+    hand-built :class:`~rootfig.histograms.Comparison` has only its label and
+    its band.
     """
     if not _same_band(comparison, other):  # the same nominal contents, varied differently
         return False

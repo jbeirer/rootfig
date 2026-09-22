@@ -852,7 +852,7 @@ class TestPanel:
     def test_references_varied_differently_are_not_one_reference(
         self, mc_hists: list[Histogram]
     ) -> None:
-        # the panel draws one band, so the reference's systematics must agree as well
+        # the panel draws one band, so the references must come to the same band as well
         fig, ax = plt.subplots()
         reference = mc_hists[0]
         varied = reference.replace(variations={"s": (reference.hist * 1.5, None)})
