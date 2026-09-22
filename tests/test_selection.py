@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 from rootfig.errors import IncompatibleWeightError, RootfigWarning, SelectionError
-from rootfig.selection import Columns, depth_of, prepare, same_structure
+from rootfig.selection import Columns, depth_of, prepare
+from rootfig.selection.columns import same_structure
 
 
 @pytest.fixture

@@ -45,7 +45,6 @@ from rootfig.plotting import (
     add_legend,
     add_stats_box,
     add_text,
-    align_experiment_label,
     apply_xbreak,
     break_segments,
     color_cycle,
@@ -64,7 +63,6 @@ from rootfig.plotting import (
     overlay_artists,
     panel_ylim,
     raise_ylim_above,
-    resolve_rc,
     show_flow_bins,
     split_stack,
     style_context,
@@ -81,7 +79,7 @@ from rootfig.plotting.figure import (
     without_redraw,
 )
 from rootfig.plotting.panel import comparison_label
-from rootfig.plotting.style import foreground, pin_fonts
+from rootfig.plotting.style import align_experiment_label, foreground, pin_fonts, resolve_rc
 from rootfig.selection import Columns
 
 

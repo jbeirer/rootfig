@@ -3,7 +3,6 @@
 from rootfig.io.cache import ReadCache
 from rootfig.io.sources import (
     ArraySource,
-    FilesLike,
     FileSource,
     Source,
     as_source,
@@ -13,7 +12,6 @@ from rootfig.io.sources import (
 __all__ = [
     "ArraySource",
     "FileSource",
-    "FilesLike",
     "ReadCache",
     "Source",
     "as_source",

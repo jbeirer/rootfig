@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import io
+import re
 import warnings
 from pathlib import Path
 from typing import Any, ClassVar
@@ -34,11 +35,10 @@ from rootfig.errors import (
 from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
     add_experiment_label,
-    align_experiment_label,
     raise_ylim_above,
     style_context,
 )
-from rootfig.plotting.style import LABEL_MIN_SCALE
+from rootfig.plotting.style import LABEL_MIN_SCALE, align_experiment_label
 
 
 def panel_ylabel(plot: Any) -> str:
@@ -1531,6 +1531,26 @@ class TestPublicSurface:
         assert rf.__version__
         for name in rf.__all__:
             assert hasattr(rf, name), name
+
+    def test_documented_lower_layer_exports(self) -> None:
+        reference = (Path(__file__).resolve().parents[1] / "docs" / "api.md").read_text()
+        lower_layers = reference.split("## Lower layers\n", 1)[1].split("\n## ", 1)[0]
+        entries = lower_layers.split("\n::: ")[1:]
+        assert len(entries) == 6
+        for entry in entries:
+            module_name, options = entry.split("\n", 1)
+            if "      members:\n" in options:
+                members = re.findall(r"^        - (\w+)$", options, re.MULTILINE)
+                assert members, module_name
+            else:
+                module_name, name = module_name.rsplit(".", 1)
+                # A defining-function path still documents its package's re-export.
+                module_name = importlib.import_module(module_name).__package__
+                members = [name]
+            module = importlib.import_module(module_name)
+            for name in members:
+                assert hasattr(module, name), f"{module_name}.{name}"
+                assert name in module.__all__, f"{module_name}.{name}"
 
     def test_evaluate_reexport(self) -> None:
         assert rf.evaluate("a + 1", {"a": ak.Array([1, 2])}).tolist() == [2, 3]
