@@ -1456,13 +1456,13 @@ class TestSummaryAndCorrelation:
         from rootfig.io import FileSource
 
         calls: list[list[str]] = []
-        original = FileSource.arrays
+        original = FileSource.iterate
 
-        def counting(self: FileSource, branches: Any) -> Any:
+        def counting(self: FileSource, branches: Any, *args: Any) -> Any:
             calls.append(list(branches))
-            return original(self, branches)
+            return original(self, branches, *args)
 
-        monkeypatch.setattr(FileSource, "arrays", counting)
+        monkeypatch.setattr(FileSource, "iterate", counting)
         variables = ["MET", "Muon_pt", "nMuon * 2"]
         table = rf.summarize(signal_file, variables, tree="events", selection="nMuon > 0")
         assert len(calls) == 1  # one read for all variables, the selection and the weight

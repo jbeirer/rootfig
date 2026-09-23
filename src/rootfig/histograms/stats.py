@@ -82,7 +82,7 @@ def _fmt(value: float, precision: int) -> str:
 def summarize(columns: Columns, index: int = 0) -> Summary:
     """Compute :class:`Summary` statistics for column ``index`` of ``columns``."""
     values = columns.arrays[index]
-    weights = columns.effective_weights()
+    weights = columns.weights
     n = int(values.size)
     common: dict[str, Any] = {
         "entries": n,
@@ -92,8 +92,11 @@ def summarize(columns: Columns, index: int = 0) -> Summary:
         "n_nonfinite": columns.n_nonfinite,
         "per_object": columns.per_object,
     }
-    sum_w = float(weights.sum())
-    sum_w2 = float((weights**2).sum())
+    if weights is None:  # unit weights sum to the entry count
+        sum_w = sum_w2 = float(n)
+    else:
+        sum_w = float(weights.sum())
+        sum_w2 = float(np.square(weights).sum())
     if n == 0 or sum_w == 0:
         nan = float("nan")
         return Summary(
@@ -107,14 +110,22 @@ def summarize(columns: Columns, index: int = 0) -> Summary:
             _sum_w2=sum_w2,
             **common,
         )
-    mean = float(np.average(values, weights=weights))
+
+    def average(array: np.ndarray) -> float:
+        # np.average, without summing the weights again (or a column of ones) every time
+        total = array.sum() if weights is None else np.multiply(array, weights).sum()
+        return float(total / sum_w)
+
+    mean = average(values)
     centred = values - mean
-    variance = float(np.average(centred**2, weights=weights))
+    power = np.square(centred)
+    variance = average(power)
     # negative weights can make the weighted second moment negative: undefined, not an error
     std = math.sqrt(variance) if variance >= 0 else float("nan")
     n_eff = sum_w**2 / sum_w2 if sum_w2 else 0.0
     sem = std / math.sqrt(n_eff) if n_eff > 0 else float("nan")
-    third = float(np.average(centred**3, weights=weights))
+    power *= centred  # the cube from the square: centred**3 calls pow() for every value
+    third = average(power)
     skewness = third / std**3 if std > 0 else float("nan")
     return Summary(
         sum_weights=sum_w,

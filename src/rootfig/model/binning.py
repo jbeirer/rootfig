@@ -284,13 +284,15 @@ def auto_range(
     finite: list[np.ndarray] = []
     for v, w in paired:
         mask = np.isfinite(v)
-        if not mask.any():
-            continue
-        finite.append(v[mask])
-        kept_weights.append(None if w is None else w[mask])
+        if mask.all():  # prepared columns hold finite values only: nothing to copy
+            finite.append(v)
+            kept_weights.append(w)
+        elif mask.any():
+            finite.append(v[mask])
+            kept_weights.append(None if w is None else w[mask])
     if not finite:
         return (0.0, 1.0)
-    combined = np.concatenate(finite)
+    combined = finite[0] if len(finite) == 1 else np.concatenate(finite)
     low, high = float(combined.min()), float(combined.max())
     span = high - low
     high = high + (span * 1e-3 if span > 0 else 0.0)
@@ -324,8 +326,8 @@ def _retained_extent(samples: Sequence[np.ndarray]) -> tuple[float, float]:
     the honest scale to ask whether one of its entries is an outlier, and a
     sentinel is still far from the bulk of the sample it appears in.
     """
-    extents = [_keep_within(v, _modified_z_scores(v), ROBUST_LADDER[0]) for v in samples]
-    return min(float(k.min()) for k in extents), max(float(k.max()) for k in extents)
+    extents = [_kept_extent(v, _modified_z_scores(v), ROBUST_LADDER[0]) for v in samples]
+    return min(low for low, _ in extents), max(high for _, high in extents)
 
 
 def _outside(
@@ -391,12 +393,8 @@ def _robust_range(
     histogram draws while being a rounding error in the count.
     """
     # The ladder scores the pooled values; with one sample those are its own scores.
-    scores = _modified_z_scores(values)
-    if len(samples) == 1:
-        only = _keep_within(values, scores, ROBUST_LADDER[0])
-        extent = (float(only.min()), float(only.max()))
-    else:
-        extent = _retained_extent(samples)
+    tail = _Tail(samples, weights, values, _modified_z_scores(values))
+    extent = tail.extent(ROBUST_LADDER[0]) if len(samples) == 1 else _retained_extent(samples)
     best = _padded(*extent, low, high)
     budgets = np.array(
         [
@@ -408,14 +406,78 @@ def _robust_range(
         return best
     outside = _outside(samples, weights, *best)
     for threshold in ROBUST_LADDER[1:]:
-        kept = _keep_within(values, scores, threshold)
-        candidate = _padded(float(kept.min()), float(kept.max()), low, high)
+        candidate = _padded(*tail.extent(threshold), low, high)
         if candidate[0] < best[0] or candidate[1] > best[1]:
             break  # an emptied selection falls back to every value: stop widening
-        if np.any(_outside(samples, weights, *candidate) - outside > budgets):
+        if np.any(tail.outside(*candidate) - outside > budgets):
             break
         best = candidate
     return best
+
+
+class _Tail:
+    """The pooled values beyond the tightest step of :data:`ROBUST_LADDER`, split off once.
+
+    Every step keeps at least the values the tightest one keeps, so the steps
+    differ only in this tail, a few percent of the values: the extent a step keeps
+    and what a candidate leaves out of the view are measured on it, and on the
+    extremes of the rest, instead of on every value at every step. The answers
+    are exactly those of :func:`_kept_extent` and :func:`_outside` on all values.
+    """
+
+    def __init__(
+        self,
+        samples: Sequence[np.ndarray],
+        weights: Sequence[np.ndarray | None],
+        values: np.ndarray,
+        scores: np.ndarray | None,
+    ) -> None:
+        self.samples, self.weights = samples, weights
+        beyond = np.zeros(values.size, bool) if scores is None else scores > min(ROBUST_LADDER)
+        at = np.flatnonzero(beyond)
+        self.tail = values[at]
+        self.scores = np.zeros(0) if scores is None else scores[at]
+        # never empty: at least half the values lie within one MAD of the median
+        self.core = _core_extent(values, beyond)
+        # each sample's own tail (values holds the samples in turn), its |weight| there, and its
+        # total |weight|, which the fractions of its content refer to
+        self.parts = []
+        starts = np.cumsum([0] + [sample.size for sample in samples])
+        cuts = np.searchsorted(at, starts)
+        for weight, start, first, last in zip(
+            weights, starts[:-1], cuts[:-1], cuts[1:], strict=True
+        ):
+            magnitude = None if weight is None else np.abs(weight)
+            self.parts.append(
+                (
+                    self.tail[first:last],
+                    None if magnitude is None else magnitude[at[first:last] - start],
+                    None if magnitude is None else float(magnitude.sum()),
+                )
+            )
+
+    def extent(self, threshold: float) -> tuple[float, float]:
+        """Return the span of the values scoring at most ``threshold``, as :func:`_kept_extent`."""
+        kept = self.tail[self.scores <= threshold]
+        if not kept.size:
+            return self.core
+        return min(self.core[0], float(kept.min())), max(self.core[1], float(kept.max()))
+
+    def outside(self, low: float, high: float) -> np.ndarray:
+        """Measure what ``(low, high)`` leaves out of the view per sample, as :func:`_outside`."""
+        if not (low <= self.core[0] and self.core[1] < high):
+            # a value within the tightest step leaves the view too: count them all
+            return _outside(self.samples, self.weights, low, high)
+        entries: list[float] = []
+        content: list[float] = []
+        for sample, (values, magnitude, total) in zip(self.samples, self.parts, strict=True):
+            gone = (values < low) | (values >= high)
+            entries.append(np.count_nonzero(gone) / sample.size)
+            if magnitude is None or total is None:
+                content.append(entries[-1])
+            else:
+                content.append(float(magnitude[gone].sum() / total) if total > 0 else entries[-1])
+        return np.array([entries, content])
 
 
 def _distinct_values_below(values: np.ndarray, limit: int) -> bool:
@@ -437,28 +499,69 @@ def _modified_z_scores(values: np.ndarray) -> np.ndarray | None:
     rejected. The scores do not depend on a threshold, so the ladder computes
     them once and compares the same array against each of its steps.
     """
-    median = np.median(values)
-    deviation = np.abs(values - median)
-    mad = np.median(deviation)
+    # One array, partitioned for the MAD and then turned into the scores in place: a copy
+    # of the values would cost as much memory as they take, for no time saved.
+    median = _median(values)
+    deviation: np.ndarray = np.subtract(values, median, dtype=float)
+    np.abs(deviation, out=deviation)
+    mad = _median(deviation, in_place=True)
+    np.subtract(values, median, out=deviation)  # the partition reordered them
+    np.abs(deviation, out=deviation)
     if mad <= 0:
         # More than half the values are identical (e.g. all zero): fall back to the
         # mean absolute deviation, and if that is zero too, keep everything.
         mad = float(deviation.mean())
         if mad <= 0:
             return None
-    return np.asarray(0.6745 * deviation / mad, dtype=float)
+    deviation *= 0.6745
+    deviation /= mad
+    return deviation
 
 
-def _reject_outliers(values: np.ndarray, threshold: float = ROBUST_THRESHOLD) -> np.ndarray:
-    """Drop the values scoring above ``threshold``, keeping all of them if none is left."""
-    return _keep_within(values, _modified_z_scores(values), threshold)
+def _median(values: np.ndarray, *, in_place: bool = False) -> float:
+    """``np.median`` of finite values, from one partition instead of the three it makes.
+
+    For an even count the lower middle value is the largest one left of the
+    upper, so partitioning there alone finds both; ``np.median`` also partitions
+    at the lower one and at the end (to find a ``nan``), which triples its cost.
+    ``in_place`` partitions ``values`` itself rather than a copy.
+    """
+    half = values.size // 2
+    part = values if in_place else values.copy()
+    part.partition(half)
+    middle = part[half : half + 1] if values.size % 2 else np.array([part[:half].max(), part[half]])
+    return float(middle.mean())
 
 
-def _keep_within(values: np.ndarray, scores: np.ndarray | None, threshold: float) -> np.ndarray:
-    if scores is None:
-        return values
-    kept = values[scores <= threshold]
-    return kept if kept.size else values
+def _core_extent(values: np.ndarray, beyond: np.ndarray) -> tuple[float, float]:
+    """Return the span of the values not ``beyond`` the tightest step of the ladder.
+
+    Scores grow with the distance from the median, so a tail lies wholly below or
+    above the rest: an extreme of all values outside the tail is the rest's too,
+    and only a side with a tail needs a pass over the rest.
+    """
+    extremes = []
+    sides = ((values.argmin(), np.min, np.inf), (values.argmax(), np.max, -np.inf))
+    for index, reduce, initial in sides:
+        if beyond[index]:
+            extremes.append(float(reduce(values, where=~beyond, initial=initial)))
+        else:
+            extremes.append(float(values[index]))
+    return extremes[0], extremes[1]
+
+
+def _kept_extent(
+    values: np.ndarray, scores: np.ndarray | None, threshold: float
+) -> tuple[float, float]:
+    """Return the span of the values scoring at most ``threshold``, of all when none does."""
+    if scores is not None:
+        kept = scores <= threshold
+        if kept.any():
+            return (
+                float(values.min(where=kept, initial=np.inf)),
+                float(values.max(where=kept, initial=-np.inf)),
+            )
+    return float(values.min()), float(values.max())
 
 
 def resolve_axis(

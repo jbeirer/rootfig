@@ -466,6 +466,26 @@ panel alike.
   is not needed. End the call with `;` to hide the `Plot` repr, and use
   `Plot.close()` in loops that make many figures.
 
+## Large inputs
+
+A plot reads only the branches its variable, selection, weight and systematics
+use, a chunk of entries (about 32 MB of arrays) at a time. The chunks are
+decompressed and prepared (expressions, selection, weights) in parallel
+threads, and only the values that fill the histograms are kept, so the peak
+memory follows those values rather than every branch read. The histograms and
+their statistics are the same as from reading everything at once.
+
+- Up to eight threads are used, fewer on a machine with fewer cores. Set
+  `ROOTFIG_THREADS` to choose the number, e.g. the cores a batch job was given;
+  `ROOTFIG_THREADS=1` reads and prepares in the calling thread.
+- An explicit range (`bins=(50, 0, 200)`, or `range=(low, high)`) skips range
+  inference, which takes two medians over all the values of every sample.
+- Many plots of the same files are fastest as a [`PlotBook`](batch.md), which
+  reads each file once per batch of variables: a tree with thousands of
+  branches costs a noticeable fraction of a second to open, every time.
+- LZMA-compressed files (the NanoAOD default) take several times longer to
+  decompress than ZLIB, LZ4 or ZSTD ones; the threads help most there.
+
 ## 2D histograms and correlations
 
 ```python

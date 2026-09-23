@@ -403,6 +403,102 @@ class TestEntryRanges:
         assert resolve_files("root://host:1094//store/file.root")[1] is None
 
 
+class TestIterate:
+    """FileSource.iterate reads what arrays() reads, a chunk of entries at a time."""
+
+    RANGES = ((None, None), (100, 1500), (900, 1100), (-300, None), (None, -1500), (1500, 100))
+
+    @staticmethod
+    def _joined(chunks: list[dict[str, ak.Array]]) -> dict[str, ak.Array]:
+        return {name: ak.concatenate([chunk[name] for chunk in chunks]) for name in chunks[0]}
+
+    @pytest.mark.parametrize(
+        "names",
+        [["signal.root"], ["signal_rntuple.root"], ["bkg_part1.root", "bkg_part2.root"]],
+    )
+    @pytest.mark.parametrize(("start", "stop"), RANGES)
+    def test_chunks_join_to_the_whole_read(
+        self, data_dir: Path, names: list[str], start: int | None, stop: int | None
+    ) -> None:
+        source = FileSource(
+            [str(data_dir / name) for name in names],
+            tree="events",
+            entry_start=start,
+            entry_stop=stop,
+        )
+        branches = ["Muon_pt", "MET", "nMuon"]
+        whole = source.arrays(branches)
+        chunks = list(source.iterate(branches, chunk_bytes=1_000))
+        assert len(chunks) > 1 or len(whole["MET"]) == 0
+        assert all(list(chunk) == branches for chunk in chunks)
+        joined = self._joined(chunks)
+        for name in branches:
+            assert ak.array_equal(joined[name], whole[name])
+
+    def test_no_entry_in_range_is_one_empty_chunk(self, signal_file: Path) -> None:
+        source = FileSource(signal_file, tree="events", entry_start=5000)
+        [chunk] = source.iterate(["Muon_pt", "MET"])
+        assert len(chunk["MET"]) == 0
+        assert chunk["Muon_pt"].layout.purelist_depth == 2  # the types are known
+
+    def test_small_files_are_joined(self, data_dir: Path) -> None:
+        source = FileSource(
+            [str(data_dir / "bkg_part1.root"), str(data_dir / "bkg_part2.root")], tree="events"
+        )
+        [chunk] = source.iterate(["MET"], chunk_bytes=10**8)  # both files: less than a chunk
+        assert len(chunk["MET"]) == 2000
+
+    def test_split_collections_and_missing_branches(self) -> None:
+        source = FileSource(DATA / "split_collection.root", tree="events")
+        branches = ["ReconstructedParticles.energy", "ReconstructedParticles.momentum.x"]
+        joined = self._joined(list(source.iterate(branches, chunk_bytes=500)))
+        whole = source.arrays(branches)
+        assert all(ak.array_equal(joined[name], whole[name]) for name in branches)
+        rntuple = FileSource(DATA / "split_collection.root", tree="events")
+        with pytest.raises(SourceError, match="not found"):
+            list(rntuple.iterate(["ReconstructedParticles.nosuch"]))
+
+    def test_a_file_without_the_tree_is_reported(self, signal_file: Path, tmp_path: Path) -> None:
+        other = tmp_path / "other.root"
+        with uproot.recreate(other) as file:
+            file.mktree("other", {"MET": np.arange(3.0)})
+        source = FileSource([str(signal_file), str(other)], tree="events")
+        with pytest.raises(SourceError, match="could not read 'events'"):
+            source.arrays(["MET"])
+        with pytest.raises(SourceError, match="could not read 'events'"):
+            list(source.iterate(["MET"]))
+
+    def test_one_thread_reads_in_the_calling_thread(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+
+        import rootfig.io.sources as sources
+
+        monkeypatch.setattr(sources, "THREADS", 1)
+        before = threading.active_count()
+        source = FileSource(signal_file, tree="events")
+        with sources._reading_pool() as pool:
+            assert pool is None
+            assert threading.active_count() == before
+        whole = source.arrays(["MET"])
+        [chunk] = source.iterate(["MET"], chunk_bytes=10**8)
+        assert ak.array_equal(chunk["MET"], whole["MET"])
+
+    def test_threads_follow_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rootfig._threads import _threads
+
+        monkeypatch.setenv("ROOTFIG_THREADS", "3")
+        assert _threads() == 3
+        monkeypatch.setenv("ROOTFIG_THREADS", "0")
+        assert _threads() == 1
+        monkeypatch.setenv("ROOTFIG_THREADS", "many")
+        with pytest.raises(ValueError, match="ROOTFIG_THREADS"):
+            _threads()
+        monkeypatch.delenv("ROOTFIG_THREADS")
+        assert 1 <= _threads() <= 8
+
+
 class TestStoredHistograms:
     def test_listing(self, stored_dir: Path) -> None:
         source = FileSource(stored_dir / "ZH_sel0_histo.root")

@@ -52,7 +52,7 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
   trees; naming the histogram in place of the branch reads it (see
   [stored histograms](plotting.md#histograms-already-in-root-files)).
 - `entry_start`/`entry_stop` restrict reading for quick looks at large files
-  (a plot reads every needed branch of every file into memory at once). For a
+  (a plot reads every file of the sample, a chunk of entries at a time). For a
   ready-made `FileSource`, give the range to the source itself; passing it to
   `Sample` afterwards raises a [`SourceError`][rootfig.SourceError].
 - `systematics={name: variation}` lists the sample's sources of systematic

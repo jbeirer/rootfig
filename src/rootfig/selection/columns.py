@@ -52,6 +52,7 @@ __all__ = [
     "event_mask",
     "event_weights",
     "prepare",
+    "report_nonfinite",
     "same_structure",
 ]
 
@@ -113,6 +114,30 @@ class Columns:
         if self.weights is None:
             return np.ones(self.n_entries, dtype=np.float64)
         return self.weights
+
+    @classmethod
+    def concatenate(cls, parts: Sequence[Columns]) -> Columns:
+        """Join the columns of consecutive chunks of events into those of all of them, in order.
+
+        What :func:`prepare` returns for the concatenated arrays: the values in the
+        same order, the event and entry counts added up.
+        """
+        if len(parts) == 1:
+            return parts[0]
+        first = parts[0]
+        return cls(
+            arrays=tuple(
+                np.concatenate([part.arrays[i] for part in parts]) for i in range(len(first.arrays))
+            ),
+            weights=None
+            if first.weights is None
+            else np.concatenate([part.effective_weights() for part in parts]),
+            n_events=sum(part.n_events for part in parts),
+            n_selected_events=sum(part.n_selected_events for part in parts),
+            n_missing=sum(part.n_missing for part in parts),
+            n_nonfinite=sum(part.n_nonfinite for part in parts),
+            per_object=first.per_object,
+        )
 
 
 # --------------------------------------------------------------------------------------
@@ -227,6 +252,7 @@ def prepare(
     nonfinite: NonFinitePolicy = "drop",
     context: str = "",
     n_events: int | None = None,
+    report: bool = True,
 ) -> Columns:
     """Evaluate expressions and apply the selection/weight rules.
 
@@ -251,6 +277,10 @@ def prepare(
     n_events
         Number of events, needed only when every expression is a constant
         (``"1"``) so that nothing in ``arrays`` gives the length.
+    report
+        ``False`` drops and counts non-finite values without the warning or error
+        ``nonfinite`` asks for, leaving it to the caller, e.g. once for several
+        chunks of events (:func:`report_nonfinite`).
 
     Returns
     -------
@@ -374,19 +404,15 @@ def prepare(
         # After _drop_missing_lists only leaf-level None remain; they were flattened to nan
         # above and are excluded by ``keep``, so the leaf counts add up to the flat size.
         counts = np.asarray(ak.to_numpy(_leaf_counts(lead, 0)), dtype=np.int64)
-        event_index = np.repeat(np.arange(len(lead)), counts)
-        n_selected = int(np.unique(event_index[keep]).size)
+        kept_events = np.repeat(np.arange(len(lead)), counts)[keep]
+        # sorted, so an event starts wherever the index changes; np.unique would sort it again
+        changes = np.count_nonzero(kept_events[1:] != kept_events[:-1])
+        n_selected = int(kept_events.size and 1 + changes)
 
     n_missing += int(np.count_nonzero(missing))
     n_nonfinite = int(np.count_nonzero(~keep & ~missing))
-    if n_nonfinite:
-        prefix = f"{context}: " if context else ""
-        message = (
-            f"{prefix}dropped {n_nonfinite} non-finite (nan/inf) value(s) for {exprs[0].text!r}"
-        )
-        if nonfinite == "error":
-            raise SelectionError(message)
-        warnings.warn(message, RootfigWarning, stacklevel=3)
+    if report:
+        report_nonfinite(n_nonfinite, exprs[0], nonfinite=nonfinite, context=context, stacklevel=3)
     if not keep.all():
         flat_values = [column[keep] for column in flat_values]
         if flat_weights is not None:
@@ -408,11 +434,41 @@ def prepare(
     )
 
 
+def report_nonfinite(
+    n_nonfinite: int,
+    variable: ExpressionLike,
+    *,
+    nonfinite: NonFinitePolicy = "drop",
+    context: str = "",
+    stacklevel: int = 2,
+) -> None:
+    """Warn that ``n_nonfinite`` values of ``variable`` were dropped, or raise for ``"error"``.
+
+    What :func:`prepare` does unless told not to (``report=False``). The warning
+    is a :class:`~rootfig.errors.RootfigWarning`; ``stacklevel`` counts from the
+    caller as :func:`warnings.warn` counts from its own, and ``context`` (e.g. the
+    sample label) prefixes the message.
+    """
+    if not n_nonfinite:
+        return
+    prefix = f"{context}: " if context else ""
+    message = (
+        f"{prefix}dropped {n_nonfinite} non-finite (nan/inf) value(s) for {parse(variable).text!r}"
+    )
+    if nonfinite == "error":
+        raise SelectionError(message)
+    warnings.warn(message, RootfigWarning, stacklevel=stacklevel + 1)
+
+
 def boolean_mask(
     selection: ExpressionLike, arrays: Mapping[str, Any] | ak.Array, *, length: int | None = None
 ) -> ak.Array:
     """Evaluate ``selection`` and check that it is boolean; missing values become ``False``.
 
+    A missing list (a collection that could not be evaluated for an event) stays
+    missing rather than becoming one ``False``, so a per-object selection keeps the
+    structure of its collection and :func:`prepare` drops that event and counts
+    its objects as missing, as for a missing collection of the variable itself.
     Fixed-size dimensions are turned into lists (see :mod:`rootfig.selection`).
 
     Raises
@@ -423,7 +479,7 @@ def boolean_mask(
     """
     expr = parse(selection)
     mask = _as_jagged(expr.evaluate(arrays, length=length))
-    mask = ak.fill_none(mask, False, axis=None)
+    mask = ak.fill_none(mask, False, axis=-1)
     flat = ak.flatten(mask, axis=None) if depth_of(mask) > 1 else mask
     dtype = ak.to_numpy(flat).dtype if len(flat) else np.dtype(bool)
     if dtype.kind != "b":

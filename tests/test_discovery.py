@@ -138,6 +138,7 @@ def _forbid_reads(monkeypatch: pytest.MonkeyPatch) -> None:
 
     for owner, name in (
         (FileSource, "arrays"),
+        (FileSource, "iterate"),
         (FileSource, "read_histogram"),
         (FileSource, "read_histograms"),
         (ArraySource, "arrays"),

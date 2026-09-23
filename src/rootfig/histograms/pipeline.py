@@ -10,9 +10,10 @@ of their histograms.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from itertools import pairwise
 from os import PathLike
 from typing import Any
 
@@ -27,7 +28,7 @@ from rootfig.histograms.groups import regroup_histograms
 from rootfig.histograms.sources import shared_source
 from rootfig.histograms.stats import summarize
 from rootfig.histograms.stored import read_stored, stored_mode
-from rootfig.io import ArraySource, FileSource, ReadCache, Source, as_source
+from rootfig.io import CHUNK_BYTES, ArraySource, FileSource, ReadCache, Source, as_source
 from rootfig.io.sources import resolve_files
 from rootfig.model.binning import Axis, resolve_axis
 from rootfig.model.cuts import Cut, CutLike, as_cut
@@ -36,7 +37,7 @@ from rootfig.model.inputs import leaf_samples
 from rootfig.model.samples import Sample
 from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.variables import Variable, as_variable
-from rootfig.selection import Columns, NonFinitePolicy, prepare
+from rootfig.selection import Columns, NonFinitePolicy, Request, prepare_chunks
 
 __all__ = [
     "branch_names",
@@ -47,6 +48,7 @@ __all__ = [
     "load_columns",
     "load_columns_each",
     "read_arrays",
+    "read_chunks",
 ]
 
 
@@ -102,6 +104,40 @@ def read_arrays(
     return arrays, source_length(source)
 
 
+def read_chunks(
+    sample: Sample, expressions: Sequence[Any], *, cache: ReadCache | None = None
+) -> Iterator[tuple[dict[str, Any], int]]:
+    """Return the branches ``expressions`` need from ``sample``, a chunk of events at a time.
+
+    Each chunk comes with its number of events, and the chunks, joined in order,
+    are what :func:`read_arrays` returns. Files are read chunk by chunk
+    (:meth:`~rootfig.io.FileSource.iterate`), so only the chunks being prepared
+    are held, never all branches of all events; arrays already in memory (in-memory
+    data, a ``cache``) are cut into slices of about as many bytes, views that copy
+    nothing, so that they are prepared in parallel alike. The branch names are
+    checked before this returns, and nothing is read until the first chunk is
+    asked for.
+    """
+    source = sample.source
+    if cache is None and isinstance(source, FileSource):
+        needed = branch_names(source, expressions)
+        if needed:
+            return ((arrays, len(next(iter(arrays.values())))) for arrays in source.iterate(needed))
+    arrays, n_events = read_arrays(sample, expressions, cache=cache)
+    return _slices(arrays, n_events)
+
+
+def _slices(arrays: dict[str, Any], n_events: int) -> Iterator[tuple[dict[str, Any], int]]:
+    """Cut ``arrays`` into consecutive slices of about :data:`~rootfig.io.CHUNK_BYTES` each."""
+    size = sum(getattr(array, "nbytes", 0) for array in arrays.values())
+    count = max(1, min(n_events, size // CHUNK_BYTES))
+    if count == 1:
+        yield arrays, n_events
+        return
+    for start, stop in pairwise(n_events * part // count for part in range(count + 1)):
+        yield {name: array[start:stop] for name, array in arrays.items()}, stop - start
+
+
 def branch_names(source: Source, expressions: Sequence[Any]) -> list[str]:
     """Return the branches of ``source`` that ``expressions`` need, once each, in order of use.
 
@@ -154,17 +190,16 @@ def load_columns(
     var_exprs = [as_variable(v).expression for v in variables]
     cut = combined_selection(sample, selection)
     weight_expr = combined_weight(sample, weight)
-    arrays, n_events = _read_for(sample, var_exprs, cut, weight_expr, cache=cache)
-    return prepare(
-        arrays,
-        var_exprs,
+    chunks = _chunks_for(sample, var_exprs, cut, weight_expr, cache=cache)
+    request = Request(
+        tuple(var_exprs),
         selection=None if cut is None else cut.expression,
         weight=weight_expr,
         scale=sample.scale * sample.lumi_scale(lumi),
         nonfinite=nonfinite,
         context=sample.label,
-        n_events=n_events,
     )
+    return prepare_chunks(chunks, [request])[0]
 
 
 def load_columns_each(
@@ -186,38 +221,37 @@ def load_columns_each(
     var_exprs = [as_variable(v).expression for v in variables]
     cut = combined_selection(sample, selection)
     weight_expr = combined_weight(sample, weight)
-    arrays, n_events = _read_for(sample, var_exprs, cut, weight_expr)
+    chunks = _chunks_for(sample, var_exprs, cut, weight_expr)
     scale = sample.scale * sample.lumi_scale(lumi)
-    return [
-        prepare(
-            arrays,
-            [expression],
+    requests = [
+        Request(
+            (expression,),
             selection=None if cut is None else cut.expression,
             weight=weight_expr,
             scale=scale,
             nonfinite=nonfinite,
             context=sample.label,
-            n_events=n_events,
         )
         for expression in var_exprs
     ]
+    return prepare_chunks(chunks, requests)
 
 
-def _read_for(
+def _chunks_for(
     sample: Sample,
     var_exprs: Sequence[str],
     cut: Cut | None,
     weight_expr: str | None,
     *,
     cache: ReadCache | None = None,
-) -> tuple[dict[str, Any], int]:
-    """Read the branches needed by the variables, the selection and the weight."""
+) -> Iterator[tuple[dict[str, Any], int]]:
+    """Read the branches needed by the variables, the selection and the weight, in chunks."""
     expressions = [parse(v) for v in var_exprs]
     if cut is not None:
         expressions.append(cut.parsed())
     if weight_expr is not None:
         expressions.append(parse(weight_expr))
-    return read_arrays(sample, expressions, cache=cache)
+    return read_chunks(sample, expressions, cache=cache)
 
 
 def build_histograms(
@@ -343,28 +377,47 @@ def _load_with_variations(
 ) -> _Loaded:
     """Prepare the nominal columns and every variation, reading the sample's branches once.
 
-    Weight and branch variations are evaluated on the arrays read for the
-    nominal; variations from other data read those. A variation is a
-    :class:`Columns` to fill, a factor for the nominal histogram, or ``None``
-    for a down direction mirrored from the up one.
+    Weight and branch variations are prepared from the chunks read for the
+    nominal (:func:`read_chunks`), chunk by chunk alongside it; variations from
+    other data read those. A variation is a :class:`Columns` to fill, a factor
+    for the nominal histogram, or ``None`` for a down direction mirrored from the
+    up one.
     """
     cut = combined_selection(sample, selection)
     cut_text = None if cut is None else cut.expression
     weight_expr = combined_weight(sample, weight)
     scale = sample.scale * sample.lumi_scale(lumi)
     expressions, used = _read_plan(sample, var, systematics, selection=selection, weight=weight)
-    arrays, n_events = read_arrays(sample, expressions, cache=cache)
+    chunks = read_chunks(sample, expressions, cache=cache)
 
-    nominal = prepare(
-        arrays,
-        [var.expression],
-        selection=cut_text,
-        weight=weight_expr,
-        scale=scale,
-        nonfinite=nonfinite,
-        context=sample.label,
-        n_events=n_events,
-    )
+    def request(context: str, weight: str | None, **extra: Any) -> Request:
+        return Request(
+            (var.expression,),
+            selection=cut_text,
+            weight=weight,
+            scale=scale,
+            nonfinite=nonfinite,
+            context=context,
+            **extra,
+        )
+
+    requests = [request(sample.label, weight_expr)]
+    shifted: dict[tuple[str, str], int] = {}  # the request of each weight or branch variation
+    for name, syst in systematics.items():
+        for direction, spec in (("up", syst.up), ("down", syst.down)):
+            if spec is None or syst.kind not in ("weight", "replace"):
+                continue
+            context = f"{sample.label} [{name} {direction}]"
+            shifted[name, direction] = len(requests)
+            note = _variation_note(context)
+            if syst.kind == "weight":
+                requests.append(request(context, _product(spec, weight), note=note))
+            else:
+                # the replacing branches take the place of the replaced ones, so the
+                # variable, selection and weight all see the shifted values
+                replaced = {old: new for old, new in spec.items() if old in used}
+                requests.append(request(context, weight_expr, substitutes=replaced, note=note))
+    prepared = prepare_chunks(chunks, requests)
 
     variations: dict[str, tuple[Columns | float | None, Columns | float | None]] = {}
     for name, syst in systematics.items():
@@ -390,27 +443,9 @@ def _load_with_variations(
                         )
                     )
                 else:
-                    if syst.kind == "weight":
-                        varied_arrays, varied_weight = arrays, _product(spec, weight)
-                    else:
-                        # the replacing branches take the place of the replaced ones, so the
-                        # variable, selection and weight all see the shifted values
-                        replaced = {old: arrays[new] for old, new in spec.items() if old in used}
-                        varied_arrays, varied_weight = {**arrays, **replaced}, weight_expr
-                    shifts.append(
-                        prepare(
-                            varied_arrays,
-                            [var.expression],
-                            selection=cut_text,
-                            weight=varied_weight,
-                            scale=scale,
-                            nonfinite=nonfinite,
-                            context=context,
-                            n_events=n_events,
-                        )
-                    )
+                    shifts.append(prepared[shifted[name, direction]])
         variations[name] = (shifts[0], shifts[1])
-    return _Loaded(nominal, variations)
+    return _Loaded(prepared[0], variations)
 
 
 def _read_plan(
@@ -472,7 +507,12 @@ def _read_plan(
 
 def _in_variation(context: str) -> AbstractContextManager[None]:
     """Name the variation (sample, source, direction) in any rootfig error raised inside."""
-    return annotate(f"while evaluating the systematic variation {context}")
+    return annotate(_variation_note(context))
+
+
+def _variation_note(context: str) -> str:
+    """Return the note naming the variation ``context`` (sample, source, direction)."""
+    return f"while evaluating the systematic variation {context}"
 
 
 def _variant_sample(

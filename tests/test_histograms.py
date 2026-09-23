@@ -2449,6 +2449,65 @@ class TestGroupedHistograms:
         assert not sum_histograms([Histogram(contents([1.0, 2.0]), "D")]).per_object
 
 
+class TestChunkedFilling:
+    """Histograms prepared a chunk of events at a time, in threads, equal those of one read."""
+
+    @staticmethod
+    def _chunked(monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib
+
+        for name, value in (
+            ("rootfig.io.sources:CHUNK_BYTES", 2_000),
+            ("rootfig.histograms.pipeline:CHUNK_BYTES", 2_000),
+            ("rootfig.io.sources:THREADS", 4),
+            ("rootfig.selection.chunks:THREADS", 4),
+        ):
+            module, attr = name.split(":")
+            monkeypatch.setattr(importlib.import_module(module), attr, value)
+
+    @pytest.mark.parametrize("source", ["tree", "rntuple", "two files", "arrays"])
+    def test_same_histograms_and_variations(
+        self,
+        data_dir: Path,
+        signal_columns: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
+    ) -> None:
+        data: Any = {
+            "tree": str(data_dir / "signal.root"),
+            "rntuple": str(data_dir / "signal_rntuple.root"),
+            "two files": [str(data_dir / "bkg_part1.root"), str(data_dir / "bkg_part2.root")],
+            "arrays": signal_columns,
+        }[source]
+        sample = Sample(
+            data,
+            label="S",
+            weight="weight",
+            systematics={
+                "w": ("weight * 1.1", "weight * 0.8"),
+                "shift": {"Muon_pt": ("Muon_eta", "Muon_phi"), "MET": ("sentinel", "with_nan")},
+                "norm": 0.05,
+            },
+        )
+        cases = [("Muon_pt", "Muon_eta > 0"), ("MET", "nMuon > 0"), ("with_nan", None)]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RootfigWarning)
+            whole = [build_histograms([sample], v, selection=s)[0] for v, s in cases]
+            self._chunked(monkeypatch)
+            parts = [build_histograms([sample], v, selection=s)[0] for v, s in cases]
+        for got, want in zip(parts, whole, strict=True):
+            np.testing.assert_array_equal(got.values(flow=True), want.values(flow=True))
+            np.testing.assert_array_equal(got.variances(flow=True), want.variances(flow=True))
+            assert got.stats == want.stats
+            assert sorted(got.variations) == sorted(want.variations)
+            for name, pair in got.variations.items():
+                for mine, theirs in zip(pair, want.variations[name], strict=True):
+                    np.testing.assert_array_equal(mine.values(flow=True), theirs.values(flow=True))
+                    np.testing.assert_array_equal(
+                        mine.variances(flow=True), theirs.variances(flow=True)
+                    )
+
+
 class TestPrefetch:
     """prefetch() warms a ReadCache with what build_histograms reads; results do not change."""
 

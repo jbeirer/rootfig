@@ -30,17 +30,34 @@ import uproot
 from uproot.interpretation.identify import UnknownInterpretation
 from uproot.interpretation.objects import CannotBeAwkward
 
+from rootfig._threads import THREADS
 from rootfig._typing import Hist
 from rootfig.errors import SourceError
 from rootfig.io import objects
 from rootfig.io.schema import record_fields, select_field
 
-__all__ = ["ArraySource", "FileSource", "FilesLike", "Source", "as_source", "resolve_files"]
+__all__ = [
+    "CHUNK_BYTES",
+    "ArraySource",
+    "FileSource",
+    "FilesLike",
+    "Source",
+    "as_source",
+    "resolve_files",
+]
 
 FilesLike = str | PathLike[str] | Sequence[str | PathLike[str]]
 """A path, glob pattern, URL, ``"path:tree"`` string, or a sequence of those."""
 
 _REMOTE_PREFIXES = ("root://", "http://", "https://", "s3://", "gs://", "xrootd://")
+
+CHUNK_BYTES = 32_000_000
+"""About how many bytes of branch arrays :meth:`FileSource.iterate` reads at a time.
+
+Large enough that a chunk costs little more than its share of a whole read, small
+enough that several chunks being prepared at once stay far below what a large
+input takes in memory.
+"""
 
 
 @runtime_checkable
@@ -231,6 +248,52 @@ def _extract_nested(data: Mapping[str, Any] | ak.Array, name: str) -> ak.Array |
     return None
 
 
+def _picked(data: Mapping[str, Any], branches: Sequence[str], tree: str) -> dict[str, ak.Array]:
+    """Return ``branches`` from what uproot read, nested fields picked out of their records.
+
+    RNTuple reads silently drop unknown fields, so a branch that is not there is
+    reported explicitly.
+    """
+    result: dict[str, ak.Array] = {}
+    missing: list[str] = []
+    for name in branches:
+        array = ak.Array(data[name]) if name in data else _extract_nested(data, name)
+        if array is None:
+            missing.append(name)
+        else:
+            result[name] = array
+    if missing:
+        msg = f"branches {missing} not found in tree {tree!r}"
+        raise SourceError(msg)
+    return result
+
+
+def _joined(pieces: Sequence[dict[str, ak.Array]]) -> dict[str, ak.Array]:
+    """Concatenate consecutive pieces of the same branches, as one read of them returns them."""
+    if len(pieces) == 1:
+        return pieces[0]
+    return {name: ak.concatenate([piece[name] for piece in pieces]) for name in pieces[0]}
+
+
+@contextmanager
+def _reading_pool() -> Iterator[Any]:
+    """Lend one read threads to decompress and interpret baskets in (``THREADS`` of them).
+
+    One pool serves both: uproot's reading thread hands out every task and none
+    waits on another. It lives for the read only, so no thread outlives it (and
+    none is inherited, dead, by a forked process). With one thread there is no
+    pool (``None``): uproot then works in the calling thread.
+    """
+    if THREADS == 1:
+        yield None
+        return
+    pool = uproot.ThreadPoolExecutor(max_workers=THREADS)
+    try:
+        yield pool
+    finally:
+        pool.shutdown()
+
+
 def _tree_names(classnames: Mapping[str, str]) -> list[str]:
     return sorted(k for k, cls in classnames.items() if objects.is_tree_class(cls))
 
@@ -364,6 +427,11 @@ class FileSource:
 
     def num_entries(self) -> int:
         """Return the number of entries (all files, honouring the entry range)."""
+        start, stop, _ = slice(self.entry_start, self.entry_stop).indices(self._total_entries())
+        return max(stop - start, 0)
+
+    def _total_entries(self) -> int:
+        """Count the entries of every file, before the entry range; once per instance."""
         tree = self.resolved_tree()
         if "num_entries" not in self._cache:
             total = 0
@@ -371,9 +439,7 @@ class FileSource:
                 with uproot.open(path) as file:
                     total += int(file[tree].num_entries)
             self._cache["num_entries"] = total
-        total = int(self._cache["num_entries"])
-        start, stop, _ = slice(self.entry_start, self.entry_stop).indices(total)
-        return max(stop - start, 0)
+        return int(self._cache["num_entries"])
 
     def read_scalar(self, key: str) -> float:
         """Sum a number stored under ``key`` in every file.
@@ -454,39 +520,98 @@ class FileSource:
         tree = self.resolved_tree()
         if not branches:
             return {}
+        with _reading_pool() as pool:
+            try:
+                data = uproot.concatenate(
+                    [{path: tree} for path in self.files],
+                    filter_name=self._name_filter(branches),
+                    entry_start=self.entry_start,
+                    entry_stop=self.entry_stop,
+                    library="ak",
+                    how=dict,
+                    decompression_executor=pool,
+                    interpretation_executor=pool,
+                )
+            except uproot.KeyInFileError as exc:
+                msg = f"could not read {tree!r} from {self.files}: {exc}"
+                raise SourceError(msg) from exc
+        return _picked(data, branches, tree)
+
+    def iterate(
+        self, branches: Sequence[str], chunk_bytes: int | None = None
+    ) -> Iterator[dict[str, ak.Array]]:
+        """Read ``branches`` a chunk of entries at a time, in order.
+
+        A chunk holds about ``chunk_bytes`` of arrays, :data:`CHUNK_BYTES` unless given.
+
+        The chunks, concatenated, are what :meth:`arrays` returns, entry range
+        included, while only one of them is held here at a time; the end of a file
+        and small files are joined with what follows. At least one chunk is
+        yielded, an empty one when no entry is in range, so the types of the
+        branches are always known.
+        """
+        chunk_bytes = CHUNK_BYTES if chunk_bytes is None else chunk_bytes
+        held: list[dict[str, ak.Array]] = []
+        size = 0
+        yielded = False
+        for piece in self._pieces(branches, chunk_bytes):
+            held.append(piece)
+            size += sum(array.nbytes for array in piece.values())
+            if size >= chunk_bytes:
+                yield _joined(held)
+                held, size, yielded = [], 0, True
+        if held or not yielded:
+            yield _joined(held) if held else self.arrays(branches)
+
+    def _pieces(self, branches: Sequence[str], chunk_bytes: int) -> Iterator[dict[str, ak.Array]]:
+        """Read ``branches`` as uproot iterates each file, within the entry range."""
+        tree = self.resolved_tree()
+        start, stop = 0, None
+        if self.entry_start is not None or self.entry_stop is not None:
+            start, stop, _ = slice(self.entry_start, self.entry_stop).indices(self._total_entries())
+        name_filter = self._name_filter(branches)
+        offset = 0
+        with _reading_pool() as pool:
+            for path in self.files:
+                if stop is not None and offset >= stop:
+                    return
+                with uproot.open(path) as file:
+                    try:
+                        obj = file[tree]
+                    except uproot.KeyInFileError as exc:
+                        msg = f"could not read {tree!r} from {self.files}: {exc}"
+                        raise SourceError(msg) from exc
+                    entries = int(obj.num_entries)
+                    first = max(start - offset, 0)
+                    last = entries if stop is None else min(stop - offset, entries)
+                    offset += entries
+                    if first >= last:
+                        continue
+                    for data in obj.iterate(
+                        filter_name=name_filter,
+                        entry_start=first,
+                        entry_stop=last,
+                        step_size=f"{chunk_bytes} B",
+                        library="ak",
+                        how=dict,
+                        decompression_executor=pool,
+                        interpretation_executor=pool,
+                    ):
+                        yield _picked(data, branches, tree)
+
+    def _name_filter(self, branches: Sequence[str]) -> Any:
+        """Return the ``filter_name`` that reads ``branches``: by name, so dots work.
+
+        Selecting by name keeps dotted sub-branch names (``Collection.field.x`` in
+        EDM4hep/podio files) and odd characters readable. A TTree presents split
+        object branches by their full dotted leaf name; an RNTuple presents nested
+        fields by their short name, one level at a time, and returns the parent as
+        a record array. For RNTuples every level is let through (a level's name
+        may itself hold dots) and the nested field is picked out afterwards.
+        """
         wanted = set(branches)
-        # A TTree presents split object branches by their full dotted leaf name; an
-        # RNTuple presents nested fields by their short name, one level at a time, and
-        # returns the parent as a record array. For RNTuples let every level through (a
-        # level's name may itself hold dots) and pick the nested field out afterwards.
         parts = _dotted_spans(wanted) if self._is_rntuple() else set()
-        try:
-            # Select by name rather than by expression so that dotted sub-branch names
-            # (``Collection.field.x`` in EDM4hep/podio files) and odd characters work.
-            data = uproot.concatenate(
-                [{path: tree} for path in self.files],
-                filter_name=lambda name: name in wanted or name in parts,
-                entry_start=self.entry_start,
-                entry_stop=self.entry_stop,
-                library="ak",
-                how=dict,
-            )
-        except uproot.KeyInFileError as exc:
-            msg = f"could not read {tree!r} from {self.files}: {exc}"
-            raise SourceError(msg) from exc
-        result: dict[str, ak.Array] = {}
-        missing: list[str] = []
-        for name in branches:
-            array = ak.Array(data[name]) if name in data else _extract_nested(data, name)
-            if array is None:
-                missing.append(name)
-            else:
-                result[name] = array
-        if missing:
-            # RNTuple reads silently drop unknown fields; report them explicitly.
-            msg = f"branches {missing} not found in tree {tree!r}"
-            raise SourceError(msg)
-        return result
+        return lambda name: name in wanted or name in parts
 
     def describe(self) -> str:
         """Return e.g. ``'events.root'`` or ``'3 files (run*.root)'``."""
