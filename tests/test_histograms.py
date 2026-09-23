@@ -2507,6 +2507,31 @@ class TestChunkedFilling:
                         mine.variances(flow=True), theirs.variances(flow=True)
                     )
 
+    def test_constant_variables_are_chunked_too(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from rootfig.selection.chunks import Request
+
+        sample = Sample(str(signal_file))
+        variable = Variable("1", bins=(3, 0, 3))  # reads no branch, broadcast to every event
+        [whole] = build_histograms([sample], variable)
+        self._chunked(monkeypatch)
+        sizes: list[int] = []
+        original = Request.prepare
+
+        def counting(request: Request, arrays: Any, n_events: int) -> Columns:
+            sizes.append(n_events)
+            return original(request, arrays, n_events)
+
+        monkeypatch.setattr(Request, "prepare", counting)
+        [parts] = build_histograms([sample], variable)
+        assert len(sizes) > 1
+        assert sum(sizes) == 2000
+        np.testing.assert_array_equal(parts.values(flow=True), whole.values(flow=True))
+        assert parts.stats is not None
+        assert whole.stats is not None
+        np.testing.assert_equal(asdict(parts.stats), asdict(whole.stats))  # nan skewness alike
+
 
 class TestPrefetch:
     """prefetch() warms a ReadCache with what build_histograms reads; results do not change."""
