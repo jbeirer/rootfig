@@ -588,3 +588,20 @@ class TestPrepareChunks:
             prepare_chunks(reader(), [Request(("met",), selection="eta > 0")])
         assert closed == [True]  # while the error, and the frame it holds, is still alive
         assert info.value is not None
+
+    def test_threads_call_the_callers_error_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import rootfig.selection.chunks as chunks_module
+        from rootfig.selection import Request, prepare_chunks
+
+        monkeypatch.setattr(chunks_module, "THREADS", 3)
+        events = {"x": ak.Array([[0.0, 1.0], [2.0], [0.0]] * 4)}
+        seen: list[str] = []
+
+        def handler(kind: str, flag: int) -> None:
+            seen.append(kind)
+
+        with np.errstate(divide="call", call=handler), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RootfigWarning)
+            prepare_chunks(self._chunks(events, list(range(13))), [Request(("log(x)",))])
+        assert seen
+        assert set(seen) == {"divide by zero"}
