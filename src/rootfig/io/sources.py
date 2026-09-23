@@ -275,6 +275,35 @@ def _joined(pieces: Sequence[dict[str, ak.Array]]) -> dict[str, ak.Array]:
     return {name: ak.concatenate([piece[name] for piece in pieces]) for name in pieces[0]}
 
 
+def _read_range(
+    obj: Any, first: int, last: int, *, name_filter: Any, chunk_bytes: int, pool: Any
+) -> Iterator[Mapping[str, Any]]:
+    """Read entries ``first`` to ``last`` of one file's tree, about ``chunk_bytes`` at a time.
+
+    uproot iterates a ``TTree``, cutting at its clusters. An ``RNTuple`` is read in
+    explicit ranges instead: ``RNTuple.iterate`` of uproot 5.7.1, the oldest version
+    rootfig supports, ignores the entry range and reads every entry.
+    """
+    options: dict[str, Any] = {
+        "filter_name": name_filter,
+        "library": "ak",
+        "how": dict,
+        "decompression_executor": pool,
+        "interpretation_executor": pool,
+    }
+    if objects.RNTUPLE_MARKER not in type(obj).__name__:
+        yield from obj.iterate(
+            entry_start=first, entry_stop=last, step_size=f"{chunk_bytes} B", **options
+        )
+        return
+    step = obj.num_entries_for(
+        f"{chunk_bytes} B", filter_name=name_filter, entry_start=first, entry_stop=last
+    )
+    step = step or last - first  # None when no field is selected
+    for start in range(first, last, step):
+        yield obj.arrays(entry_start=start, entry_stop=min(start + step, last), **options)
+
+
 @contextmanager
 def _reading_pool() -> Iterator[Any]:
     """Lend one read threads to decompress and interpret baskets in (``THREADS`` of them).
@@ -564,7 +593,7 @@ class FileSource:
             yield _joined(held) if held else self.arrays(branches)
 
     def _pieces(self, branches: Sequence[str], chunk_bytes: int) -> Iterator[dict[str, ak.Array]]:
-        """Read ``branches`` as uproot iterates each file, within the entry range."""
+        """Read ``branches`` from each file in turn, within the entry range."""
         tree = self.resolved_tree()
         start, stop = 0, None
         if self.entry_start is not None or self.entry_stop is not None:
@@ -587,15 +616,13 @@ class FileSource:
                     offset += entries
                     if first >= last:
                         continue
-                    for data in obj.iterate(
-                        filter_name=name_filter,
-                        entry_start=first,
-                        entry_stop=last,
-                        step_size=f"{chunk_bytes} B",
-                        library="ak",
-                        how=dict,
-                        decompression_executor=pool,
-                        interpretation_executor=pool,
+                    for data in _read_range(
+                        obj,
+                        first,
+                        last,
+                        name_filter=name_filter,
+                        chunk_bytes=chunk_bytes,
+                        pool=pool,
                     ):
                         yield _picked(data, branches, tree)
 

@@ -435,6 +435,25 @@ class TestIterate:
         for name in branches:
             assert ak.array_equal(joined[name], whole[name])
 
+    def test_rntuples_are_read_in_explicit_ranges(
+        self, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # RNTuple.iterate of uproot 5.7.1, the oldest supported, ignores the entry range
+        def ignores_the_range(*args: Any, **kwargs: Any) -> Any:
+            msg = "RNTuple.iterate must not be relied on for entry ranges"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(uproot.behaviors.RNTuple.HasFields, "iterate", ignores_the_range)
+        source = FileSource(
+            data_dir / "signal_rntuple.root", tree="events", entry_start=100, entry_stop=1500
+        )
+        chunks = list(source.iterate(["MET", "Muon_pt"], chunk_bytes=1_000))
+        assert len(chunks) > 1
+        joined = self._joined(chunks)
+        whole = source.arrays(["MET", "Muon_pt"])
+        assert len(joined["MET"]) == 1400
+        assert all(ak.array_equal(joined[name], whole[name]) for name in ("MET", "Muon_pt"))
+
     def test_no_entry_in_range_is_one_empty_chunk(self, signal_file: Path) -> None:
         source = FileSource(signal_file, tree="events", entry_start=5000)
         [chunk] = source.iterate(["Muon_pt", "MET"])
