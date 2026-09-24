@@ -41,10 +41,10 @@ def _uncompressed_bytes(branch: Any, basket: int) -> int:
 
     A basket written separately has them in its key (``basket_uncompressed_bytes``
     of uproot 5.7.1 decompresses the basket instead); one kept in the branch
-    (embedded) is already in memory.
+    (embedded), which has no key, is already in memory.
     """
     try:
         key = branch.basket_key(basket)
-    except IndexError:
+    except ValueError:  # embedded
         return int(branch.basket(basket).uncompressed_bytes)
     return int(key.data_uncompressed_bytes + key.fKeylen)

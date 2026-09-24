@@ -515,6 +515,15 @@ class TestIterate:
         assert sum(len(chunk["x"]) for chunk in chunks) == 30_000
         assert max(chunk["x"].nbytes for chunk in chunks) <= 2_500_000
 
+    def test_embedded_baskets_are_sized_too(self) -> None:
+        # a tree filled in memory keeps its baskets in its branches, without keys
+        source = FileSource(DATA / "embedded_basket.root", tree="events")
+        chunks = list(source.iterate(["x", "y"], chunk_bytes=1_000))
+        whole = source.arrays(["x", "y"])
+        assert len(chunks) > 1
+        for name in ("x", "y"):
+            assert ak.array_equal(ak.concatenate([chunk[name] for chunk in chunks]), whole[name])
+
     def test_split_collections_and_missing_branches(self) -> None:
         source = FileSource(DATA / "split_collection.root", tree="events")
         branches = ["ReconstructedParticles.energy", "ReconstructedParticles.momentum.x"]
