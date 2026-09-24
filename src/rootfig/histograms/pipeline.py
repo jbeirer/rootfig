@@ -128,13 +128,13 @@ def read_chunks(
 
 
 def _slices(arrays: dict[str, Any], n_events: int) -> Iterator[tuple[dict[str, Any], int]]:
-    """Cut ``arrays`` into consecutive slices of about :data:`~rootfig.io.CHUNK_BYTES` each.
+    """Cut ``arrays`` into consecutive slices of at most about :data:`~rootfig.io.CHUNK_BYTES`.
 
     With nothing read (every expression a constant), each event still becomes a
     ``float64`` once a constant is broadcast to it, and those are what is counted.
     """
     size = sum(getattr(array, "nbytes", 0) for array in arrays.values()) or 8 * n_events
-    count = max(1, min(n_events, size // CHUNK_BYTES))
+    count = max(1, min(n_events, -(-size // CHUNK_BYTES)))
     if count == 1:
         yield arrays, n_events
         return

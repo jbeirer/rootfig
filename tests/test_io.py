@@ -492,17 +492,36 @@ class TestIterate:
     ) -> None:
         import threading
 
-        import rootfig.io.sources as sources
+        import rootfig._threads as threads_module
 
-        monkeypatch.setattr(sources, "THREADS", 1)
+        monkeypatch.setattr(threads_module, "THREADS", 1)
         before = threading.active_count()
         source = FileSource(signal_file, tree="events")
-        with sources._reading_pool() as pool:
+        with threads_module.worker_pool(lend=True) as pool:
             assert pool is None
             assert threading.active_count() == before
         whole = source.arrays(["MET"])
         [chunk] = source.iterate(["MET"], chunk_bytes=10**8)
         assert ak.array_equal(chunk["MET"], whole["MET"])
+
+    def test_a_lent_worker_pool_serves_the_blocks_inside(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import rootfig._threads as threads_module
+
+        monkeypatch.setattr(threads_module, "THREADS", 2)
+        with threads_module.worker_pool() as own, threads_module.worker_pool() as other:
+            assert own is not None
+            assert other is not own  # not lent
+        with threads_module.worker_pool(lend=True) as lent:
+            with threads_module.worker_pool() as inner:
+                assert inner is lent
+            assert lent is not None
+            assert lent.submit(len, "ab").result() == 2  # still open: the inner block took it
+        with threads_module.worker_pool() as after:
+            assert after is not lent
+        with pytest.raises(RuntimeError):
+            lent.submit(len, "ab")
 
     def test_threads_follow_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from rootfig._threads import _threads

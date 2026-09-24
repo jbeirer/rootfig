@@ -30,7 +30,7 @@ import uproot
 from uproot.interpretation.identify import UnknownInterpretation
 from uproot.interpretation.objects import CannotBeAwkward
 
-from rootfig._threads import THREADS
+from rootfig._threads import worker_pool
 from rootfig._typing import Hist
 from rootfig.errors import SourceError
 from rootfig.io import objects
@@ -304,25 +304,6 @@ def _read_range(
         yield obj.arrays(entry_start=start, entry_stop=min(start + step, last), **options)
 
 
-@contextmanager
-def _reading_pool() -> Iterator[Any]:
-    """Lend one read threads to decompress and interpret baskets in (``THREADS`` of them).
-
-    One pool serves both: uproot's reading thread hands out every task and none
-    waits on another. It lives for the read only, so no thread outlives it (and
-    none is inherited, dead, by a forked process). With one thread there is no
-    pool (``None``): uproot then works in the calling thread.
-    """
-    if THREADS == 1:
-        yield None
-        return
-    pool = uproot.ThreadPoolExecutor(max_workers=THREADS)
-    try:
-        yield pool
-    finally:
-        pool.shutdown()
-
-
 def _tree_names(classnames: Mapping[str, str]) -> list[str]:
     return sorted(k for k, cls in classnames.items() if objects.is_tree_class(cls))
 
@@ -549,7 +530,9 @@ class FileSource:
         tree = self.resolved_tree()
         if not branches:
             return {}
-        with _reading_pool() as pool:
+        # one pool decompresses and interprets: uproot's reading thread hands out every
+        # task, and none waits on another
+        with worker_pool() as pool:
             try:
                 data = uproot.concatenate(
                     [{path: tree} for path in self.files],
@@ -600,7 +583,8 @@ class FileSource:
             start, stop, _ = slice(self.entry_start, self.entry_stop).indices(self._total_entries())
         name_filter = self._name_filter(branches)
         offset = 0
-        with _reading_pool() as pool:
+        # the pool of the preparation these pieces are read for, if any, which shares it
+        with worker_pool() as pool:
             for path in self.files:
                 if stop is not None and offset >= stop:
                     return

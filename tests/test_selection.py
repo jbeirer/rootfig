@@ -505,10 +505,10 @@ class TestPrepareChunks:
         variables: tuple[str, ...],
         kwargs: dict[str, Any],
     ) -> None:
-        import rootfig.selection.chunks as chunks_module
+        import rootfig._threads as threads_module
         from rootfig.selection import Request, prepare_chunks
 
-        monkeypatch.setattr(chunks_module, "THREADS", threads)
+        monkeypatch.setattr(threads_module, "THREADS", threads)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RootfigWarning)
             want = prepare(events, list(variables), n_events=6, **kwargs)
@@ -556,10 +556,10 @@ class TestPrepareChunks:
             prepare_chunks([], [request])
 
     def test_threads_see_the_callers_error_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import rootfig.selection.chunks as chunks_module
+        import rootfig._threads as threads_module
         from rootfig.selection import Request, prepare_chunks
 
-        monkeypatch.setattr(chunks_module, "THREADS", 3)
+        monkeypatch.setattr(threads_module, "THREADS", 3)
         events = {"x": ak.Array([[0.0, 1.0], [2.0], [0.0]] * 4)}
         chunks = self._chunks(events, list(range(13)))
         with np.errstate(divide="ignore"), warnings.catch_warnings():
@@ -572,10 +572,10 @@ class TestPrepareChunks:
     def test_a_failing_chunk_releases_the_reader(
         self, events: dict[str, ak.Array], monkeypatch: pytest.MonkeyPatch, threads: int
     ) -> None:
-        import rootfig.selection.chunks as chunks_module
+        import rootfig._threads as threads_module
         from rootfig.selection import Request, prepare_chunks
 
-        monkeypatch.setattr(chunks_module, "THREADS", threads)
+        monkeypatch.setattr(threads_module, "THREADS", threads)
         closed: list[bool] = []
 
         def reader() -> Any:
@@ -590,10 +590,10 @@ class TestPrepareChunks:
         assert info.value is not None
 
     def test_threads_call_the_callers_error_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import rootfig.selection.chunks as chunks_module
+        import rootfig._threads as threads_module
         from rootfig.selection import Request, prepare_chunks
 
-        monkeypatch.setattr(chunks_module, "THREADS", 3)
+        monkeypatch.setattr(threads_module, "THREADS", 3)
         events = {"x": ak.Array([[0.0, 1.0], [2.0], [0.0]] * 4)}
         seen: list[str] = []
 

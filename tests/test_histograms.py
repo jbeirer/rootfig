@@ -2459,8 +2459,7 @@ class TestChunkedFilling:
         for name, value in (
             ("rootfig.io.sources:CHUNK_BYTES", 2_000),
             ("rootfig.histograms.pipeline:CHUNK_BYTES", 2_000),
-            ("rootfig.io.sources:THREADS", 4),
-            ("rootfig.selection.chunks:THREADS", 4),
+            ("rootfig._threads:THREADS", 4),
         ):
             module, attr = name.split(":")
             monkeypatch.setattr(importlib.import_module(module), attr, value)
@@ -2531,6 +2530,47 @@ class TestChunkedFilling:
         assert parts.stats is not None
         assert whole.stats is not None
         np.testing.assert_equal(asdict(parts.stats), asdict(whole.stats))  # nan skewness alike
+
+    def test_slices_hold_at_most_the_chunk_size(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rootfig.histograms import pipeline
+
+        monkeypatch.setattr(pipeline, "CHUNK_BYTES", 1_000)
+        for n_events in (1, 125, 126, 199, 250, 1_000):  # 8 B to 8 kB of float64
+            values = np.arange(float(n_events))
+            slices = list(pipeline._slices({"x": values}, n_events))
+            assert all(arrays["x"].nbytes <= 1_000 for arrays, _ in slices)
+            assert [n for _, n in slices] == [len(arrays["x"]) for arrays, _ in slices]
+            np.testing.assert_array_equal(np.concatenate([a["x"] for a, _ in slices]), values)
+
+    def test_reading_and_preparing_share_one_pool(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        import rootfig._threads as threads_module
+        from rootfig.selection.chunks import Request
+
+        self._chunked(monkeypatch)
+        pools: list[ThreadPoolExecutor] = []
+        prepared: list[int] = []
+
+        class Counted(ThreadPoolExecutor):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                pools.append(self)
+
+        original = Request.prepare
+
+        def counting(request: Request, arrays: Any, n_events: int) -> Columns:
+            prepared.append(n_events)
+            return original(request, arrays, n_events)
+
+        monkeypatch.setattr(threads_module, "ThreadPoolExecutor", Counted)
+        monkeypatch.setattr(Request, "prepare", counting)
+        sample = Sample(str(signal_file), weight="weight")
+        build_histograms([sample], Variable("Muon_pt", bins=(10, 0, 100)), selection="nMuon > 0")
+        assert len(prepared) > 1  # read and prepared a chunk at a time
+        assert len(pools) == 1
 
 
 class TestPrefetch:
