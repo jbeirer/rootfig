@@ -33,7 +33,7 @@ from uproot.interpretation.objects import CannotBeAwkward
 from rootfig._threads import worker_pool
 from rootfig._typing import Hist
 from rootfig.errors import SourceError
-from rootfig.io import objects
+from rootfig.io import compat, objects
 from rootfig.io.schema import record_fields, select_field
 
 __all__ = [
@@ -278,12 +278,7 @@ def _joined(pieces: Sequence[dict[str, ak.Array]]) -> dict[str, ak.Array]:
 def _read_range(
     obj: Any, first: int, last: int, *, name_filter: Any, chunk_bytes: int, pool: Any
 ) -> Iterator[Mapping[str, Any]]:
-    """Read entries ``first`` to ``last`` of one file's tree, about ``chunk_bytes`` at a time.
-
-    uproot iterates a ``TTree``, cutting at its clusters. An ``RNTuple`` is read in
-    explicit ranges instead: ``RNTuple.iterate`` of uproot 5.7.1, the oldest version
-    rootfig supports, ignores the entry range and reads every entry.
-    """
+    """Read entries ``first`` to ``last`` of one file's tree, about ``chunk_bytes`` at a time."""
     options: dict[str, Any] = {
         "filter_name": name_filter,
         "library": "ak",
@@ -291,17 +286,9 @@ def _read_range(
         "decompression_executor": pool,
         "interpretation_executor": pool,
     }
-    if objects.RNTUPLE_MARKER not in type(obj).__name__:
-        yield from obj.iterate(
-            entry_start=first, entry_stop=last, step_size=f"{chunk_bytes} B", **options
-        )
-        return
-    step = obj.num_entries_for(
-        f"{chunk_bytes} B", filter_name=name_filter, entry_start=first, entry_stop=last
-    )
-    step = step or last - first  # None when no field is selected
-    for start in range(first, last, step):
-        yield obj.arrays(entry_start=start, entry_stop=min(start + step, last), **options)
+    # with uproot>=5.7.5 this is, for both formats (and io/compat.py goes):
+    # obj.iterate(entry_start=first, entry_stop=last, step_size=f"{chunk_bytes} B", **options)
+    return compat.iterate(obj, first, last, chunk_bytes, **options)
 
 
 def _tree_in(file: Any, tree: str, files: Sequence[str]) -> Any:
@@ -567,17 +554,21 @@ class FileSource:
 
         The chunks, concatenated, are what :meth:`arrays` returns, entry range
         included, while only one of them is held here at a time; the end of a file
-        and small files are joined with what follows. At least one chunk is
-        yielded, an empty one when no entry is in range, so the types of the
-        branches are always known.
+        and small files are joined with what follows as long as together they fit in
+        a chunk. At least one chunk is yielded, an empty one when no entry is in
+        range, so the types of the branches are always known.
         """
         chunk_bytes = CHUNK_BYTES if chunk_bytes is None else chunk_bytes
         held: list[dict[str, ak.Array]] = []
         size = 0
         yielded = False
         for piece in self._pieces(branches, chunk_bytes):
+            piece_size = sum(array.nbytes for array in piece.values())
+            if held and size + piece_size > chunk_bytes:
+                yield _joined(held)
+                held, size, yielded = [], 0, True
             held.append(piece)
-            size += sum(array.nbytes for array in piece.values())
+            size += piece_size
             if size >= chunk_bytes:
                 yield _joined(held)
                 held, size, yielded = [], 0, True

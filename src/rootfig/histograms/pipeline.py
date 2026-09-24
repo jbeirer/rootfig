@@ -116,15 +116,59 @@ def read_chunks(
     data, a ``cache``) are cut into slices of about as many bytes, views that copy
     nothing, so that they are prepared in parallel alike. The branch names are
     checked before this returns, and nothing is read until the first chunk is
-    asked for.
+    asked for. A chunk holds each branch in the type its file does, which the
+    whole read promotes to one type for all files; a chunk whose types differ from
+    the first chunk's raises :class:`_MixedTypesError` (see :func:`_prepared`).
     """
     source = sample.source
     if cache is None and isinstance(source, FileSource):
         needed = branch_names(source, expressions)
         if needed:
-            return ((arrays, len(next(iter(arrays.values())))) for arrays in source.iterate(needed))
+            return _same_types(source.iterate(needed))
     arrays, n_events = read_arrays(sample, expressions, cache=cache)
     return _slices(arrays, n_events)
+
+
+class _MixedTypesError(Exception):
+    """A chunk holds a branch in another type than the first chunk did."""
+
+
+def _same_types(chunks: Iterator[dict[str, Any]]) -> Iterator[tuple[dict[str, Any], int]]:
+    """Yield ``chunks`` with their numbers of events, as long as their types stay the first's."""
+    try:
+        first = None
+        for arrays in chunks:
+            types = [array.type.content for array in arrays.values()]
+            if first is None:
+                first = types
+            elif types != first:
+                raise _MixedTypesError
+            yield arrays, len(next(iter(arrays.values())))
+    finally:
+        close = getattr(chunks, "close", None)
+        if close is not None:
+            close()
+
+
+def _prepared(
+    sample: Sample,
+    expressions: Sequence[Any],
+    requests: Sequence[Request],
+    *,
+    cache: ReadCache | None = None,
+) -> list[Columns]:
+    """Run ``requests`` on the chunks of ``sample`` that :func:`read_chunks` reads.
+
+    Where the files hold a branch in different types (``int32`` in one, ``int64``
+    in another), the sample is read whole instead (:func:`read_arrays`), which
+    promotes them to one type before anything is evaluated: ``x * x`` would
+    otherwise overflow in the ``int32`` file's chunks, and the result would depend
+    on where the chunks start and on whether a cache was used.
+    """
+    try:
+        return prepare_chunks(read_chunks(sample, expressions, cache=cache), requests)
+    except _MixedTypesError:
+        return prepare_chunks(_slices(*read_arrays(sample, expressions, cache=cache)), requests)
 
 
 def _slices(arrays: dict[str, Any], n_events: int) -> Iterator[tuple[dict[str, Any], int]]:
@@ -194,7 +238,6 @@ def load_columns(
     var_exprs = [as_variable(v).expression for v in variables]
     cut = combined_selection(sample, selection)
     weight_expr = combined_weight(sample, weight)
-    chunks = _chunks_for(sample, var_exprs, cut, weight_expr, cache=cache)
     request = Request(
         tuple(var_exprs),
         selection=None if cut is None else cut.expression,
@@ -203,7 +246,8 @@ def load_columns(
         nonfinite=nonfinite,
         context=sample.label,
     )
-    return prepare_chunks(chunks, [request])[0]
+    expressions = _expressions(var_exprs, cut, weight_expr)
+    return _prepared(sample, expressions, [request], cache=cache)[0]
 
 
 def load_columns_each(
@@ -225,7 +269,6 @@ def load_columns_each(
     var_exprs = [as_variable(v).expression for v in variables]
     cut = combined_selection(sample, selection)
     weight_expr = combined_weight(sample, weight)
-    chunks = _chunks_for(sample, var_exprs, cut, weight_expr)
     scale = sample.scale * sample.lumi_scale(lumi)
     requests = [
         Request(
@@ -238,24 +281,19 @@ def load_columns_each(
         )
         for expression in var_exprs
     ]
-    return prepare_chunks(chunks, requests)
+    return _prepared(sample, _expressions(var_exprs, cut, weight_expr), requests)
 
 
-def _chunks_for(
-    sample: Sample,
-    var_exprs: Sequence[str],
-    cut: Cut | None,
-    weight_expr: str | None,
-    *,
-    cache: ReadCache | None = None,
-) -> Iterator[tuple[dict[str, Any], int]]:
-    """Read the branches needed by the variables, the selection and the weight, in chunks."""
+def _expressions(
+    var_exprs: Sequence[str], cut: Cut | None, weight_expr: str | None
+) -> list[Expression]:
+    """Return the parsed variables, selection and weight, whose branches are read."""
     expressions = [parse(v) for v in var_exprs]
     if cut is not None:
         expressions.append(cut.parsed())
     if weight_expr is not None:
         expressions.append(parse(weight_expr))
-    return read_chunks(sample, expressions, cache=cache)
+    return expressions
 
 
 def build_histograms(
@@ -392,7 +430,6 @@ def _load_with_variations(
     weight_expr = combined_weight(sample, weight)
     scale = sample.scale * sample.lumi_scale(lumi)
     expressions, used = _read_plan(sample, var, systematics, selection=selection, weight=weight)
-    chunks = read_chunks(sample, expressions, cache=cache)
 
     def request(context: str, weight: str | None, **extra: Any) -> Request:
         return Request(
@@ -421,7 +458,7 @@ def _load_with_variations(
                 # variable, selection and weight all see the shifted values
                 replaced = {old: new for old, new in spec.items() if old in used}
                 requests.append(request(context, weight_expr, substitutes=replaced, note=note))
-    prepared = prepare_chunks(chunks, requests)
+    prepared = _prepared(sample, expressions, requests, cache=cache)
 
     variations: dict[str, tuple[Columns | float | None, Columns | float | None]] = {}
     for name, syst in systematics.items():

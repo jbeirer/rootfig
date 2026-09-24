@@ -2572,6 +2572,52 @@ class TestChunkedFilling:
         assert len(prepared) > 1  # read and prepared a chunk at a time
         assert len(pools) == 1
 
+    @pytest.mark.parametrize(
+        ("dtypes", "expression"),
+        [
+            (("int32", "int64"), "x * x"),
+            (("float32", "float64"), "x * 1.1"),
+            (("int64", "int64"), "x * x"),
+        ],
+    )
+    def test_files_of_different_types_are_prepared_as_one_read(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        dtypes: tuple[str, str],
+        expression: str,
+    ) -> None:
+        import uproot
+
+        from rootfig.histograms import load_columns
+        from rootfig.io import FileSource, ReadCache
+
+        parts = []
+        for i, dtype in enumerate(dtypes):
+            values = (np.arange(1, 1001) * 100_003 + i).astype(dtype)  # squares overflow int32
+            with uproot.recreate(tmp_path / f"part{i}.root") as file:
+                file.mktree("events", {"x": values.dtype})
+                file["events"].extend({"x": values})
+            parts.append(values)
+        sample = Sample([str(tmp_path / f"part{i}.root") for i in range(2)])
+        joined = np.concatenate(parts)  # one type for both, as reading them at once gives
+        want = joined * joined if expression == "x * x" else joined * 1.1
+        cached = load_columns(sample, [expression], cache=ReadCache())
+        self._chunked(monkeypatch)
+        whole_reads: list[list[str]] = []
+        original = FileSource.arrays
+
+        def counting(source: FileSource, branches: Any) -> Any:
+            whole_reads.append(list(branches))
+            return original(source, branches)
+
+        monkeypatch.setattr(FileSource, "arrays", counting)
+        chunked = load_columns(sample, [expression])
+        np.testing.assert_array_equal(cached.arrays[0], want)
+        np.testing.assert_array_equal(chunked.arrays[0], want)
+        # read whole only when the files differ, after the chunks showed it
+        assert whole_reads == ([["x"]] if dtypes[0] != dtypes[1] else [])
+
 
 class TestPrefetch:
     """prefetch() warms a ReadCache with what build_histograms reads; results do not change."""

@@ -475,9 +475,11 @@ threads, and only the values that fill the histograms are kept, so the peak
 memory follows those values rather than every branch read. The histograms and
 their statistics are the same as from reading everything at once.
 
-- Reading and preparing share up to eight worker threads, fewer on a machine
-  with fewer cores. Set `ROOTFIG_THREADS` to choose the number, e.g. the cores a
-  batch job was given; `ROOTFIG_THREADS=1` reads and prepares in the calling thread.
+- Decompressing and preparing share up to eight worker threads, fewer on a
+  machine with fewer cores. Set `ROOTFIG_THREADS` to choose the number, e.g. the
+  cores a batch job was given; `ROOTFIG_THREADS=1` decompresses and prepares in
+  the calling thread. uproot fetches the file contents in a thread or two of its
+  own either way, which do little but wait for the data.
 - An explicit range (`bins=(50, 0, 200)`, or `range=(low, high)`) skips range
   inference, which takes two medians over all the values of every sample.
 - Many plots of the same files are fastest as a [`PlotBook`](batch.md), which

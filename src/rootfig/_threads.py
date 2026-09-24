@@ -30,8 +30,9 @@ THREADS: int = _threads()
 
 Both release the GIL for most of their work, so a few threads make reading and
 preparing several times faster; more add little and would crowd a shared
-machine. ``ROOTFIG_THREADS`` sets the number (``1`` runs everything in the
-calling thread), for instance to match the cores a batch job was given.
+machine. ``ROOTFIG_THREADS`` sets the number (``1`` decompresses and prepares in
+the calling thread), for instance to match the cores a batch job was given.
+uproot fetches the file contents in threads of its own either way.
 """
 
 _LENT: ContextVar[ThreadPoolExecutor | None] = ContextVar("rootfig_worker_pool", default=None)

@@ -403,6 +403,28 @@ class TestEntryRanges:
         assert resolve_files("root://host:1094//store/file.root")[1] is None
 
 
+class TestUprootCompat:
+    """The workarounds of rootfig.io.compat for uproot < 5.7.5, which go with that module."""
+
+    def test_rntuples_are_read_in_explicit_ranges(
+        self, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def ignores_the_range(*args: Any, **kwargs: Any) -> Any:
+            msg = "RNTuple.iterate must not be relied on for entry ranges"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(uproot.behaviors.RNTuple.HasFields, "iterate", ignores_the_range)
+        source = FileSource(
+            data_dir / "signal_rntuple.root", tree="events", entry_start=100, entry_stop=1500
+        )
+        chunks = list(source.iterate(["MET", "Muon_pt"], chunk_bytes=1_000))
+        assert len(chunks) > 1
+        joined = {name: ak.concatenate([chunk[name] for chunk in chunks]) for name in chunks[0]}
+        whole = source.arrays(["MET", "Muon_pt"])
+        assert len(joined["MET"]) == 1400
+        assert all(ak.array_equal(joined[name], whole[name]) for name in ("MET", "Muon_pt"))
+
+
 class TestIterate:
     """FileSource.iterate reads what arrays() reads, a chunk of entries at a time."""
 
@@ -435,25 +457,6 @@ class TestIterate:
         for name in branches:
             assert ak.array_equal(joined[name], whole[name])
 
-    def test_rntuples_are_read_in_explicit_ranges(
-        self, data_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # RNTuple.iterate of uproot 5.7.1, the oldest supported, ignores the entry range
-        def ignores_the_range(*args: Any, **kwargs: Any) -> Any:
-            msg = "RNTuple.iterate must not be relied on for entry ranges"
-            raise AssertionError(msg)
-
-        monkeypatch.setattr(uproot.behaviors.RNTuple.HasFields, "iterate", ignores_the_range)
-        source = FileSource(
-            data_dir / "signal_rntuple.root", tree="events", entry_start=100, entry_stop=1500
-        )
-        chunks = list(source.iterate(["MET", "Muon_pt"], chunk_bytes=1_000))
-        assert len(chunks) > 1
-        joined = self._joined(chunks)
-        whole = source.arrays(["MET", "Muon_pt"])
-        assert len(joined["MET"]) == 1400
-        assert all(ak.array_equal(joined[name], whole[name]) for name in ("MET", "Muon_pt"))
-
     def test_no_entry_in_range_is_one_empty_chunk(self, signal_file: Path) -> None:
         source = FileSource(signal_file, tree="events", entry_start=5000)
         [chunk] = source.iterate(["Muon_pt", "MET"])
@@ -466,6 +469,24 @@ class TestIterate:
         )
         [chunk] = source.iterate(["MET"], chunk_bytes=10**8)  # both files: less than a chunk
         assert len(chunk["MET"]) == 2000
+
+    @pytest.mark.parametrize("kind", ["TTree", "RNTuple"])
+    def test_chunks_hold_about_the_chunk_size_uncompressed(self, tmp_path: Path, kind: str) -> None:
+        # 2.4 MB of arrays that compress about fifty-fold, in baskets of 1 000 entries: a
+        # step counted from the compressed sizes would read it all in one piece
+        values = np.repeat(np.arange(50.0), 4_000)
+        jagged = ak.unflatten(values, np.full(100_000, 2))
+        path = tmp_path / "compressible.root"
+        with uproot.recreate(path, compression=uproot.ZLIB(9)) as file:
+            make = file.mktree if kind == "TTree" else file.mkrntuple
+            make("events", {"x": "var * float64"})
+            for start in range(0, 100_000, 1_000):
+                file["events"].extend({"x": jagged[start : start + 1_000]})
+        chunks = list(FileSource(path, tree="events").iterate(["x"], chunk_bytes=400_000))
+        sizes = [chunk["x"].nbytes for chunk in chunks]
+        assert sum(len(chunk["x"]) for chunk in chunks) == 100_000
+        assert len(sizes) >= 5
+        assert max(sizes) <= 500_000  # a basket partly in range is held whole
 
     def test_split_collections_and_missing_branches(self) -> None:
         source = FileSource(DATA / "split_collection.root", tree="events")
@@ -495,14 +516,21 @@ class TestIterate:
         with pytest.raises(SourceError, match="could not read 'events'"):
             source.num_entries()
 
-    def test_one_thread_reads_in_the_calling_thread(
+    def test_one_thread_starts_no_worker_pool(
         self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import threading
 
         import rootfig._threads as threads_module
 
+        pools: list[Any] = []
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            pools.append(args)
+            raise AssertionError("no pool with one thread")
+
         monkeypatch.setattr(threads_module, "THREADS", 1)
+        monkeypatch.setattr(threads_module, "ThreadPoolExecutor", counted)
         before = threading.active_count()
         source = FileSource(signal_file, tree="events")
         with threads_module.worker_pool(lend=True) as pool:
@@ -511,6 +539,7 @@ class TestIterate:
         whole = source.arrays(["MET"])
         [chunk] = source.iterate(["MET"], chunk_bytes=10**8)
         assert ak.array_equal(chunk["MET"], whole["MET"])
+        assert pools == []  # uproot fetches the file contents in threads of its own
 
     def test_a_lent_worker_pool_serves_the_blocks_inside(
         self, monkeypatch: pytest.MonkeyPatch
