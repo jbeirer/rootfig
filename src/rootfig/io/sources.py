@@ -287,10 +287,11 @@ def _read_range(
         "interpretation_executor": pool,
     }
     if objects.RNTUPLE_MARKER in type(obj).__name__:
-        return _cluster_runs(obj, first, last, chunk_bytes, options)
+        yield from _cluster_runs(obj, first, last, chunk_bytes, options)
+        return
     # with uproot>=5.7.3 (io/compat.py goes): step_size=f"{chunk_bytes} B"
     step = compat.tree_step(obj, first, last, chunk_bytes, name_filter)
-    return obj.iterate(entry_start=first, entry_stop=last, step_size=step, **options)
+    yield from obj.iterate(entry_start=first, entry_stop=last, step_size=step, **options)
 
 
 def _cluster_runs(
