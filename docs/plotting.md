@@ -487,6 +487,11 @@ their statistics are the same as from reading everything at once.
   branches costs a noticeable fraction of a second to open, every time.
 - LZMA-compressed files (the NanoAOD default) take several times longer to
   decompress than ZLIB, LZ4 or ZSTD ones; the threads help most there.
+- A sample whose files hold a branch in different types (`float32` in one,
+  `float64` in another) is read whole once the difference shows, and evaluated
+  in the wider type. The first file's chunks may already have been evaluated in
+  their own type by then, so NumPy can warn about an overflow that the wider
+  type avoids; the histograms are not affected.
 
 ## 2D histograms and correlations
 

@@ -286,9 +286,47 @@ def _read_range(
         "decompression_executor": pool,
         "interpretation_executor": pool,
     }
-    # with uproot>=5.7.5 this is, for both formats (and io/compat.py goes):
-    # obj.iterate(entry_start=first, entry_stop=last, step_size=f"{chunk_bytes} B", **options)
-    return compat.iterate(obj, first, last, chunk_bytes, **options)
+    if objects.RNTUPLE_MARKER in type(obj).__name__:
+        return _cluster_runs(obj, first, last, chunk_bytes, options)
+    # with uproot>=5.7.3 (io/compat.py goes): step_size=f"{chunk_bytes} B"
+    step = compat.tree_step(obj, first, last, chunk_bytes, name_filter)
+    return obj.iterate(entry_start=first, entry_stop=last, step_size=step, **options)
+
+
+def _cluster_runs(
+    ntuple: Any, first: int, last: int, chunk_bytes: int, options: Mapping[str, Any]
+) -> Iterator[Mapping[str, Any]]:
+    """Read entries ``first`` to ``last`` of an RNTuple in runs of whole clusters.
+
+    uproot decodes every cluster a read touches in full (and the one starting where
+    the read stops), so a read of part of a cluster holds all of it, and reading a
+    cluster in parts decodes it once per part (``RNTuple.iterate`` steps without
+    regard to clusters). A run is therefore as many consecutive clusters as fit in
+    ``chunk_bytes`` at the bytes the previous run held per entry, at least one, cut
+    to the range at its ends; the first run is the first cluster.
+    """
+    clusters = [
+        (c.num_first_entry, c.num_first_entry + c.num_entries)
+        for c in ntuple.cluster_summaries
+        if c.num_first_entry < last and first < c.num_first_entry + c.num_entries
+    ]
+    per_entry = None
+    at = 0
+    while at < len(clusters):
+        end = at + 1
+        if per_entry is not None:
+            while (
+                end < len(clusters)
+                and (clusters[end][1] - clusters[at][0]) * per_entry <= chunk_bytes
+            ):
+                end += 1
+        start, stop = max(clusters[at][0], first), min(clusters[end - 1][1], last)
+        data = ntuple.arrays(entry_start=start, entry_stop=stop, **options)
+        yield data
+        size = sum(array.nbytes for array in data.values())
+        if size:
+            per_entry = size / (stop - start)
+        at = end
 
 
 def _tree_in(file: Any, tree: str, files: Sequence[str]) -> Any:

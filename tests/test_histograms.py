@@ -2580,13 +2580,17 @@ class TestChunkedFilling:
             (("int64", "int64"), "x * x"),
         ],
     )
+    @pytest.mark.parametrize("threads", [1, 4])  # one: the first file is prepared before
     def test_files_of_different_types_are_prepared_as_one_read(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         dtypes: tuple[str, str],
         expression: str,
+        threads: int,
     ) -> None:
+        import importlib
+
         import uproot
 
         from rootfig.histograms import load_columns
@@ -2604,6 +2608,7 @@ class TestChunkedFilling:
         want = joined * joined if expression == "x * x" else joined * 1.1
         cached = load_columns(sample, [expression], cache=ReadCache())
         self._chunked(monkeypatch)
+        monkeypatch.setattr(importlib.import_module("rootfig._threads"), "THREADS", threads)
         whole_reads: list[list[str]] = []
         original = FileSource.arrays
 

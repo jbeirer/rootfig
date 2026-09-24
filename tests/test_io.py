@@ -403,28 +403,6 @@ class TestEntryRanges:
         assert resolve_files("root://host:1094//store/file.root")[1] is None
 
 
-class TestUprootCompat:
-    """The workarounds of rootfig.io.compat for uproot < 5.7.5, which go with that module."""
-
-    def test_rntuples_are_read_in_explicit_ranges(
-        self, data_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def ignores_the_range(*args: Any, **kwargs: Any) -> Any:
-            msg = "RNTuple.iterate must not be relied on for entry ranges"
-            raise AssertionError(msg)
-
-        monkeypatch.setattr(uproot.behaviors.RNTuple.HasFields, "iterate", ignores_the_range)
-        source = FileSource(
-            data_dir / "signal_rntuple.root", tree="events", entry_start=100, entry_stop=1500
-        )
-        chunks = list(source.iterate(["MET", "Muon_pt"], chunk_bytes=1_000))
-        assert len(chunks) > 1
-        joined = {name: ak.concatenate([chunk[name] for chunk in chunks]) for name in chunks[0]}
-        whole = source.arrays(["MET", "Muon_pt"])
-        assert len(joined["MET"]) == 1400
-        assert all(ak.array_equal(joined[name], whole[name]) for name in ("MET", "Muon_pt"))
-
-
 class TestIterate:
     """FileSource.iterate reads what arrays() reads, a chunk of entries at a time."""
 
@@ -487,6 +465,55 @@ class TestIterate:
         assert sum(len(chunk["x"]) for chunk in chunks) == 100_000
         assert len(sizes) >= 5
         assert max(sizes) <= 500_000  # a basket partly in range is held whole
+
+    @staticmethod
+    def _clusters(path: Path, kind: str, sizes: list[int]) -> None:
+        """Write ``x``, a list of two doubles per event, as one cluster or basket per size."""
+        with uproot.recreate(path) as file:
+            make = file.mktree if kind == "TTree" else file.mkrntuple
+            make("events", {"x": "var * float64"})
+            for size in sizes:
+                values = np.arange(2.0 * size)
+                file["events"].extend({"x": ak.unflatten(values, np.full(size, 2))})
+
+    def test_rntuples_are_read_in_runs_of_whole_clusters(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def steps_across_clusters(*args: Any, **kwargs: Any) -> Any:
+            msg = "RNTuple.iterate steps without regard to clusters"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(uproot.behaviors.RNTuple.HasFields, "iterate", steps_across_clusters)
+        path = tmp_path / "clusters.root"
+        self._clusters(path, "RNTuple", [1_000] * 10)  # 24 kB of arrays per cluster
+        source = FileSource(path, tree="events", entry_start=1_500, entry_stop=8_500)
+        chunks = list(source.iterate(["x"], chunk_bytes=80_000))
+        stops = np.cumsum([len(chunk["x"]) for chunk in chunks]) + 1_500
+        assert len(stops) > 2
+        assert all(stop % 1_000 == 0 for stop in stops[:-1])  # at the ends of clusters
+        assert max(chunk["x"].nbytes for chunk in chunks) <= 100_000
+        joined = ak.concatenate([chunk["x"] for chunk in chunks])
+        assert ak.array_equal(joined, source.arrays(["x"])["x"])
+
+    def test_a_cluster_larger_than_a_chunk_is_read_once(self, tmp_path: Path) -> None:
+        path = tmp_path / "cluster.root"
+        self._clusters(path, "RNTuple", [100_000])  # 2.4 MB of arrays
+        [chunk] = FileSource(path, tree="events").iterate(["x"], chunk_bytes=100_000)
+        assert len(chunk["x"]) == 100_000
+
+    def test_a_range_is_sized_by_its_own_events(self, tmp_path: Path) -> None:
+        # the second half holds 99 values per event, the first one: a step from the
+        # average of the whole tree would take twice as many events as fit
+        path = tmp_path / "uneven.root"
+        with uproot.recreate(path) as file:
+            file.mktree("events", {"x": "var * float64"})
+            for counts in [1] * 50 + [99] * 50:
+                values = np.arange(1_000.0 * counts)
+                file["events"].extend({"x": ak.unflatten(values, np.full(1_000, counts))})
+        source = FileSource(path, tree="events", entry_start=60_000, entry_stop=90_000)
+        chunks = list(source.iterate(["x"], chunk_bytes=2_000_000))
+        assert sum(len(chunk["x"]) for chunk in chunks) == 30_000
+        assert max(chunk["x"].nbytes for chunk in chunks) <= 2_500_000
 
     def test_split_collections_and_missing_branches(self) -> None:
         source = FileSource(DATA / "split_collection.root", tree="events")

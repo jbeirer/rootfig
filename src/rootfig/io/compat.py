@@ -1,69 +1,50 @@
-"""Workarounds for uproot 5.7.1 to 5.7.4, all of which go once rootfig requires 5.7.5.
+"""Workarounds for uproot 5.7.1 and 5.7.2, which go once rootfig requires 5.7.3.
 
 uproot 5.7.1 is the oldest release rootfig supports, since the Key4hep stacks ship
-it. Before 5.7.3, uproot converts a step given in bytes from the compressed sizes,
-which well-compressed data decodes to several times over; before 5.7.5,
-``RNTuple.iterate`` reads outside the entry range (5.7.1 from entry 0, 5.7.2 to
-5.7.4 past its end). With ``uproot>=5.7.5`` this module is deleted, and its one
-caller, ``_read_range`` in :mod:`rootfig.io.sources`, reads both formats with::
-
-    obj.iterate(entry_start=first, entry_stop=last, step_size=f"{chunk_bytes} B", **options)
-
-The tests of these workarounds, ``tests/test_io.py::TestUprootCompat``, go with it.
+it. Before 5.7.3, uproot converts a ``TTree`` step given in bytes from the
+compressed basket sizes, which well-compressed data decodes to several times over.
+With ``uproot>=5.7.3`` this module is deleted, and its one caller, ``_read_range``
+in :mod:`rootfig.io.sources`, passes ``step_size=f"{chunk_bytes} B"`` instead of
+:func:`tree_step`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from itertools import pairwise
 from typing import Any
 
-from rootfig.io import objects
-
-__all__ = ["iterate"]
-
-RNTUPLE_PROBE = 1_000
-"""Entries in the first piece of an RNTuple, whose size sets the length of the next."""
+__all__ = ["tree_step"]
 
 
-def iterate(
-    obj: Any, first: int, last: int, chunk_bytes: int, **options: Any
-) -> Iterator[Mapping[str, Any]]:
-    """Read entries ``first`` to ``last`` of ``obj``, about ``chunk_bytes`` of arrays at a time.
+def tree_step(tree: Any, first: int, last: int, chunk_bytes: int, name_filter: Any) -> int:
+    """Return how many entries of ``tree`` from ``first`` to ``last`` hold about ``chunk_bytes``.
 
-    The steps are counted here, in entries. A ``TTree`` states the uncompressed
-    bytes of each branch, and uproot iterates it, keeping a basket that spans two
-    steps for the next. An ``RNTuple`` is read in explicit ranges, the first of at
-    most :data:`RNTUPLE_PROBE` entries and each later one sized by what was read.
+    As uproot 5.7.3 and later count a step given in bytes: the uncompressed bytes of
+    the baskets that overlap the range, read from their keys, over the entries of
+    the range. ``name_filter`` selects branches as ``arrays`` does; a selected
+    parent is read with its subbranches, which count too.
     """
-    name_filter = options["filter_name"]
-    if objects.RNTUPLE_MARKER not in type(obj).__name__:
-        step = _tree_step(obj, name_filter, chunk_bytes) or last - first
-        yield from obj.iterate(entry_start=first, entry_stop=last, step_size=step, **options)
-        return
-    step = obj.num_entries_for(
-        f"{chunk_bytes} B", filter_name=name_filter, entry_start=first, entry_stop=last
-    )
-    step = min(step or last - first, RNTUPLE_PROBE)  # None when no field is selected
-    start = first
-    while start < last:
-        stop = min(start + step, last)
-        data = obj.arrays(entry_start=start, entry_stop=stop, **options)
-        yield data
-        size = sum(array.nbytes for array in data.values())
-        if size:
-            step = max(1, chunk_bytes * (stop - start) // size)
-        start = stop
-
-
-def _tree_step(tree: Any, name_filter: Any, chunk_bytes: int) -> int | None:
-    """Return how many entries of ``tree`` hold about ``chunk_bytes`` of what is read, if any.
-
-    ``name_filter`` selects branches as ``arrays`` does; a selected parent is read
-    with its subbranches, so theirs count too.
-    """
-    read = {}
+    branches = {}
     for branch in tree.itervalues(filter_name=name_filter):
         for each in (branch, *branch.itervalues()):
-            read[each.cache_key] = each
-    size = sum(branch.uncompressed_bytes for branch in read.values())
-    return max(1, chunk_bytes * tree.num_entries // size) if size else None
+            branches[each.cache_key] = each
+    size = 0
+    for branch in branches.values():
+        for basket, (start, stop) in enumerate(pairwise(branch.entry_offsets)):
+            if start < last and first < stop:
+                size += _uncompressed_bytes(branch, basket)
+    return max(1, round(chunk_bytes * (last - first) / size)) if size else max(1, last - first)
+
+
+def _uncompressed_bytes(branch: Any, basket: int) -> int:
+    """Return the uncompressed bytes of a basket, header included, without decompressing it.
+
+    A basket written separately has them in its key (``basket_uncompressed_bytes``
+    of uproot 5.7.1 decompresses the basket instead); one kept in the branch
+    (embedded) is already in memory.
+    """
+    try:
+        key = branch.basket_key(basket)
+    except IndexError:
+        return int(branch.basket(basket).uncompressed_bytes)
+    return int(key.data_uncompressed_bytes + key.fKeylen)

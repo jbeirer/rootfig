@@ -163,7 +163,12 @@ def _prepared(
     in another), the sample is read whole instead (:func:`read_arrays`), which
     promotes them to one type before anything is evaluated: ``x * x`` would
     otherwise overflow in the ``int32`` file's chunks, and the result would depend
-    on where the chunks start and on whether a cache was used.
+    on where the chunks start and on whether a cache was used. The difference shows
+    at the first chunk of another type, so the chunks before it have been prepared
+    in their own type; their columns are discarded, but NumPy's floating-point
+    warnings (or errors, under ``np.errstate``) of that preparation are not taken
+    back. Knowing every file's types beforehand would cost opening each file's
+    metadata once more, a quarter of a second for a tree of 1 000 branches.
     """
     try:
         return prepare_chunks(read_chunks(sample, expressions, cache=cache), requests)
