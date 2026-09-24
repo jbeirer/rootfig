@@ -504,7 +504,7 @@ class TestIterate:
                 values = np.arange(2.0 * size)
                 file["events"].extend({"x": ak.unflatten(values, np.full(size, 2))})
 
-    def test_rntuples_are_read_in_runs_of_whole_clusters(
+    def test_rntuples_are_read_a_cluster_at_a_time(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def steps_across_clusters(*args: Any, **kwargs: Any) -> Any:
@@ -522,6 +522,19 @@ class TestIterate:
         assert max(chunk["x"].nbytes for chunk in chunks) <= 100_000
         joined = ak.concatenate([chunk["x"] for chunk in chunks])
         assert ak.array_equal(joined, source.arrays(["x"])["x"])
+
+    def test_rntuple_clusters_growing_in_size_keep_the_chunk_size(self, tmp_path: Path) -> None:
+        # small clusters first must not have the larger ones after them read together
+        path = tmp_path / "growing.root"
+        with uproot.recreate(path) as file:
+            file.mkrntuple("events", {"x": "var * float64"})
+            for counts in [1, 1] + [10] * 6:
+                values = np.arange(1_000.0 * counts)
+                file["events"].extend({"x": ak.unflatten(values, np.full(1_000, counts))})
+        chunks = list(FileSource(path, tree="events").iterate(["x"], chunk_bytes=100_000))
+        assert sum(len(chunk["x"]) for chunk in chunks) == 8_000
+        # a cluster of 10 values per event holds 88 kB; at most one more is read with it
+        assert max(chunk["x"].nbytes for chunk in chunks) <= 200_000
 
     def test_files_read_in_chunks_cache_at_most_a_chunk(
         self, signal_file: Path, monkeypatch: pytest.MonkeyPatch

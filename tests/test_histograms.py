@@ -2625,7 +2625,7 @@ class TestChunkedFilling:
         assert whole_reads == ([["x"]] if dtypes[0] != dtypes[1] else [])
 
     @pytest.mark.parametrize("threads", [1, 4])
-    @pytest.mark.parametrize("strict", ["errstate", "warnings"])
+    @pytest.mark.parametrize("strict", ["errstate", "warnings", "call", "log"])
     def test_a_floating_point_error_in_a_narrower_file_reads_the_sample_whole(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, threads: int, strict: str
     ) -> None:
@@ -2637,23 +2637,34 @@ class TestChunkedFilling:
         from rootfig.histograms import load_columns
         from rootfig.io import ReadCache
 
-        def write(name: str, dtype: str) -> str:
+        def write(name: str, dtype: str, n_events: int = 1_000) -> str:
             with uproot.recreate(tmp_path / name) as file:
                 file.mktree("events", {"x": dtype})
-                file["events"].extend({"x": np.full(1_000, 1e20, dtype=dtype)})
+                if n_events:
+                    file["events"].extend({"x": np.full(n_events, 1e20, dtype=dtype)})
             return str(tmp_path / name)
 
-        # x * x overflows float32, not float64
+        # x * x overflows float32, not float64; an empty tree has types all the same
         mixed = Sample([write("a.root", "float32"), write("b.root", "float64")])
-        narrow = Sample([write("c.root", "float32"), write("d.root", "float32")])
+        narrow = Sample([write("c.root", "float32"), write("d.root", "float32", n_events=0)])
+
+        class Refusing:
+            """A NumPy error handler, or log, that raises an error of its own."""
+
+            def __call__(self, kind: str, flag: int) -> None:
+                raise RuntimeError(kind)
+
+            def write(self, message: str) -> None:
+                raise RuntimeError(message)
 
         def raising() -> contextlib.ExitStack:
             stack = contextlib.ExitStack()
-            if strict == "errstate":
-                stack.enter_context(np.errstate(over="raise"))
-            else:
+            if strict == "warnings":
                 stack.enter_context(warnings.catch_warnings())
                 warnings.simplefilter("error", RuntimeWarning)
+            else:
+                mode = {"errstate": "raise"}.get(strict, strict)
+                stack.enter_context(np.errstate(over=mode, call=Refusing()))
             return stack
 
         with raising():

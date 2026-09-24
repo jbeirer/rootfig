@@ -278,7 +278,10 @@ def _joined(pieces: Sequence[dict[str, ak.Array]]) -> dict[str, ak.Array]:
 def _read_range(
     obj: Any, first: int, last: int, *, name_filter: Any, chunk_bytes: int, pool: Any
 ) -> Iterator[Mapping[str, Any]]:
-    """Read entries ``first`` to ``last`` of one file's tree, about ``chunk_bytes`` at a time."""
+    """Read entries ``first`` to ``last`` of one file's tree.
+
+    A ``TTree`` about ``chunk_bytes`` at a time, an ``RNTuple`` a cluster at a time.
+    """
     options: dict[str, Any] = {
         "filter_name": name_filter,
         "library": "ak",
@@ -287,47 +290,31 @@ def _read_range(
         "interpretation_executor": pool,
     }
     if objects.RNTUPLE_MARKER in type(obj).__name__:
-        yield from _cluster_runs(obj, first, last, chunk_bytes, options)
+        yield from _clusters(obj, first, last, options)
         return
     # with uproot>=5.7.3 (io/compat.py goes): step_size=f"{chunk_bytes} B"
     step = compat.tree_step(obj, first, last, chunk_bytes, name_filter)
     yield from obj.iterate(entry_start=first, entry_stop=last, step_size=step, **options)
 
 
-def _cluster_runs(
-    ntuple: Any, first: int, last: int, chunk_bytes: int, options: Mapping[str, Any]
+def _clusters(
+    ntuple: Any, first: int, last: int, options: Mapping[str, Any]
 ) -> Iterator[Mapping[str, Any]]:
-    """Read entries ``first`` to ``last`` of an RNTuple in runs of whole clusters.
+    """Read entries ``first`` to ``last`` of an RNTuple a cluster at a time.
 
     uproot decodes every cluster a read touches in full (and the one starting where
     the read stops), so a read of part of a cluster holds all of it, and reading a
     cluster in parts decodes it once per part (``RNTuple.iterate`` steps without
-    regard to clusters). A run is therefore as many consecutive clusters as fit in
-    ``chunk_bytes`` at the bytes the previous run held per entry, at least one, cut
-    to the range at its ends; the first run is the first cluster.
+    regard to clusters). A read of several clusters would hold them all before
+    their size is known, and the clusters of a file can differ widely in size. Each
+    read therefore takes one cluster, cut to the range at its ends, and
+    :meth:`FileSource.iterate` joins small ones.
     """
-    clusters = [
-        (c.num_first_entry, c.num_first_entry + c.num_entries)
-        for c in ntuple.cluster_summaries
-        if c.num_first_entry < last and first < c.num_first_entry + c.num_entries
-    ]
-    per_entry = None
-    at = 0
-    while at < len(clusters):
-        end = at + 1
-        if per_entry is not None:
-            while (
-                end < len(clusters)
-                and (clusters[end][1] - clusters[at][0]) * per_entry <= chunk_bytes
-            ):
-                end += 1
-        start, stop = max(clusters[at][0], first), min(clusters[end - 1][1], last)
-        data = ntuple.arrays(entry_start=start, entry_stop=stop, **options)
-        yield data
-        size = sum(array.nbytes for array in data.values())
-        if size:
-            per_entry = size / (stop - start)
-        at = end
+    for cluster in ntuple.cluster_summaries:
+        start = max(cluster.num_first_entry, first)
+        stop = min(cluster.num_first_entry + cluster.num_entries, last)
+        if start < stop:
+            yield ntuple.arrays(entry_start=start, entry_stop=stop, **options)
 
 
 def _tree_in(file: Any, tree: str, files: Sequence[str]) -> Any:
@@ -589,26 +576,30 @@ class FileSource:
     ) -> Iterator[dict[str, ak.Array]]:
         """Read ``branches`` a chunk of entries at a time, in order.
 
-        A chunk holds about ``chunk_bytes`` of arrays, :data:`CHUNK_BYTES` unless given.
+        A chunk holds about ``chunk_bytes`` of arrays, :data:`CHUNK_BYTES` unless given;
+        an RNTuple cluster larger than that, which is read whole, makes a chunk alone.
 
         The chunks, concatenated, are what :meth:`arrays` returns, entry range
-        included, while only one of them is held here at a time; the end of a file
-        and small files are joined with what follows as long as together they fit in
-        a chunk. At least one chunk is yielded, an empty one when no entry is in
-        range, so the types of the branches are always known.
+        included, while only one of them is held here at a time. Small pieces (under
+        an eighth of a chunk: the end of a file, small files, small RNTuple clusters)
+        are joined with what follows as long as together they fit in a chunk; a
+        larger piece makes a chunk of its own, since joining copies it. At least one
+        chunk is yielded, an empty one when no entry is in range, so the types of the
+        branches are always known.
         """
         chunk_bytes = CHUNK_BYTES if chunk_bytes is None else chunk_bytes
+        small = chunk_bytes // 8
         held: list[dict[str, ak.Array]] = []
         size = 0
         yielded = False
         for piece in self._pieces(branches, chunk_bytes):
             piece_size = sum(array.nbytes for array in piece.values())
-            if held and size + piece_size > chunk_bytes:
+            if held and (piece_size >= small or size + piece_size > chunk_bytes):
                 yield _joined(held)
                 held, size, yielded = [], 0, True
             held.append(piece)
             size += piece_size
-            if size >= chunk_bytes:
+            if piece_size >= small or size >= chunk_bytes:
                 yield _joined(held)
                 held, size, yielded = [], 0, True
         if held or not yielded:
@@ -629,7 +620,7 @@ class FileSource:
                     return
                 # uproot keeps a copy of every RNTuple column it decodes in the file's
                 # array cache (100 MB unless given): a chunk's worth still holds the
-                # cluster a run decodes past its end, which the next run starts with
+                # cluster a read decodes past its end, which the next read starts with
                 with uproot.open(path, array_cache=f"{chunk_bytes} B") as file:
                     obj = _tree_in(file, tree, self.files)
                     entries = int(obj.num_entries)

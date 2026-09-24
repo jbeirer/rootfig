@@ -171,29 +171,36 @@ def _prepared(
     otherwise overflow in the ``int32`` file's chunks, and the result would depend
     on where the chunks start and on whether a cache was used. The difference shows
     at the first chunk of another type, so the chunks before it have been prepared
-    in their own type. Their columns are discarded; a NumPy floating-point error
-    they raise (``np.errstate``, or a warning turned into an error) sends the sample
-    to the whole read as well if its files' types differ, which is only then looked
-    up, so the sample fails or succeeds as the whole read does. Their warnings are
-    not taken back. Knowing every file's types beforehand would cost opening each
-    file's metadata once more, a quarter of a second for a tree of 1 000 branches.
+    in their own type. Their columns are discarded, and an error they raise that
+    rootfig did not raise itself (NumPy's under ``np.errstate``, a warning turned
+    into an error, a NumPy error handler's, Awkward's) sends the sample to the whole
+    read as well if its files' types differ, which is only then looked up: the
+    sample fails or succeeds as the whole read does. Their warnings are not taken
+    back. Knowing every file's types beforehand would cost opening each file's
+    metadata once more, a quarter of a second for a tree of 1 000 branches.
     """
     try:
         return prepare_chunks(read_chunks(sample, expressions, cache=cache), requests)
     except _MixedTypesError:
         pass
-    except (RootfigError, FloatingPointError, RuntimeWarning) as exc:
-        if cache is not None or not _floating_point(exc) or not _types_differ(sample, expressions):
+    except Exception as exc:
+        if cache is not None or isinstance(exc, SourceError) or not _raised_outside(exc):
+            raise
+        try:
+            differ = _types_differ(sample, expressions)
+        except Exception:  # a file that cannot tell: the error stands as raised
+            differ = False
+        if not differ:
             raise
     return prepare_chunks(_slices(*read_arrays(sample, expressions, cache=cache)), requests)
 
 
-def _floating_point(exc: BaseException) -> bool:
-    """Return whether ``exc`` is, or was raised from, a NumPy floating-point error or warning."""
+def _raised_outside(exc: BaseException) -> bool:
+    """Return whether ``exc`` is, or was raised from, an exception rootfig did not raise."""
     seen: set[int] = set()
     cause: BaseException | None = exc
     while cause is not None and id(cause) not in seen:
-        if isinstance(cause, (FloatingPointError, RuntimeWarning)):
+        if not isinstance(cause, RootfigError):
             return True
         seen.add(id(cause))
         cause = cause.__cause__ or cause.__context__
@@ -203,7 +210,8 @@ def _floating_point(exc: BaseException) -> bool:
 def _types_differ(sample: Sample, expressions: Sequence[Any]) -> bool:
     """Return whether the files of ``sample`` hold the branches read in different types.
 
-    Each file is opened for no entry, which is enough for the types.
+    The types come from each file's metadata (:meth:`~rootfig.io.FileSource.branch_forms`),
+    so an empty tree has them too.
     """
     source = sample.source
     if not isinstance(source, FileSource) or len(source.files) < 2:
@@ -212,8 +220,8 @@ def _types_differ(sample: Sample, expressions: Sequence[Any]) -> bool:
     tree = source.resolved_tree()
 
     def types(path: str) -> list[Any]:
-        arrays = FileSource(path, tree, entry_stop=0).arrays(needed)
-        return [array.type.content for array in arrays.values()]
+        forms = FileSource(path, tree).branch_forms()
+        return [forms[name].type if name in forms else None for name in needed]
 
     first = types(source.files[0])
     return any(types(path) != first for path in source.files[1:])
