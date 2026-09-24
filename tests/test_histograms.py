@@ -2677,6 +2677,43 @@ class TestChunkedFilling:
                 load_columns(narrow, ["x * x"])
         np.testing.assert_array_equal(chunked.arrays[0], cached.arrays[0])
 
+    @pytest.mark.parametrize("wrapped", [False, True])
+    def test_running_out_of_memory_is_not_retried_as_a_whole_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wrapped: bool
+    ) -> None:
+        import importlib
+
+        import uproot
+
+        from rootfig.histograms import load_columns, pipeline
+        from rootfig.selection.chunks import Request
+
+        paths = []
+        for name, dtype in (("a.root", "float32"), ("b.root", "float64")):
+            with uproot.recreate(tmp_path / name) as file:
+                file.mktree("events", {"x": dtype})
+                file["events"].extend({"x": np.ones(1_000, dtype=dtype)})
+            paths.append(str(tmp_path / name))
+
+        def out_of_memory(request: Request, arrays: Any, n_events: int) -> Columns:
+            if not wrapped:
+                raise MemoryError
+            try:
+                raise MemoryError
+            except MemoryError as exc:
+                raise ExpressionError("failed to evaluate expression 'x'") from exc
+
+        def whole_read(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("a whole read after running out of memory")
+
+        self._chunked(monkeypatch)
+        # one thread: the first file's first chunk fails before the second file is read
+        monkeypatch.setattr(importlib.import_module("rootfig._threads"), "THREADS", 1)
+        monkeypatch.setattr(Request, "prepare", out_of_memory)
+        monkeypatch.setattr(pipeline, "read_arrays", whole_read)
+        with pytest.raises(ExpressionError if wrapped else MemoryError):
+            load_columns(Sample(paths), ["x"])
+
 
 class TestPrefetch:
     """prefetch() warms a ReadCache with what build_histograms reads; results do not change."""

@@ -550,11 +550,14 @@ class TestIterate:
         list(FileSource(signal_file, tree="events").iterate(["MET"], chunk_bytes=5_000))
         assert caches[-1] == "5000 B"
 
-    def test_a_cluster_larger_than_a_chunk_is_read_once(self, tmp_path: Path) -> None:
-        path = tmp_path / "cluster.root"
-        self._clusters(path, "RNTuple", [100_000])  # 2.4 MB of arrays
-        [chunk] = FileSource(path, tree="events").iterate(["x"], chunk_bytes=100_000)
-        assert len(chunk["x"]) == 100_000
+    def test_clusters_larger_than_a_chunk_are_chunks_of_their_own(self, tmp_path: Path) -> None:
+        path = tmp_path / "clusters.root"
+        self._clusters(path, "RNTuple", [100_000, 50_000])  # 2.4 MB and 1.2 MB of arrays
+        source = FileSource(path, tree="events")
+        chunks = list(source.iterate(["x"], chunk_bytes=100_000))
+        assert [len(chunk["x"]) for chunk in chunks] == [100_000, 50_000]  # never cut up
+        joined = ak.concatenate([chunk["x"] for chunk in chunks])
+        assert ak.array_equal(joined, source.arrays(["x"])["x"])
 
     def test_a_range_is_sized_by_its_own_events(self, tmp_path: Path) -> None:
         # the second half holds 99 values per event, the first one: a step from the

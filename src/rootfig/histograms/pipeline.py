@@ -175,16 +175,23 @@ def _prepared(
     rootfig did not raise itself (NumPy's under ``np.errstate``, a warning turned
     into an error, a NumPy error handler's, Awkward's) sends the sample to the whole
     read as well if its files' types differ, which is only then looked up: the
-    sample fails or succeeds as the whole read does. Their warnings are not taken
-    back. Knowing every file's types beforehand would cost opening each file's
-    metadata once more, a quarter of a second for a tree of 1 000 branches.
+    sample fails or succeeds as the whole read does. Running out of memory does not,
+    since the whole read takes more. Their warnings are not taken back. Knowing
+    every file's types beforehand would cost opening each file's metadata once
+    more, a quarter of a second for a tree of 1 000 branches.
     """
     try:
         return prepare_chunks(read_chunks(sample, expressions, cache=cache), requests)
     except _MixedTypesError:
         pass
     except Exception as exc:
-        if cache is not None or isinstance(exc, SourceError) or not _raised_outside(exc):
+        chain = list(_chain(exc))
+        if (
+            cache is not None
+            or isinstance(exc, SourceError)
+            or all(isinstance(each, RootfigError) for each in chain)
+            or any(isinstance(each, MemoryError) for each in chain)  # a whole read needs more
+        ):
             raise
         try:
             differ = _types_differ(sample, expressions)
@@ -195,16 +202,14 @@ def _prepared(
     return prepare_chunks(_slices(*read_arrays(sample, expressions, cache=cache)), requests)
 
 
-def _raised_outside(exc: BaseException) -> bool:
-    """Return whether ``exc`` is, or was raised from, an exception rootfig did not raise."""
+def _chain(exc: BaseException) -> Iterator[BaseException]:
+    """Yield ``exc`` and the exceptions it was raised from or while handling, once each."""
     seen: set[int] = set()
     cause: BaseException | None = exc
     while cause is not None and id(cause) not in seen:
-        if not isinstance(cause, RootfigError):
-            return True
+        yield cause
         seen.add(id(cause))
         cause = cause.__cause__ or cause.__context__
-    return False
 
 
 def _types_differ(sample: Sample, expressions: Sequence[Any]) -> bool:
