@@ -225,7 +225,7 @@ Significance panels use statistical uncertainties only.
 
 **Roles.** Without `reference=`:
 
-| Drawn | Ratio, differences, pull: numerators / reference | Significance: signals / background |
+| Drawn | Ratio, differences, asymmetry, pull: numerators / reference | Significance: signals / background |
 | --- | --- | --- |
 | stack and data | data / stack total; overlays are not part of the prediction | overlaid non-data histograms / stack total, or, with everything stacked, the last non-data histogram / the sum of the others |
 | stack, no data | every overlaid histogram / stack total; a full stack raises | as above |
@@ -237,8 +237,8 @@ With the signal last, drawing it inside the stack or over it shows the same
 significance panel, and stacking the backgrounds (`stack=["WW", "ZZ"]`)
 compares every overlaid signal with them. `reference="Background"` names one
 histogram (a group's label counts): the denominator of a ratio or a relative
-difference, the `d` of `n − d` for a difference and a pull, and the background
-of a significance. Every other histogram, data included, is compared with it;
+difference, the `d` of `n − d` for a difference, an asymmetry and a pull, and
+the background of a significance. Every other histogram, data included, is compared with it;
 for a significance every other non-data histogram is a signal over it. A label
 that no drawn histogram or several carry raises `ValueError`, as does observed
 data as a background, or `reference=` without `panel=`.

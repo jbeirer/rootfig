@@ -552,8 +552,9 @@ def efficiency(signal: rf.Sample, zjets: rf.Sample, pt: rf.Variable, style: rf.S
     """``rf.efficiency`` fills the entries passing ``selection`` (all here) and those also
     passing ``passed`` with one binning, and draws their ratio with Wilson score intervals.
     The muon identification efficiency versus transverse momentum, for two samples;
-    ``panel="ratio"`` divides the second by the first below, as a scale factor, with the
-    intervals propagated asymmetrically."""
+    ``panel="ratio"`` draws the efficiency ratio of the second to the first below, with
+    the intervals propagated asymmetrically (a scale factor when data is compared with
+    simulation)."""
     return rf.efficiency(
         [signal, zjets], pt, passed="Muon_isTight", ylim=(0.5, None), panel="ratio", style=style
     )

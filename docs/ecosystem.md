@@ -42,7 +42,8 @@ ships the style sheets and label helpers of the LHC experiments. rootfig
 draws every histogram through `mplhep.histplot`/`hist2dplot` and uses
 mplhep's per-experiment label functions when a `Style(experiment=...)` is
 given. The experiment-neutral default style and the lower panel (ratios,
-differences, pulls, significances) are rootfig's.
+differences, asymmetries, pulls and significances of histograms; ratios,
+differences, asymmetries and pulls of efficiencies and profiles) are rootfig's.
 
 ## matplotlib
 
@@ -68,8 +69,8 @@ can discover shared histograms with `rf.ALL`. See the
 ## When to use something else
 
 - You have flat NumPy columns rather than ROOT files or histograms, or want a
-  comparison rootfig's lower panel does not offer (an asymmetry, efficiency or
-  goodness-of-fit panel): [plothist](https://plothist.readthedocs.io).
+  comparison rootfig's lower panel does not offer (a goodness-of-fit panel):
+  [plothist](https://plothist.readthedocs.io).
 - You need a full columnar analysis framework with lazy, distributed
   processing: [coffea](https://coffeateam.github.io/coffea/). rootfig reads
   the branches a plot needs a chunk of entries at a time, in threads, and holds
