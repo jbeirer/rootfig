@@ -15,6 +15,7 @@ from matplotlib.transforms import ScaledTranslation, blended_transform_factory
 from rootfig._storage import same_edges
 from rootfig.histograms.build import compatible_binning
 from rootfig.histograms.comparison import SIGNIFICANCE_KINDS, Comparison, ComparisonKind
+from rootfig.histograms.efficiency import Efficiency, Profile
 from rootfig.plotting.hist1d import band_label, in_view
 from rootfig.plotting.style import color_cycle, foreground
 
@@ -244,17 +245,21 @@ def _same_reference(comparison: Comparison, other: Comparison) -> bool:
     sources behind it: references varied by different sources that come to the
     same band are the same reference to draw. Binning alike is what
     :func:`~rootfig.histograms.compatible_binning` means, so two category axes
-    must list the same categories, which their numeric edges do not say. A
-    hand-built :class:`~rootfig.histograms.Comparison` has only its label and
-    its band.
+    must list the same categories, which their numeric edges do not say. An
+    efficiency or a profile has no band: it must bin alike and agree in its
+    values and errors, and a histogram never stands for one. A hand-built
+    :class:`~rootfig.histograms.Comparison` has only its label and its band.
     """
     if not _same_band(comparison, other):  # the same nominal contents, varied differently
         return False
-    if comparison.reference_hist is None or other.reference_hist is None:
+    first = _reference_of(comparison)
+    second = _reference_of(other)
+    if first is None or second is None:
         return comparison.reference == other.reference
-    first, second = comparison.reference_hist, other.reference_hist
     if first is second:
         return True
+    if isinstance(first, Efficiency | Profile) or isinstance(second, Efficiency | Profile):
+        return _same_points(first, second)
     if not compatible_binning(first, second):
         return False
     first_variances, second_variances = first.variances(), second.variances()
@@ -264,6 +269,35 @@ def _same_reference(comparison: Comparison, other: Comparison) -> bool:
         else first_variances is second_variances  # a storage without variances, on both sides
     )
     return bool(np.array_equal(first.values(), second.values()) and same_variances)
+
+
+def _reference_of(comparison: Comparison) -> Any:
+    """Return what ``comparison`` was made against, or ``None`` if it was built by hand."""
+    if comparison.reference_hist is not None:
+        return comparison.reference_hist
+    return comparison.reference_points
+
+
+def _same_points(first: object, second: object) -> bool:
+    """Whether two efficiencies, or profiles of one statistic, agree bin by bin, ``nan`` too."""
+    arrays: tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]
+    if isinstance(first, Efficiency) and isinstance(second, Efficiency):
+        arrays = (
+            (first.values, first.lower, first.upper),
+            (second.values, second.lower, second.upper),
+        )
+    elif (
+        isinstance(first, Profile)
+        and isinstance(second, Profile)
+        and first.statistic == second.statistic
+    ):
+        arrays = (first.values, first.errors), (second.values, second.errors)
+    else:
+        return False
+    return same_edges(first.edges, second.edges) and all(
+        a.shape == b.shape and bool(np.array_equal(a, b, equal_nan=True))
+        for a, b in zip(*arrays, strict=True)
+    )
 
 
 def _same_band(comparison: Comparison, other: Comparison) -> bool:

@@ -644,6 +644,7 @@ class TestComparePoints:
         np.testing.assert_allclose(up, np.hypot(a_up / b.values, a.values * b_down / b.values**2))
         assert (result.label, result.reference, result.band) == ("A", "B", None)
         assert result.reference_hist is None
+        assert result.reference_points is b
         np.testing.assert_array_equal(result.total_errors()[0], down)
         relative = compare(a, b, kind="relative_difference")
         np.testing.assert_allclose(relative.values, [1.0, 0.0])

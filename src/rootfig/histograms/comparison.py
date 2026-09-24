@@ -96,7 +96,11 @@ class Comparison:
         reference's uncertainty is only in the band, which is then drawn.
     reference_hist
         The histogram compared with, which a panel drawing several comparisons
-        checks they share; ``None`` for a :class:`Comparison` built by hand.
+        checks they share; ``None`` for efficiencies and profiles and for a
+        :class:`Comparison` built by hand.
+    reference_points
+        The efficiency or profile compared with, checked like ``reference_hist``;
+        ``None`` for histograms and for a :class:`Comparison` built by hand.
     """
 
     kind: ComparisonKind
@@ -110,6 +114,7 @@ class Comparison:
     syst_band: tuple[FloatArray, FloatArray] | None = None
     uncertainty: UncertaintyMode = "propagate"
     reference_hist: Hist | None = None
+    reference_points: Efficiency | Profile | None = None
 
     @property
     def centers(self) -> FloatArray:
@@ -483,6 +488,7 @@ def _compare_points(
         values=values,
         errors=errors,
         edges=np.asarray(num.edges, dtype=float),
+        reference_points=ref,
     )
 
 

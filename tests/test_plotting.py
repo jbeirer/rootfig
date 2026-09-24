@@ -26,7 +26,9 @@ from rootfig.errors import BinningError, RootfigWarning
 from rootfig.histograms import (
     Comparison,
     ComparisonKind,
+    Efficiency,
     Histogram,
+    Profile,
     compare,
     fill,
     summarize,
@@ -867,6 +869,44 @@ class TestPanel:
             variations={"s": (reference.hist * 1.5, None)}
         )
         draw_panel([against[0], compare(numerator, copied, uncertainty="numerator")], ax)
+        plt.close(fig)
+
+    def test_points_references_must_agree_beyond_their_label(
+        self, mc_hists: list[Histogram]
+    ) -> None:
+        edges = np.array([0.0, 1.0, 2.0])
+
+        def eff(values: list[float], label: str = "MC") -> Efficiency:
+            return Efficiency(
+                values=np.array(values),
+                lower=np.array(values) - 0.1,
+                upper=np.array(values) + 0.05,
+                edges=edges,
+                label=label,
+            )
+
+        numerator, mc = eff([0.5, 0.6], "Data"), eff([0.4, 0.5])
+        fig, ax = plt.subplots()
+        # two references labelled "MC" that differ: not one reference to draw
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel([compare(numerator, mc), compare(numerator, eff([0.3, 0.5]))], ax)
+        # the same reference, or an equal copy of it: one reference
+        draw_panel([compare(numerator, mc), compare(eff([0.45, 0.6]), mc)], ax)
+        draw_panel([compare(numerator, mc), compare(numerator, eff([0.4, 0.5]))], ax)
+
+        def profile_(statistic: Any) -> Profile:
+            values = np.array([0.4, 0.5])
+            return Profile(values, values / 10, np.ones(2), edges, statistic=statistic)
+
+        std = Profile(np.ones(2), np.ones(2), np.ones(2), edges, statistic="std")
+        same = [compare(std, profile_("std")), compare(std, profile_("std"))]
+        draw_panel(same, ax)
+        with pytest.raises(ValueError, match="one reference"):  # a profile is not an efficiency
+            draw_panel([compare(numerator, mc), same[0]], ax)
+        # a histogram never stands for points with the same label (asymmetries: no band either)
+        histogram = compare(mc_hists[1], mc_hists[0].replace(label="MC"), kind="asymmetry")
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel([compare(numerator, mc, kind="asymmetry"), histogram], ax)
         plt.close(fig)
 
     def test_category_references_must_list_the_same_categories(self) -> None:
