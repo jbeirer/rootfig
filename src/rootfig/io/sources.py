@@ -618,13 +618,11 @@ class FileSource:
             for path in self.files:
                 if stop is not None and offset >= stop:
                     return
-                # uproot keeps a copy of every RNTuple column it decodes in the file's
-                # array cache (100 MB unless given): a chunk's worth still holds the
-                # cluster a read decodes past its end, which the next read starts with.
-                # A column larger than that is not kept and is decoded again on its own
-                # read; keeping it (a 4 GB cache) was no faster on clusters of 6 million
-                # events, and would hold a copy as large as the cluster
-                with uproot.open(path, array_cache=f"{chunk_bytes} B") as file:
+                # no array cache: uproot copies every RNTuple column it decodes into it
+                # (100 MB unless given), one larger than the cache too before dropping it;
+                # reusing the cluster a read decodes past its end, which the next read
+                # starts with, was no faster (0.65 s against 0.66 s for 49 clusters)
+                with uproot.open(path, array_cache=None) as file:
                     obj = _tree_in(file, tree, self.files)
                     entries = int(obj.num_entries)
                     first = max(start - offset, 0)

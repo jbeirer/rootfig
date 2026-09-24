@@ -536,7 +536,7 @@ class TestIterate:
         # a cluster of 10 values per event holds 88 kB; at most one more is read with it
         assert max(chunk["x"].nbytes for chunk in chunks) <= 200_000
 
-    def test_files_read_in_chunks_cache_at_most_a_chunk(
+    def test_files_read_in_chunks_keep_no_array_cache(
         self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         caches: list[Any] = []
@@ -548,7 +548,7 @@ class TestIterate:
 
         monkeypatch.setattr(uproot, "open", recording)
         list(FileSource(signal_file, tree="events").iterate(["MET"], chunk_bytes=5_000))
-        assert caches[-1] == "5000 B"
+        assert caches[-1] is None
 
     def test_clusters_larger_than_a_chunk_are_chunks_of_their_own(self, tmp_path: Path) -> None:
         path = tmp_path / "clusters.root"
