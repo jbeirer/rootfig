@@ -627,7 +627,10 @@ class FileSource:
             for path in self.files:
                 if stop is not None and offset >= stop:
                     return
-                with uproot.open(path) as file:
+                # uproot keeps a copy of every RNTuple column it decodes in the file's
+                # array cache (100 MB unless given): a chunk's worth still holds the
+                # cluster a run decodes past its end, which the next run starts with
+                with uproot.open(path, array_cache=f"{chunk_bytes} B") as file:
                     obj = _tree_in(file, tree, self.files)
                     entries = int(obj.num_entries)
                     first = max(start - offset, 0)

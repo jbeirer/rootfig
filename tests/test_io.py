@@ -495,6 +495,20 @@ class TestIterate:
         joined = ak.concatenate([chunk["x"] for chunk in chunks])
         assert ak.array_equal(joined, source.arrays(["x"])["x"])
 
+    def test_files_read_in_chunks_cache_at_most_a_chunk(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        caches: list[Any] = []
+        original = uproot.open
+
+        def recording(*args: Any, **kwargs: Any) -> Any:
+            caches.append(kwargs.get("array_cache", "100 MB"))  # uproot's default
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(uproot, "open", recording)
+        list(FileSource(signal_file, tree="events").iterate(["MET"], chunk_bytes=5_000))
+        assert caches[-1] == "5000 B"
+
     def test_a_cluster_larger_than_a_chunk_is_read_once(self, tmp_path: Path) -> None:
         path = tmp_path / "cluster.root"
         self._clusters(path, "RNTuple", [100_000])  # 2.4 MB of arrays
