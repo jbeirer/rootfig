@@ -304,6 +304,15 @@ def _read_range(
         yield obj.arrays(entry_start=start, entry_stop=min(start + step, last), **options)
 
 
+def _tree_in(file: Any, tree: str, files: Sequence[str]) -> Any:
+    """Return ``tree`` from the open ``file``, one of ``files``, or raise a SourceError."""
+    try:
+        return file[tree]
+    except uproot.KeyInFileError as exc:
+        msg = f"could not read {tree!r} from {files}: {exc}"
+        raise SourceError(msg) from exc
+
+
 def _tree_names(classnames: Mapping[str, str]) -> list[str]:
     return sorted(k for k, cls in classnames.items() if objects.is_tree_class(cls))
 
@@ -447,7 +456,7 @@ class FileSource:
             total = 0
             for path in self.files:
                 with uproot.open(path) as file:
-                    total += int(file[tree].num_entries)
+                    total += int(_tree_in(file, tree, self.files).num_entries)
             self._cache["num_entries"] = total
         return int(self._cache["num_entries"])
 
@@ -589,11 +598,7 @@ class FileSource:
                 if stop is not None and offset >= stop:
                     return
                 with uproot.open(path) as file:
-                    try:
-                        obj = file[tree]
-                    except uproot.KeyInFileError as exc:
-                        msg = f"could not read {tree!r} from {self.files}: {exc}"
-                        raise SourceError(msg) from exc
+                    obj = _tree_in(file, tree, self.files)
                     entries = int(obj.num_entries)
                     first = max(start - offset, 0)
                     last = entries if stop is None else min(stop - offset, entries)

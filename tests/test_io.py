@@ -477,15 +477,23 @@ class TestIterate:
         with pytest.raises(SourceError, match="not found"):
             list(rntuple.iterate(["ReconstructedParticles.nosuch"]))
 
-    def test_a_file_without_the_tree_is_reported(self, signal_file: Path, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("entries", [(None, None), (10, None), (None, 5)])
+    def test_a_file_without_the_tree_is_reported(
+        self, signal_file: Path, tmp_path: Path, entries: tuple[int | None, int | None]
+    ) -> None:
         other = tmp_path / "other.root"
         with uproot.recreate(other) as file:
             file.mktree("other", {"MET": np.arange(3.0)})
-        source = FileSource([str(signal_file), str(other)], tree="events")
+        start, stop = entries
+        source = FileSource(
+            [str(signal_file), str(other)], tree="events", entry_start=start, entry_stop=stop
+        )
         with pytest.raises(SourceError, match="could not read 'events'"):
             source.arrays(["MET"])
         with pytest.raises(SourceError, match="could not read 'events'"):
             list(source.iterate(["MET"]))
+        with pytest.raises(SourceError, match="could not read 'events'"):
+            source.num_entries()
 
     def test_one_thread_reads_in_the_calling_thread(
         self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
