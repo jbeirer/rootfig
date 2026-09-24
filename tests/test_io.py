@@ -403,6 +403,271 @@ class TestEntryRanges:
         assert resolve_files("root://host:1094//store/file.root")[1] is None
 
 
+class TestUprootCompat:
+    """rootfig.io.compat, for uproot before 5.7.3; these tests go with that module."""
+
+    def test_tree_steps_count_as_uproot_5_7_3(self, tmp_path: Path) -> None:
+        from rootfig.io import compat
+
+        path = tmp_path / "baskets.root"
+        with uproot.recreate(path) as file:
+            file.mktree("events", {"x": "var * float64"})
+            for counts in (1, 2, 3, 4):  # a basket of 1 000 events each, growing
+                values = np.arange(1_000.0 * counts)
+                file["events"].extend({"x": ak.unflatten(values, np.full(1_000, counts))})
+        tree = uproot.open(path)["events"]
+        branch = tree["x"]
+        sizes = [
+            branch.basket_key(i).data_uncompressed_bytes + branch.basket_key(i).fKeylen
+            for i in range(4)
+        ]
+
+        def step(first: int, last: int) -> int:
+            return compat.tree_step(tree, first, last, 100_000, lambda name: name == "x")
+
+        # the basket starting where the range stops counts, as uproot up to 5.7.3 reads it
+        assert step(0, 1_000) == round(100_000 * 1_000 / (sizes[0] + sizes[1]))
+        assert step(1_500, 2_500) == round(100_000 * 1_000 / (sizes[1] + sizes[2]))
+        assert step(3_000, 4_000) == round(100_000 * 1_000 / sizes[3])
+
+
+class TestIterate:
+    """FileSource.iterate reads what arrays() reads, a chunk of entries at a time."""
+
+    RANGES = ((None, None), (100, 1500), (900, 1100), (-300, None), (None, -1500), (1500, 100))
+
+    @staticmethod
+    def _joined(chunks: list[dict[str, ak.Array]]) -> dict[str, ak.Array]:
+        return {name: ak.concatenate([chunk[name] for chunk in chunks]) for name in chunks[0]}
+
+    @pytest.mark.parametrize(
+        "names",
+        [["signal.root"], ["signal_rntuple.root"], ["bkg_part1.root", "bkg_part2.root"]],
+    )
+    @pytest.mark.parametrize(("start", "stop"), RANGES)
+    def test_chunks_join_to_the_whole_read(
+        self, data_dir: Path, names: list[str], start: int | None, stop: int | None
+    ) -> None:
+        source = FileSource(
+            [str(data_dir / name) for name in names],
+            tree="events",
+            entry_start=start,
+            entry_stop=stop,
+        )
+        branches = ["Muon_pt", "MET", "nMuon"]
+        whole = source.arrays(branches)
+        chunks = list(source.iterate(branches, chunk_bytes=1_000))
+        assert len(chunks) > 1 or len(whole["MET"]) == 0
+        assert all(list(chunk) == branches for chunk in chunks)
+        joined = self._joined(chunks)
+        for name in branches:
+            assert ak.array_equal(joined[name], whole[name])
+
+    def test_no_entry_in_range_is_one_empty_chunk(self, signal_file: Path) -> None:
+        source = FileSource(signal_file, tree="events", entry_start=5000)
+        [chunk] = source.iterate(["Muon_pt", "MET"])
+        assert len(chunk["MET"]) == 0
+        assert chunk["Muon_pt"].layout.purelist_depth == 2  # the types are known
+
+    def test_small_files_are_joined(self, data_dir: Path) -> None:
+        source = FileSource(
+            [str(data_dir / "bkg_part1.root"), str(data_dir / "bkg_part2.root")], tree="events"
+        )
+        [chunk] = source.iterate(["MET"], chunk_bytes=10**8)  # both files: less than a chunk
+        assert len(chunk["MET"]) == 2000
+
+    @pytest.mark.parametrize("kind", ["TTree", "RNTuple"])
+    def test_chunks_hold_about_the_chunk_size_uncompressed(self, tmp_path: Path, kind: str) -> None:
+        # 2.4 MB of arrays that compress about fifty-fold, in baskets of 1 000 entries: a
+        # step counted from the compressed sizes would read it all in one piece
+        values = np.repeat(np.arange(50.0), 4_000)
+        jagged = ak.unflatten(values, np.full(100_000, 2))
+        path = tmp_path / "compressible.root"
+        with uproot.recreate(path, compression=uproot.ZLIB(9)) as file:
+            make = file.mktree if kind == "TTree" else file.mkrntuple
+            make("events", {"x": "var * float64"})
+            for start in range(0, 100_000, 1_000):
+                file["events"].extend({"x": jagged[start : start + 1_000]})
+        chunks = list(FileSource(path, tree="events").iterate(["x"], chunk_bytes=400_000))
+        sizes = [chunk["x"].nbytes for chunk in chunks]
+        assert sum(len(chunk["x"]) for chunk in chunks) == 100_000
+        assert len(sizes) >= 5
+        assert max(sizes) <= 500_000  # a basket partly in range is held whole
+
+    @staticmethod
+    def _clusters(path: Path, kind: str, sizes: list[int]) -> None:
+        """Write ``x``, a list of two doubles per event, as one cluster or basket per size."""
+        with uproot.recreate(path) as file:
+            make = file.mktree if kind == "TTree" else file.mkrntuple
+            make("events", {"x": "var * float64"})
+            for size in sizes:
+                values = np.arange(2.0 * size)
+                file["events"].extend({"x": ak.unflatten(values, np.full(size, 2))})
+
+    def test_rntuples_are_read_a_cluster_at_a_time(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def steps_across_clusters(*args: Any, **kwargs: Any) -> Any:
+            msg = "RNTuple.iterate steps without regard to clusters"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(uproot.behaviors.RNTuple.HasFields, "iterate", steps_across_clusters)
+        path = tmp_path / "clusters.root"
+        self._clusters(path, "RNTuple", [1_000] * 10)  # 24 kB of arrays per cluster
+        source = FileSource(path, tree="events", entry_start=1_500, entry_stop=8_500)
+        chunks = list(source.iterate(["x"], chunk_bytes=80_000))
+        stops = np.cumsum([len(chunk["x"]) for chunk in chunks]) + 1_500
+        assert len(stops) > 2
+        assert all(stop % 1_000 == 0 for stop in stops[:-1])  # at the ends of clusters
+        assert max(chunk["x"].nbytes for chunk in chunks) <= 100_000
+        joined = ak.concatenate([chunk["x"] for chunk in chunks])
+        assert ak.array_equal(joined, source.arrays(["x"])["x"])
+
+    def test_rntuple_clusters_growing_in_size_keep_the_chunk_size(self, tmp_path: Path) -> None:
+        # small clusters first must not have the larger ones after them read together
+        path = tmp_path / "growing.root"
+        with uproot.recreate(path) as file:
+            file.mkrntuple("events", {"x": "var * float64"})
+            for counts in [1, 1] + [10] * 6:
+                values = np.arange(1_000.0 * counts)
+                file["events"].extend({"x": ak.unflatten(values, np.full(1_000, counts))})
+        chunks = list(FileSource(path, tree="events").iterate(["x"], chunk_bytes=100_000))
+        assert sum(len(chunk["x"]) for chunk in chunks) == 8_000
+        # a cluster of 10 values per event holds 88 kB; at most one more is read with it
+        assert max(chunk["x"].nbytes for chunk in chunks) <= 200_000
+
+    def test_files_read_in_chunks_keep_no_array_cache(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        caches: list[Any] = []
+        original = uproot.open
+
+        def recording(*args: Any, **kwargs: Any) -> Any:
+            caches.append(kwargs.get("array_cache", "100 MB"))  # uproot's default
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(uproot, "open", recording)
+        list(FileSource(signal_file, tree="events").iterate(["MET"], chunk_bytes=5_000))
+        assert caches[-1] is None
+
+    def test_clusters_larger_than_a_chunk_are_chunks_of_their_own(self, tmp_path: Path) -> None:
+        path = tmp_path / "clusters.root"
+        self._clusters(path, "RNTuple", [100_000, 50_000])  # 2.4 MB and 1.2 MB of arrays
+        source = FileSource(path, tree="events")
+        chunks = list(source.iterate(["x"], chunk_bytes=100_000))
+        assert [len(chunk["x"]) for chunk in chunks] == [100_000, 50_000]  # never cut up
+        joined = ak.concatenate([chunk["x"] for chunk in chunks])
+        assert ak.array_equal(joined, source.arrays(["x"])["x"])
+
+    def test_a_range_is_sized_by_its_own_events(self, tmp_path: Path) -> None:
+        # the second half holds 99 values per event, the first one: a step from the
+        # average of the whole tree would take twice as many events as fit
+        path = tmp_path / "uneven.root"
+        with uproot.recreate(path) as file:
+            file.mktree("events", {"x": "var * float64"})
+            for counts in [1] * 50 + [99] * 50:
+                values = np.arange(1_000.0 * counts)
+                file["events"].extend({"x": ak.unflatten(values, np.full(1_000, counts))})
+        source = FileSource(path, tree="events", entry_start=60_000, entry_stop=90_000)
+        chunks = list(source.iterate(["x"], chunk_bytes=2_000_000))
+        assert sum(len(chunk["x"]) for chunk in chunks) == 30_000
+        assert max(chunk["x"].nbytes for chunk in chunks) <= 2_500_000
+
+    def test_embedded_baskets_are_sized_too(self) -> None:
+        # a tree filled in memory keeps its baskets in its branches, without keys
+        source = FileSource(DATA / "embedded_basket.root", tree="events")
+        chunks = list(source.iterate(["x", "y"], chunk_bytes=1_000))
+        whole = source.arrays(["x", "y"])
+        assert len(chunks) > 1
+        for name in ("x", "y"):
+            assert ak.array_equal(ak.concatenate([chunk[name] for chunk in chunks]), whole[name])
+
+    def test_split_collections_and_missing_branches(self) -> None:
+        source = FileSource(DATA / "split_collection.root", tree="events")
+        branches = ["ReconstructedParticles.energy", "ReconstructedParticles.momentum.x"]
+        joined = self._joined(list(source.iterate(branches, chunk_bytes=500)))
+        whole = source.arrays(branches)
+        assert all(ak.array_equal(joined[name], whole[name]) for name in branches)
+        rntuple = FileSource(DATA / "split_collection.root", tree="events")
+        with pytest.raises(SourceError, match="not found"):
+            list(rntuple.iterate(["ReconstructedParticles.nosuch"]))
+
+    @pytest.mark.parametrize("entries", [(None, None), (10, None), (None, 5)])
+    def test_a_file_without_the_tree_is_reported(
+        self, signal_file: Path, tmp_path: Path, entries: tuple[int | None, int | None]
+    ) -> None:
+        other = tmp_path / "other.root"
+        with uproot.recreate(other) as file:
+            file.mktree("other", {"MET": np.arange(3.0)})
+        start, stop = entries
+        source = FileSource(
+            [str(signal_file), str(other)], tree="events", entry_start=start, entry_stop=stop
+        )
+        with pytest.raises(SourceError, match="could not read 'events'"):
+            source.arrays(["MET"])
+        with pytest.raises(SourceError, match="could not read 'events'"):
+            list(source.iterate(["MET"]))
+        with pytest.raises(SourceError, match="could not read 'events'"):
+            source.num_entries()
+
+    def test_one_thread_starts_no_worker_pool(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+
+        import rootfig._threads as threads_module
+
+        pools: list[Any] = []
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            pools.append(args)
+            raise AssertionError("no pool with one thread")
+
+        monkeypatch.setattr(threads_module, "THREADS", 1)
+        monkeypatch.setattr(threads_module, "ThreadPoolExecutor", counted)
+        before = threading.active_count()
+        source = FileSource(signal_file, tree="events")
+        with threads_module.worker_pool(lend=True) as pool:
+            assert pool is None
+            assert threading.active_count() == before
+        whole = source.arrays(["MET"])
+        [chunk] = source.iterate(["MET"], chunk_bytes=10**8)
+        assert ak.array_equal(chunk["MET"], whole["MET"])
+        assert pools == []  # uproot fetches the file contents in threads of its own
+
+    def test_a_lent_worker_pool_serves_the_blocks_inside(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import rootfig._threads as threads_module
+
+        monkeypatch.setattr(threads_module, "THREADS", 2)
+        with threads_module.worker_pool() as own, threads_module.worker_pool() as other:
+            assert own is not None
+            assert other is not own  # not lent
+        with threads_module.worker_pool(lend=True) as lent:
+            with threads_module.worker_pool() as inner:
+                assert inner is lent
+            assert lent is not None
+            assert lent.submit(len, "ab").result() == 2  # still open: the inner block took it
+        with threads_module.worker_pool() as after:
+            assert after is not lent
+        with pytest.raises(RuntimeError):
+            lent.submit(len, "ab")
+
+    def test_threads_follow_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rootfig._threads import _threads
+
+        monkeypatch.setenv("ROOTFIG_THREADS", "3")
+        assert _threads() == 3
+        monkeypatch.setenv("ROOTFIG_THREADS", "0")
+        assert _threads() == 1
+        monkeypatch.setenv("ROOTFIG_THREADS", "many")
+        with pytest.raises(ValueError, match="ROOTFIG_THREADS"):
+            _threads()
+        monkeypatch.delenv("ROOTFIG_THREADS")
+        assert 1 <= _threads() <= 8
+
+
 class TestStoredHistograms:
     def test_listing(self, stored_dir: Path) -> None:
         source = FileSource(stored_dir / "ZH_sel0_histo.root")

@@ -62,12 +62,12 @@ docstrings and full type hints.
 
 ## Test data
 
-Almost all tests generate their ROOT files with uproot on the fly. The one
-committed file, `tests/data/split_collection.root`, has a split
-`std::vector<struct>` branch and a `TParameter` the way podio/EDM4hep and
-FCCAnalyses write them. uproot cannot write such a file, so it was produced
-with PyROOT (ROOT 6.40) by this script; rerun it only if the layout has to
-change, and keep the file small:
+Almost all tests generate their ROOT files with uproot on the fly. Two files
+that uproot cannot write are committed, produced with ROOT 6.40; rerun their
+scripts only if the layout has to change, and keep the files small.
+
+`tests/data/split_collection.root` has a split `std::vector<struct>` branch and
+a `TParameter` the way podio/EDM4hep and FCCAnalyses write them (PyROOT):
 
 ```python
 import ROOT
@@ -93,6 +93,31 @@ for _ in range(200):
 ROOT.TParameter("int")("eventsProcessed", 200).Write()
 f.Write()
 f.Close()
+```
+
+`tests/data/embedded_basket.root` holds a tree whose baskets are embedded in its
+branches, without keys of their own, as a tree filled in memory and written
+afterwards keeps them (`root -l -b -q embedded.C`):
+
+```cpp
+// embedded.C
+void embedded() {
+   TTree t("events", "events");
+   t.SetDirectory(nullptr);  // in memory: nothing is flushed while filling
+   Float_t x;
+   std::vector<double> y;
+   t.Branch("x", &x);
+   t.Branch("y", &y);
+   TRandom3 r(1);
+   for (int i = 0; i < 500; ++i) {
+      x = r.Gaus(0, 1);
+      y.assign(i % 4, r.Uniform());
+      t.Fill();
+   }
+   TFile f("embedded_basket.root", "RECREATE");
+   f.WriteObject(&t, "events");
+   f.Close();
+}
 ```
 
 ## Figures and the gallery

@@ -16,6 +16,7 @@ import pytest
 
 from rootfig.errors import (
     BinningError,
+    ExpressionError,
     MissingBranchError,
     RootfigWarning,
     SelectionError,
@@ -2447,6 +2448,271 @@ class TestGroupedHistograms:
         assert from_sample(Sample({"pt": [1.0]}), contents([1.0, 2.0]), stats=stats).per_object
         assert sum_histograms([h, Histogram(contents([1.0, 2.0]), "D")]).per_object
         assert not sum_histograms([Histogram(contents([1.0, 2.0]), "D")]).per_object
+
+
+class TestChunkedFilling:
+    """Histograms prepared a chunk of events at a time, in threads, equal those of one read."""
+
+    @staticmethod
+    def _chunked(monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib
+
+        for name, value in (
+            ("rootfig.io.sources:CHUNK_BYTES", 2_000),
+            ("rootfig.histograms.pipeline:CHUNK_BYTES", 2_000),
+            ("rootfig._threads:THREADS", 4),
+        ):
+            module, attr = name.split(":")
+            monkeypatch.setattr(importlib.import_module(module), attr, value)
+
+    @pytest.mark.parametrize("source", ["tree", "rntuple", "two files", "arrays"])
+    def test_same_histograms_and_variations(
+        self,
+        data_dir: Path,
+        signal_columns: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
+    ) -> None:
+        data: Any = {
+            "tree": str(data_dir / "signal.root"),
+            "rntuple": str(data_dir / "signal_rntuple.root"),
+            "two files": [str(data_dir / "bkg_part1.root"), str(data_dir / "bkg_part2.root")],
+            "arrays": signal_columns,
+        }[source]
+        sample = Sample(
+            data,
+            label="S",
+            weight="weight",
+            systematics={
+                "w": ("weight * 1.1", "weight * 0.8"),
+                "shift": {"Muon_pt": ("Muon_eta", "Muon_phi"), "MET": ("sentinel", "with_nan")},
+                "norm": 0.05,
+            },
+        )
+        cases = [("Muon_pt", "Muon_eta > 0"), ("MET", "nMuon > 0"), ("with_nan", None)]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RootfigWarning)
+            whole = [build_histograms([sample], v, selection=s)[0] for v, s in cases]
+            self._chunked(monkeypatch)
+            parts = [build_histograms([sample], v, selection=s)[0] for v, s in cases]
+        for got, want in zip(parts, whole, strict=True):
+            np.testing.assert_array_equal(got.values(flow=True), want.values(flow=True))
+            np.testing.assert_array_equal(got.variances(flow=True), want.variances(flow=True))
+            assert got.stats == want.stats
+            assert sorted(got.variations) == sorted(want.variations)
+            for name, pair in got.variations.items():
+                for mine, theirs in zip(pair, want.variations[name], strict=True):
+                    np.testing.assert_array_equal(mine.values(flow=True), theirs.values(flow=True))
+                    np.testing.assert_array_equal(
+                        mine.variances(flow=True), theirs.variances(flow=True)
+                    )
+
+    def test_constant_variables_are_chunked_too(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from rootfig.selection.chunks import Request
+
+        sample = Sample(str(signal_file))
+        variable = Variable("1", bins=(3, 0, 3))  # reads no branch, broadcast to every event
+        [whole] = build_histograms([sample], variable)
+        self._chunked(monkeypatch)
+        sizes: list[int] = []
+        original = Request.prepare
+
+        def counting(request: Request, arrays: Any, n_events: int) -> Columns:
+            sizes.append(n_events)
+            return original(request, arrays, n_events)
+
+        monkeypatch.setattr(Request, "prepare", counting)
+        [parts] = build_histograms([sample], variable)
+        assert len(sizes) > 1
+        assert sum(sizes) == 2000
+        np.testing.assert_array_equal(parts.values(flow=True), whole.values(flow=True))
+        assert parts.stats is not None
+        assert whole.stats is not None
+        np.testing.assert_equal(asdict(parts.stats), asdict(whole.stats))  # nan skewness alike
+
+    def test_slices_hold_at_most_the_chunk_size(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rootfig.histograms import pipeline
+
+        monkeypatch.setattr(pipeline, "CHUNK_BYTES", 1_000)
+        for n_events in (1, 125, 126, 199, 250, 1_000):  # 8 B to 8 kB of float64
+            values = np.arange(float(n_events))
+            slices = list(pipeline._slices({"x": values}, n_events))
+            assert all(arrays["x"].nbytes <= 1_000 for arrays, _ in slices)
+            assert [n for _, n in slices] == [len(arrays["x"]) for arrays, _ in slices]
+            np.testing.assert_array_equal(np.concatenate([a["x"] for a, _ in slices]), values)
+
+    def test_reading_and_preparing_share_one_pool(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        import rootfig._threads as threads_module
+        from rootfig.selection.chunks import Request
+
+        self._chunked(monkeypatch)
+        pools: list[ThreadPoolExecutor] = []
+        prepared: list[int] = []
+
+        class Counted(ThreadPoolExecutor):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                pools.append(self)
+
+        original = Request.prepare
+
+        def counting(request: Request, arrays: Any, n_events: int) -> Columns:
+            prepared.append(n_events)
+            return original(request, arrays, n_events)
+
+        monkeypatch.setattr(threads_module, "ThreadPoolExecutor", Counted)
+        monkeypatch.setattr(Request, "prepare", counting)
+        sample = Sample(str(signal_file), weight="weight")
+        build_histograms([sample], Variable("Muon_pt", bins=(10, 0, 100)), selection="nMuon > 0")
+        assert len(prepared) > 1  # read and prepared a chunk at a time
+        assert len(pools) == 1
+
+    @pytest.mark.parametrize(
+        ("dtypes", "expression"),
+        [
+            (("int32", "int64"), "x * x"),
+            (("float32", "float64"), "x * 1.1"),
+            (("int64", "int64"), "x * x"),
+        ],
+    )
+    @pytest.mark.parametrize("threads", [1, 4])  # one: the first file is prepared before
+    def test_files_of_different_types_are_prepared_as_one_read(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        dtypes: tuple[str, str],
+        expression: str,
+        threads: int,
+    ) -> None:
+        import importlib
+
+        import uproot
+
+        from rootfig.histograms import load_columns
+        from rootfig.io import FileSource, ReadCache
+
+        parts = []
+        for i, dtype in enumerate(dtypes):
+            values = (np.arange(1, 1001) * 100_003 + i).astype(dtype)  # squares overflow int32
+            with uproot.recreate(tmp_path / f"part{i}.root") as file:
+                file.mktree("events", {"x": values.dtype})
+                file["events"].extend({"x": values})
+            parts.append(values)
+        sample = Sample([str(tmp_path / f"part{i}.root") for i in range(2)])
+        joined = np.concatenate(parts)  # one type for both, as reading them at once gives
+        want = joined * joined if expression == "x * x" else joined * 1.1
+        cached = load_columns(sample, [expression], cache=ReadCache())
+        self._chunked(monkeypatch)
+        monkeypatch.setattr(importlib.import_module("rootfig._threads"), "THREADS", threads)
+        whole_reads: list[list[str]] = []
+        original = FileSource.arrays
+
+        def counting(source: FileSource, branches: Any) -> Any:
+            whole_reads.append(list(branches))
+            return original(source, branches)
+
+        monkeypatch.setattr(FileSource, "arrays", counting)
+        chunked = load_columns(sample, [expression])
+        np.testing.assert_array_equal(cached.arrays[0], want)
+        np.testing.assert_array_equal(chunked.arrays[0], want)
+        # read whole only when the files differ, after the chunks showed it
+        assert whole_reads == ([["x"]] if dtypes[0] != dtypes[1] else [])
+
+    @pytest.mark.parametrize("threads", [1, 4])
+    @pytest.mark.parametrize("strict", ["errstate", "warnings", "call", "log"])
+    def test_a_floating_point_error_in_a_narrower_file_reads_the_sample_whole(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, threads: int, strict: str
+    ) -> None:
+        import contextlib
+        import importlib
+
+        import uproot
+
+        from rootfig.histograms import load_columns
+        from rootfig.io import ReadCache
+
+        def write(name: str, dtype: str, n_events: int = 1_000) -> str:
+            with uproot.recreate(tmp_path / name) as file:
+                file.mktree("events", {"x": dtype})
+                if n_events:
+                    file["events"].extend({"x": np.full(n_events, 1e20, dtype=dtype)})
+            return str(tmp_path / name)
+
+        # x * x overflows float32, not float64; an empty tree has types all the same
+        mixed = Sample([write("a.root", "float32"), write("b.root", "float64")])
+        narrow = Sample([write("c.root", "float32"), write("d.root", "float32", n_events=0)])
+
+        class Refusing:
+            """A NumPy error handler, or log, that raises an error of its own."""
+
+            def __call__(self, kind: str, flag: int) -> None:
+                raise RuntimeError(kind)
+
+            def write(self, message: str) -> None:
+                raise RuntimeError(message)
+
+        def raising() -> contextlib.ExitStack:
+            stack = contextlib.ExitStack()
+            if strict == "warnings":
+                stack.enter_context(warnings.catch_warnings())
+                warnings.simplefilter("error", RuntimeWarning)
+            else:
+                mode = {"errstate": "raise"}.get(strict, strict)
+                stack.enter_context(np.errstate(over=mode, call=Refusing()))
+            return stack
+
+        with raising():
+            cached = load_columns(mixed, ["x * x"], cache=ReadCache())
+        self._chunked(monkeypatch)
+        monkeypatch.setattr(importlib.import_module("rootfig._threads"), "THREADS", threads)
+        with raising():
+            chunked = load_columns(mixed, ["x * x"])
+            with pytest.raises(ExpressionError, match="overflow"):  # as a whole read of it
+                load_columns(narrow, ["x * x"])
+        np.testing.assert_array_equal(chunked.arrays[0], cached.arrays[0])
+
+    @pytest.mark.parametrize("wrapped", [False, True])
+    def test_running_out_of_memory_is_not_retried_as_a_whole_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wrapped: bool
+    ) -> None:
+        import importlib
+
+        import uproot
+
+        from rootfig.histograms import load_columns, pipeline
+        from rootfig.selection.chunks import Request
+
+        paths = []
+        for name, dtype in (("a.root", "float32"), ("b.root", "float64")):
+            with uproot.recreate(tmp_path / name) as file:
+                file.mktree("events", {"x": dtype})
+                file["events"].extend({"x": np.ones(1_000, dtype=dtype)})
+            paths.append(str(tmp_path / name))
+
+        def out_of_memory(request: Request, arrays: Any, n_events: int) -> Columns:
+            if not wrapped:
+                raise MemoryError
+            try:
+                raise MemoryError
+            except MemoryError as exc:
+                raise ExpressionError("failed to evaluate expression 'x'") from exc
+
+        def whole_read(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("a whole read after running out of memory")
+
+        self._chunked(monkeypatch)
+        # one thread: the first file's first chunk fails before the second file is read
+        monkeypatch.setattr(importlib.import_module("rootfig._threads"), "THREADS", 1)
+        monkeypatch.setattr(Request, "prepare", out_of_memory)
+        monkeypatch.setattr(pipeline, "read_arrays", whole_read)
+        with pytest.raises(ExpressionError if wrapped else MemoryError):
+            load_columns(Sample(paths), ["x"])
 
 
 class TestPrefetch:

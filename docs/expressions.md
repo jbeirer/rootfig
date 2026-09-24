@@ -120,7 +120,10 @@ weights (`hist` `Weight` storage).
 ## Missing and non-finite values
 
 `None` values (e.g. `max(Muon_pt)` of an event with no muons) never enter a
-histogram; in a selection they count as `False`. `nan` and `inf` values are
+histogram; in a selection they count as `False`. A whole collection that is
+`None` for an event, whether the variable's, the weight's or the one a
+per-object selection is evaluated on, drops that event, and its objects are
+counted as missing. `nan` and `inf` values are
 dropped with a [`RootfigWarning`][rootfig.RootfigWarning] telling you how
 many, or raise with `nonfinite="error"`. Both counts are recorded in the
 histogram's `stats`.

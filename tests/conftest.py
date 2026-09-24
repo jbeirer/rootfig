@@ -78,12 +78,18 @@ def _uproot_type(column: Any) -> Any:
     return f"var * {ak.to_numpy(ak.flatten(array)).dtype}"
 
 
-def write_rntuple(path: Path, tree: str, columns: dict[str, Any]) -> None:
-    """Write ``columns`` as an RNTuple (uproot's default on assignment)."""
+def write_rntuple(path: Path, tree: str, columns: dict[str, Any], cluster: int = 200) -> None:
+    """Write ``columns`` as an RNTuple (uproot's default on assignment), in clusters.
+
+    Every ``cluster`` entries make a cluster of their own, so that a read, which
+    takes whole clusters, is cut into several like one of a real file.
+    """
+    arrays = {k: ak.Array(v) if not isinstance(v, ak.Array) else v for k, v in columns.items()}
+    n_events = len(next(iter(arrays.values())))
     with uproot.recreate(path) as file:
-        file[tree] = {
-            k: ak.Array(v) if not isinstance(v, ak.Array) else v for k, v in columns.items()
-        }
+        file[tree] = {k: v[:cluster] for k, v in arrays.items()}
+        for start in range(cluster, n_events, cluster):
+            file[tree].extend({k: v[start : start + cluster] for k, v in arrays.items()})
 
 
 @pytest.fixture(scope="session")

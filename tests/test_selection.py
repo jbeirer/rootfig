@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import warnings
+from itertools import pairwise
+from typing import Any
+
 import awkward as ak
 import numpy as np
 import pytest
@@ -348,6 +352,27 @@ class TestMissingCollections:
         assert cols.values.tolist() == [1.0, 2.0]
         assert cols.n_missing == 2
 
+    def test_missing_list_in_an_object_selection_drops_the_event(self) -> None:
+        # the selection's collection is missing where the variable's is (event 1), or only
+        # the selection's (event 2); a missing value inside a list counts as False (event 3)
+        arrays = {
+            "x": ak.Array([[1.0, 2.0], None, [3.0], [4.0, 5.0], [6.0]]),
+            "eta": ak.Array([[0.1, -0.2], None, None, [0.5, None], [0.7]]),
+            "w": ak.Array([1.0, 2.0, 3.0, 4.0, 5.0]),
+        }
+        cols = prepare(arrays, "x", selection="eta > 0", weight="w")
+        assert cols.values.tolist() == [1.0, 4.0, 6.0]
+        assert cols.weights is not None
+        assert cols.weights.tolist() == [1.0, 4.0, 5.0]
+        assert cols.n_missing == 2  # one per missing list; the None inside a list is False
+        assert cols.n_selected_events == 3
+
+    def test_missing_list_fails_a_cut_flow_step(self) -> None:
+        from rootfig.selection import event_mask
+
+        mask = event_mask("eta > 0", {"eta": ak.Array([[0.1], None, [-0.1, None]])})
+        assert mask.tolist() == [True, False, False]
+
     def test_two_variables_stay_aligned(self) -> None:
         arrays = {
             "x": ak.Array([[1.0, 2.0], None, [3.0]]),
@@ -420,3 +445,163 @@ class TestEventWeightsPolicy:
         with pytest.raises(SelectionError, match="non-finite weight"):
             event_weights("w", arrays, 3, nonfinite="error")
         assert event_weights("2", {}, 2).tolist() == [2.0, 2.0]
+
+
+class TestPrepareChunks:
+    """prepare_chunks() gives what prepare() gives for all events, a chunk at a time."""
+
+    @pytest.fixture
+    def events(self) -> dict[str, ak.Array]:
+        return {
+            "x": ak.Array([[1.0, np.nan], None, [3.0, 4.0, None], [], [5.0], [np.inf, 6.0]]),
+            "pt": ak.Array([[1.0, np.nan], [2.0], [3.0, 4.0, None], [], [5.0], [np.inf, 6.0]]),
+            "eta": ak.Array([[0.1, 0.2], [0.4], [-1.0, 1.0, 0.5], [], [2.0], [0.3, -0.3]]),
+            "w": ak.Array([1.0, 2.0, None, 1.5, np.nan, 0.5]),
+            "met": ak.Array([10.0, np.nan, 30.0, 40.0, 50.0, 60.0]),
+        }
+
+    @staticmethod
+    def _chunks(events: dict[str, ak.Array], edges: list[int]) -> list[Any]:
+        return [
+            ({name: array[start:stop] for name, array in events.items()}, stop - start)
+            for start, stop in pairwise(edges)
+        ]
+
+    @staticmethod
+    def _assert_same(got: Columns, want: Columns) -> None:
+        assert len(got.arrays) == len(want.arrays)
+        for mine, theirs in zip(got.arrays, want.arrays, strict=True):
+            np.testing.assert_array_equal(mine, theirs)
+        if want.weights is None:
+            assert got.weights is None
+        else:
+            assert got.weights is not None
+            np.testing.assert_array_equal(got.weights, want.weights)
+        assert (got.n_events, got.n_selected_events, got.n_missing, got.n_nonfinite) == (
+            want.n_events,
+            want.n_selected_events,
+            want.n_missing,
+            want.n_nonfinite,
+        )
+        assert got.per_object == want.per_object
+
+    @pytest.mark.parametrize("threads", [1, 3])
+    @pytest.mark.parametrize("edges", [[0, 6], [0, 1, 2, 3, 4, 5, 6], [0, 0, 2, 2, 5, 6]])
+    @pytest.mark.parametrize(
+        ("variables", "kwargs"),
+        [
+            (("pt",), {"selection": "eta > 0", "weight": "w"}),
+            (("x",), {"selection": "count(x) > 1", "weight": "w", "scale": 2.0}),
+            (("met",), {"weight": "w"}),
+            (("pt", "eta"), {"selection": "met > 20"}),
+        ],
+    )
+    def test_chunks_join_to_the_whole(
+        self,
+        events: dict[str, ak.Array],
+        monkeypatch: pytest.MonkeyPatch,
+        threads: int,
+        edges: list[int],
+        variables: tuple[str, ...],
+        kwargs: dict[str, Any],
+    ) -> None:
+        import rootfig._threads as threads_module
+        from rootfig.selection import Request, prepare_chunks
+
+        monkeypatch.setattr(threads_module, "THREADS", threads)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RootfigWarning)
+            want = prepare(events, list(variables), n_events=6, **kwargs)
+            [got] = prepare_chunks(self._chunks(events, edges), [Request(variables, **kwargs)])
+        self._assert_same(got, want)
+
+    def test_nonfinite_values_are_reported_once_with_their_total(
+        self, events: dict[str, ak.Array]
+    ) -> None:
+        from rootfig.selection import Request, prepare_chunks
+
+        chunks = self._chunks(events, [0, 1, 2, 3, 4, 5, 6])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            prepare_chunks(chunks, [Request(("x",), weight="w", context="S")])
+        messages = [str(w.message) for w in caught if issubclass(w.category, RootfigWarning)]
+        assert messages == ["S: dropped 3 non-finite (nan/inf) value(s) for 'x'"]
+        with pytest.raises(SelectionError, match="dropped 3 non-finite"):
+            prepare_chunks(chunks, [Request(("x",), weight="w", nonfinite="error")])
+
+    def test_requests_share_the_chunks(self, events: dict[str, ak.Array]) -> None:
+        from rootfig.selection import Request, prepare_chunks
+
+        chunks = self._chunks(events, [0, 3, 6])
+        shifted = {**events, "eta": events["eta"] * -1}
+        requests = [Request(("pt",), selection="eta > 0"), Request(("pt",), selection="eta < 0")]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RootfigWarning)
+            nominal, flipped = prepare_chunks(chunks, requests)
+            [substituted] = prepare_chunks(
+                self._chunks({**events, "eta_down": shifted["eta"]}, [0, 3, 6]),
+                [Request(("pt",), selection="eta > 0", substitutes={"eta": "eta_down"})],
+            )
+        self._assert_same(substituted, flipped)
+        assert nominal.n_entries + flipped.n_entries == 6  # every finite pt but the one at 0
+
+    def test_errors_carry_the_note(self, events: dict[str, ak.Array]) -> None:
+        from rootfig.selection import Request, prepare_chunks
+
+        request = Request(("met",), selection="eta > 0", note="while evaluating X")
+        with pytest.raises(SelectionError, match="per-object") as info:
+            prepare_chunks(self._chunks(events, [0, 3, 6]), [request])
+        assert info.value.__notes__ == ["while evaluating X"]
+        with pytest.raises(ValueError, match="no chunk"):
+            prepare_chunks([], [request])
+
+    def test_threads_see_the_callers_error_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import rootfig._threads as threads_module
+        from rootfig.selection import Request, prepare_chunks
+
+        monkeypatch.setattr(threads_module, "THREADS", 3)
+        events = {"x": ak.Array([[0.0, 1.0], [2.0], [0.0]] * 4)}
+        chunks = self._chunks(events, list(range(13)))
+        with np.errstate(divide="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)  # log(0) would warn in a worker
+            warnings.simplefilter("ignore", RootfigWarning)  # the -inf are dropped, as usual
+            [columns] = prepare_chunks(chunks, [Request(("log(x)",))])
+        assert columns.n_nonfinite == 8
+
+    @pytest.mark.parametrize("threads", [1, 3])
+    def test_a_failing_chunk_releases_the_reader(
+        self, events: dict[str, ak.Array], monkeypatch: pytest.MonkeyPatch, threads: int
+    ) -> None:
+        import rootfig._threads as threads_module
+        from rootfig.selection import Request, prepare_chunks
+
+        monkeypatch.setattr(threads_module, "THREADS", threads)
+        closed: list[bool] = []
+
+        def reader() -> Any:
+            try:
+                yield from self._chunks(events, [0, 2, 4, 6])
+            finally:
+                closed.append(True)
+
+        with pytest.raises(SelectionError) as info:
+            prepare_chunks(reader(), [Request(("met",), selection="eta > 0")])
+        assert closed == [True]  # while the error, and the frame it holds, is still alive
+        assert info.value is not None
+
+    def test_threads_call_the_callers_error_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import rootfig._threads as threads_module
+        from rootfig.selection import Request, prepare_chunks
+
+        monkeypatch.setattr(threads_module, "THREADS", 3)
+        events = {"x": ak.Array([[0.0, 1.0], [2.0], [0.0]] * 4)}
+        seen: list[str] = []
+
+        def handler(kind: str, flag: int) -> None:
+            seen.append(kind)
+
+        with np.errstate(divide="call", call=handler), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RootfigWarning)
+            prepare_chunks(self._chunks(events, list(range(13))), [Request(("log(x)",))])
+        assert seen
+        assert set(seen) == {"divide by zero"}

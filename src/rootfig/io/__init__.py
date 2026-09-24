@@ -2,6 +2,7 @@
 
 from rootfig.io.cache import ReadCache
 from rootfig.io.sources import (
+    CHUNK_BYTES,
     ArraySource,
     FilesLike,
     FileSource,
@@ -11,6 +12,7 @@ from rootfig.io.sources import (
 )
 
 __all__ = [
+    "CHUNK_BYTES",
     "ArraySource",
     "FileSource",
     "FilesLike",

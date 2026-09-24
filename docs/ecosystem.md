@@ -72,8 +72,9 @@ can discover shared histograms with `rf.ALL`. See the
   goodness-of-fit panel): [plothist](https://plothist.readthedocs.io).
 - You need a full columnar analysis framework with lazy, distributed
   processing: [coffea](https://coffeateam.github.io/coffea/). rootfig reads
-  every branch a plot needs from every file into memory at once (only the
-  required branches, optionally an entry range), which suits quick looks and
-  moderate ntuples, not multi-terabyte datasets.
+  the branches a plot needs a chunk of entries at a time, in threads, and holds
+  the values it fills (see [large inputs](plotting.md#large-inputs)), all in one
+  process: it suits quick looks and ntuples that one machine reads in minutes,
+  not multi-terabyte datasets.
 - You want to build fit templates and workspaces: [cabinetry](https://cabinetry.readthedocs.io).
 - You want a quick terminal look at a branch: [histoprint](https://github.com/scikit-hep/histoprint).

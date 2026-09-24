@@ -230,6 +230,37 @@ class TestBinning:
         with pytest.raises(BinningError):
             log_bins(3, 0, 10)
 
+    @pytest.mark.parametrize("seed", range(12))
+    def test_robust_tail_answers_as_all_values(self, seed: int) -> None:
+        """The ladder walked on the tail measures exactly what all values would give."""
+        from rootfig.model.binning import (
+            ROBUST_LADDER,
+            _kept_extent,
+            _modified_z_scores,
+            _outside,
+            _Tail,
+        )
+
+        rng = np.random.default_rng(seed)
+        size = int(rng.integers(5, 400))
+        samples = [
+            rng.exponential(3, size),
+            np.where(rng.random(size // 2 + 1) < 0.1, -999.0, rng.normal(2, 1, size // 2 + 1)),
+            np.full(7, 1.5),  # a spike: candidate edges that coincide with its values
+        ][: 1 + seed % 3]
+        weights = [rng.normal(1, 0.5, v.size) if seed % 2 else None for v in samples]
+        values = np.concatenate(samples)
+        scores = _modified_z_scores(values)
+        tail = _Tail(samples, weights, values, scores)
+        for threshold in ROBUST_LADDER:
+            assert tail.extent(threshold) == _kept_extent(values, scores, threshold)
+        edges = np.unique(np.concatenate([values, [values.min() - 1, values.max() + 1]]))
+        for low in edges[:: max(1, edges.size // 15)]:
+            for high in edges[edges > low][:: max(1, edges.size // 15)]:
+                np.testing.assert_array_equal(
+                    tail.outside(low, high), _outside(samples, weights, low, high)
+                )
+
     def test_auto_range(self) -> None:
         low, high = auto_range([np.array([1.0, 2.0]), np.array([np.nan, 5.0])])
         assert low == 1.0
