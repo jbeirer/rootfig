@@ -491,7 +491,8 @@ their statistics are the same as from reading everything at once.
   `float64` in another) is read whole once the difference shows, and evaluated
   in the wider type. The first file's chunks may already have been evaluated in
   their own type by then, so NumPy can warn about an overflow that the wider
-  type avoids; the histograms are not affected.
+  type avoids. The histograms are the same either way, also when NumPy is set
+  to raise such errors (`np.errstate(over="raise")`, a warnings filter).
 
 ## 2D histograms and correlations
 

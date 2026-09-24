@@ -403,6 +403,34 @@ class TestEntryRanges:
         assert resolve_files("root://host:1094//store/file.root")[1] is None
 
 
+class TestUprootCompat:
+    """rootfig.io.compat, for uproot before 5.7.3; these tests go with that module."""
+
+    def test_tree_steps_count_as_uproot_5_7_3(self, tmp_path: Path) -> None:
+        from rootfig.io import compat
+
+        path = tmp_path / "baskets.root"
+        with uproot.recreate(path) as file:
+            file.mktree("events", {"x": "var * float64"})
+            for counts in (1, 2, 3, 4):  # a basket of 1 000 events each, growing
+                values = np.arange(1_000.0 * counts)
+                file["events"].extend({"x": ak.unflatten(values, np.full(1_000, counts))})
+        tree = uproot.open(path)["events"]
+        branch = tree["x"]
+        sizes = [
+            branch.basket_key(i).data_uncompressed_bytes + branch.basket_key(i).fKeylen
+            for i in range(4)
+        ]
+
+        def step(first: int, last: int) -> int:
+            return compat.tree_step(tree, first, last, 100_000, lambda name: name == "x")
+
+        # the basket starting where the range stops counts, as uproot up to 5.7.3 reads it
+        assert step(0, 1_000) == round(100_000 * 1_000 / (sizes[0] + sizes[1]))
+        assert step(1_500, 2_500) == round(100_000 * 1_000 / (sizes[1] + sizes[2]))
+        assert step(3_000, 4_000) == round(100_000 * 1_000 / sizes[3])
+
+
 class TestIterate:
     """FileSource.iterate reads what arrays() reads, a chunk of entries at a time."""
 

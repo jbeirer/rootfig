@@ -16,6 +16,7 @@ import pytest
 
 from rootfig.errors import (
     BinningError,
+    ExpressionError,
     MissingBranchError,
     RootfigWarning,
     SelectionError,
@@ -2622,6 +2623,48 @@ class TestChunkedFilling:
         np.testing.assert_array_equal(chunked.arrays[0], want)
         # read whole only when the files differ, after the chunks showed it
         assert whole_reads == ([["x"]] if dtypes[0] != dtypes[1] else [])
+
+    @pytest.mark.parametrize("threads", [1, 4])
+    @pytest.mark.parametrize("strict", ["errstate", "warnings"])
+    def test_a_floating_point_error_in_a_narrower_file_reads_the_sample_whole(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, threads: int, strict: str
+    ) -> None:
+        import contextlib
+        import importlib
+
+        import uproot
+
+        from rootfig.histograms import load_columns
+        from rootfig.io import ReadCache
+
+        def write(name: str, dtype: str) -> str:
+            with uproot.recreate(tmp_path / name) as file:
+                file.mktree("events", {"x": dtype})
+                file["events"].extend({"x": np.full(1_000, 1e20, dtype=dtype)})
+            return str(tmp_path / name)
+
+        # x * x overflows float32, not float64
+        mixed = Sample([write("a.root", "float32"), write("b.root", "float64")])
+        narrow = Sample([write("c.root", "float32"), write("d.root", "float32")])
+
+        def raising() -> contextlib.ExitStack:
+            stack = contextlib.ExitStack()
+            if strict == "errstate":
+                stack.enter_context(np.errstate(over="raise"))
+            else:
+                stack.enter_context(warnings.catch_warnings())
+                warnings.simplefilter("error", RuntimeWarning)
+            return stack
+
+        with raising():
+            cached = load_columns(mixed, ["x * x"], cache=ReadCache())
+        self._chunked(monkeypatch)
+        monkeypatch.setattr(importlib.import_module("rootfig._threads"), "THREADS", threads)
+        with raising():
+            chunked = load_columns(mixed, ["x * x"])
+            with pytest.raises(ExpressionError, match="overflow"):  # as a whole read of it
+                load_columns(narrow, ["x * x"])
+        np.testing.assert_array_equal(chunked.arrays[0], cached.arrays[0])
 
 
 class TestPrefetch:

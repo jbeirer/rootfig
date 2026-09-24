@@ -5,7 +5,7 @@ it. Before 5.7.3, uproot converts a ``TTree`` step given in bytes from the
 compressed basket sizes, which well-compressed data decodes to several times over.
 With ``uproot>=5.7.3`` this module is deleted, and its one caller, ``_read_range``
 in :mod:`rootfig.io.sources`, passes ``step_size=f"{chunk_bytes} B"`` instead of
-:func:`tree_step`.
+:func:`tree_step`; ``tests/test_io.py::TestUprootCompat`` goes with it.
 """
 
 from __future__ import annotations
@@ -19,10 +19,11 @@ __all__ = ["tree_step"]
 def tree_step(tree: Any, first: int, last: int, chunk_bytes: int, name_filter: Any) -> int:
     """Return how many entries of ``tree`` from ``first`` to ``last`` hold about ``chunk_bytes``.
 
-    As uproot 5.7.3 and later count a step given in bytes: the uncompressed bytes of
-    the baskets that overlap the range, read from their keys, over the entries of
-    the range. ``name_filter`` selects branches as ``arrays`` does; a selected
-    parent is read with its subbranches, which count too.
+    As uproot 5.7.3 counts a step given in bytes: the uncompressed bytes of the
+    baskets that overlap the range, read from their keys, over the entries of the
+    range. A basket starting where the range stops counts too, since uproot up to
+    5.7.3 reads it along with the range. ``name_filter`` selects branches as
+    ``arrays`` does; a selected parent is read with its subbranches, which count too.
     """
     branches = {}
     for branch in tree.itervalues(filter_name=name_filter):
@@ -31,7 +32,7 @@ def tree_step(tree: Any, first: int, last: int, chunk_bytes: int, name_filter: A
     size = 0
     for branch in branches.values():
         for basket, (start, stop) in enumerate(pairwise(branch.entry_offsets)):
-            if start < last and first < stop:
+            if first < stop and start <= last:
                 size += _uncompressed_bytes(branch, basket)
     return max(1, round(chunk_bytes * (last - first) / size)) if size else max(1, last - first)
 

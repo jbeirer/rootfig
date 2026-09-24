@@ -29,7 +29,7 @@ classifiers = [
 # Floors are the oldest versions the test suite passes with (CI job "minimum-versions"),
 # kept at or below what the Key4hep nightlies ship (CI workflow "key4hep"), which take
 # every dependency from the stack: uproot 5.7.1 reads nested RNTuple fields and entry
-# ranges across files (a floor of 5.7.5 deletes src/rootfig/io/compat.py, see there);
+# ranges across files (a floor of 5.7.3 deletes src/rootfig/io/compat.py, see there);
 # mplhep 1.2.1 has exp_label(text=) and hist2dplot(mask=); hist 2.9 exposes the axis
 # metadata stored histograms are renamed through.
 dependencies = [
