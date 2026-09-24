@@ -3,20 +3,24 @@
 :func:`resolve` decides the roles before the figure exists, so a bad ``panel=``
 or ``reference=`` leaves nothing open; :meth:`PanelPlan.comparisons` computes
 them once the stack is drawn, against the very total :attr:`Plot.stack
-<rootfig.Plot.stack>` holds.
+<rootfig.Plot.stack>` holds. :func:`resolve_points` does the same for the
+efficiencies and profiles of :func:`~rootfig.efficiency` and :func:`~rootfig.profile`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol, TypeAlias
 
 from rootfig.errors import BinningError
 from rootfig.histograms import (
     COMPARISON_KINDS,
     Comparison,
     ComparisonKind,
+    Efficiency,
     Histogram,
+    Profile,
     UncertaintyMode,
     compare,
     compatible_binning,
@@ -25,7 +29,15 @@ from rootfig.histograms import (
 from rootfig.histograms.comparison import BAND_KINDS, SIGNIFICANCE_KINDS
 from rootfig.plotting.panel import comparison_label
 
-__all__ = ["PanelPlan", "resolve"]
+__all__ = ["PanelPlan", "resolve", "resolve_points"]
+
+Compared: TypeAlias = Histogram | Efficiency | Profile
+"""What a lower panel compares: histograms, or the points of an efficiency or a profile."""
+
+
+class _Labelled(Protocol):
+    @property
+    def label(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -37,7 +49,7 @@ class PanelPlan:
     kind
         What the panel shows.
     numerators
-        The histograms compared with the reference, in the order drawn.
+        What is compared with the reference, in the order drawn.
     reference
         The reference (the background of a significance), or ``None`` for the
         stack total, which exists only once the stack is drawn.
@@ -45,20 +57,18 @@ class PanelPlan:
         The :data:`~rootfig.histograms.UncertaintyMode` of each numerator.
     label
         The y label, given or built from the roles.
+    observed
+        Which numerators are observed data.
     """
 
     kind: ComparisonKind
-    numerators: tuple[Histogram, ...]
-    reference: Histogram | None
+    numerators: tuple[Compared, ...]
+    reference: Compared | None
     modes: tuple[UncertaintyMode, ...]
     label: str
+    observed: tuple[bool, ...]
 
-    @property
-    def observed(self) -> list[bool]:
-        """Which numerators are observed data."""
-        return [h.is_data for h in self.numerators]
-
-    def comparisons(self, total: Histogram | None) -> list[Comparison]:
+    def comparisons(self, total: Histogram | None = None) -> list[Comparison]:
         """Compare every numerator with the reference, the stack ``total`` if it is ``None``."""
         reference = self.reference if self.reference is not None else total
         assert reference is not None  # the stack total is the reference only with a stack
@@ -103,12 +113,7 @@ def resolve(
         If a numerator does not share the reference's binning.
     """
     if panel is None:
-        if reference is not None:
-            msg = (
-                f"reference={reference!r} names what the lower panel compares with; "
-                "choose the panel too, e.g. panel='ratio'"
-            )
-            raise ValueError(msg)
+        _no_panel(reference)
         return None
     if not isinstance(panel, str) or panel not in COMPARISON_KINDS:
         msg = (
@@ -140,13 +145,14 @@ def resolve(
             background,
             tuple(modes),
             label if label is not None else comparison_label(kind, ""),
+            tuple(h.is_data for h in numerators),
         )
     numerators, chosen = _ratio_roles(
         histograms, named, kind=kind, stacked=stacked, overlaid=overlaid, data=data
     )
     _check_binning(numerators, chosen, kind=kind, stacked=stacked)
     reference_is_data = chosen is not None and chosen.is_data
-    if kind == "pull":
+    if kind not in BAND_KINDS:
         modes = ["propagate"] * len(numerators)
     elif uncertainty is not None:
         modes = [uncertainty] * len(numerators)
@@ -163,7 +169,70 @@ def resolve(
         label = comparison_label(
             kind, "MC" if chosen is None else chosen.label, data=over_simulation
         )
-    return PanelPlan(kind, tuple(numerators), chosen, tuple(modes), label)
+    observed = tuple(h.is_data for h in numerators)
+    return PanelPlan(kind, tuple(numerators), chosen, tuple(modes), label, observed)
+
+
+def resolve_points(
+    points: Sequence[Efficiency | Profile],
+    is_data: Sequence[bool],
+    *,
+    panel: object,
+    reference: str | None,
+    label: str | None,
+) -> PanelPlan | None:
+    """Return the roles of the lower panel of an efficiency or profile plot, or ``None``.
+
+    ``is_data`` says which of ``points`` belong to observed data. The roles are
+    those of :func:`~rootfig.plot` without a stack: data over the first
+    simulated sample when there are both, every further sample over the first
+    otherwise, or every other one over the one ``reference`` names. Both sides
+    are propagated; significances, which count events, are refused.
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``panel`` or a significance, ``reference`` without
+        ``panel``, a ``reference`` naming no sample or several, or a single sample.
+    """
+    if panel is None:
+        _no_panel(reference)
+        return None
+    if not isinstance(panel, str) or panel not in COMPARISON_KINDS or panel in SIGNIFICANCE_KINDS:
+        kinds = tuple(k for k in COMPARISON_KINDS if k not in SIGNIFICANCE_KINDS)
+        msg = (
+            f"panel={panel!r} is not one of {kinds}; significances count events and apply "
+            "to rf.plot only. For a scale factor write panel='ratio'"
+        )
+        raise ValueError(msg)
+    kind: ComparisonKind = panel
+    items: list[Efficiency | Profile] = list(points)
+    flags = dict(zip(map(id, items), is_data, strict=True))
+    named = None if reference is None else _named(items, reference)
+    numerators, chosen = _ratio_roles(
+        items,
+        named,
+        kind=kind,
+        stacked=[],
+        overlaid=[p for p in items if not flags[id(p)]],
+        data=[p for p in items if flags[id(p)]],
+    )
+    assert chosen is not None  # without a stack there is always a named or first reference
+    observed = tuple(flags[id(p)] for p in numerators)
+    if label is None:
+        label = comparison_label(kind, chosen.label, data=all(observed) and not flags[id(chosen)])
+    modes: list[UncertaintyMode] = ["propagate"] * len(numerators)
+    return PanelPlan(kind, tuple(numerators), chosen, tuple(modes), label, observed)
+
+
+def _no_panel(reference: str | None) -> None:
+    """Refuse ``reference`` without a lower panel for it to name the reference of."""
+    if reference is not None:
+        msg = (
+            f"reference={reference!r} names what the lower panel compares with; "
+            "choose the panel too, e.g. panel='ratio'"
+        )
+        raise ValueError(msg)
 
 
 def _check_binning(
@@ -189,8 +258,8 @@ def _check_binning(
             raise BinningError(msg)
 
 
-def _named(histograms: Sequence[Histogram], reference: str) -> Histogram:
-    """Return the one drawn histogram labelled ``reference``."""
+def _named[T: _Labelled](histograms: Sequence[T], reference: str) -> T:
+    """Return the one drawn histogram (or efficiency, profile) labelled ``reference``."""
     labels = [h.label for h in histograms]
     matches = [h for h in histograms if h.label == reference]
     if not matches:
@@ -241,15 +310,15 @@ def _significance_roles(
     return [simulated[-1]], sum_histograms(simulated[:-1], label="Background")
 
 
-def _ratio_roles(
-    histograms: Sequence[Histogram],
-    reference: Histogram | None,
+def _ratio_roles[T: _Labelled](
+    histograms: Sequence[T],
+    reference: T | None,
     *,
     kind: ComparisonKind,
-    stacked: Sequence[Histogram],
-    overlaid: Sequence[Histogram],
-    data: Sequence[Histogram],
-) -> tuple[list[Histogram], Histogram | None]:
+    stacked: Sequence[T],
+    overlaid: Sequence[T],
+    data: Sequence[T],
+) -> tuple[list[T], T | None]:
     """Return the numerators and the reference (``None``: the stack total) of a ratio-like kind."""
     if reference is not None:
         numerators = [h for h in histograms if h is not reference]

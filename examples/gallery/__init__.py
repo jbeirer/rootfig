@@ -551,8 +551,12 @@ def correlation(signal: rf.Sample, style: rf.Style) -> rf.Plot:
 def efficiency(signal: rf.Sample, zjets: rf.Sample, pt: rf.Variable, style: rf.Style) -> rf.Plot:
     """``rf.efficiency`` fills the entries passing ``selection`` (all here) and those also
     passing ``passed`` with one binning, and draws their ratio with Wilson score intervals.
-    The muon identification efficiency versus transverse momentum, for two samples."""
-    return rf.efficiency([signal, zjets], pt, passed="Muon_isTight", ylim=(0.5, None), style=style)
+    The muon identification efficiency versus transverse momentum, for two samples;
+    ``panel="ratio"`` divides the second by the first below, as a scale factor, with the
+    intervals propagated asymmetrically."""
+    return rf.efficiency(
+        [signal, zjets], pt, passed="Muon_isTight", ylim=(0.5, None), panel="ratio", style=style
+    )
 
 
 @example("profile", "Profiles: a statistic of one variable in bins of another", section=BEYOND_1D)

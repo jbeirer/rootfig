@@ -7,7 +7,10 @@ from typing import Any
 
 import numpy as np
 from matplotlib.axes import Axes
+from matplotlib.backend_bases import RendererBase
+from matplotlib.lines import Line2D
 from matplotlib.ticker import MaxNLocator
+from matplotlib.transforms import ScaledTranslation, blended_transform_factory
 
 from rootfig._storage import same_edges
 from rootfig.histograms.build import compatible_binning
@@ -23,13 +26,25 @@ DEFAULT_RATIO_YLIM = (0.5, 1.5)
 PULL_YLIM = (3.0, 5.0)
 """The smallest and largest automatic half-range of a pull panel."""
 
-_BASELINES: dict[str, float] = {"ratio": 1.0, "relative_difference": 0.0, "difference": 0.0}
+ASYMMETRY_YLIM = 1.1
+"""The largest automatic half-range of an asymmetry panel, keeping its bounds ±1 in the frame."""
+
+OFF_SCALE_INSET = 4.0
+"""How far inside the frame an off-scale marker sits, in points."""
+
+_BASELINES: dict[str, float] = {
+    "ratio": 1.0,
+    "relative_difference": 0.0,
+    "difference": 0.0,
+    "asymmetry": 0.0,
+}
 
 _LABELS: dict[str, str] = {
     "ratio": "Ratio to {}",
     "relative_difference": "Rel. difference to {}",
     "difference": "Difference to {}",
     "pull": "Pull",
+    "asymmetry": "Asymmetry to {}",
     "s/sqrt(b)": r"$S/\sqrt{{B}}$",
     "s/sqrt(s+b)": r"$S/\sqrt{{S+B}}$",
 }
@@ -51,6 +66,8 @@ def comparison_label(kind: ComparisonKind, reference: str, *, data: bool = False
                 return f"(Data {minus} {reference}) / {reference}"
             case "difference":
                 return f"Data {minus} {reference}"
+            case "asymmetry":
+                return f"(Data {minus} {reference}) / (Data + {reference})"
     return _LABELS[kind].format(reference)
 
 
@@ -67,10 +84,12 @@ def draw_panel(
 ) -> None:
     """Draw ``comparisons`` of one kind into the lower panel ``ax``.
 
-    Ratios, relative differences and differences are points with error bars
-    around their baseline (1 or 0, a dashed line), over the reference's
-    uncertainty band; pulls are filled bars from 0, without error bars; a
-    significance is points with error bars and no baseline.
+    Ratios, relative differences, differences and asymmetries are points with
+    error bars around their baseline (1 or 0, a dashed line), over the
+    reference's uncertainty band where there is one; pulls are filled bars from
+    0, without error bars; a significance is points with error bars and no
+    baseline. A point beyond the y range is marked by a triangle at the edge it
+    left through, in its colour; the markers follow later changes of the range.
 
     Parameters
     ----------
@@ -172,6 +191,46 @@ def draw_panel(
         ylabel = comparison_label(kind, comparisons[0].reference)
     ax.set_ylabel(ylabel, loc="center")
     ax.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 2.5, 5, 10], prune="upper"))
+    if kind != "pull":  # a pull's bars end at the edge they leave through
+        for comparison, color in zip(comparisons, colors, strict=True):
+            for above in (True, False):
+                ax.add_artist(_OffScale(ax, comparison, above=above, color=color))
+
+
+class _OffScale(Line2D):
+    """Triangles at the top (``above``) or bottom edge of ``ax`` for points beyond its y range.
+
+    The points are chosen from the limits the axes have when drawn, so they
+    follow a later ``set_ylim``; x is in data coordinates and clipped to the
+    axes, so bins outside the x range (or the other segment of a broken axis)
+    are not marked. They sit :data:`OFF_SCALE_INSET` points inside the frame.
+    """
+
+    def __init__(self, ax: Axes, comparison: Comparison, *, above: bool, color: str) -> None:
+        inset = -OFF_SCALE_INSET if above else OFF_SCALE_INSET
+        super().__init__(
+            [],
+            [],
+            linestyle="none",
+            marker="^" if above else "v",
+            markersize=5,
+            color=color,
+            zorder=3,
+            transform=blended_transform_factory(ax.transData, ax.transAxes)
+            + ScaledTranslation(0.0, inset / 72.0, ax.figure.dpi_scale_trans),
+        )
+        self._centers = comparison.centers
+        self._values = comparison.values
+        self._above = above
+        self.set_in_layout(False)
+
+    def draw(self, renderer: RendererBase) -> None:
+        assert self.axes is not None
+        low, high = sorted(self.axes.get_ylim())
+        values = self._values
+        beyond = np.isfinite(values) & ((values > high) if self._above else (values < low))
+        self.set_data(self._centers[beyond], np.full(int(beyond.sum()), float(self._above)))
+        super().draw(renderer)
 
 
 def _same_reference(comparison: Comparison, other: Comparison) -> bool:
@@ -245,7 +304,7 @@ def _draw_points(
         yerr: Any
         if clip_errors:
             yerr = np.where(np.isfinite(comparison.errors), comparison.errors, 0.0)[ok]
-        elif comparison.syst_errors is None:
+        elif comparison.syst_errors is None and not isinstance(comparison.errors, tuple):
             yerr = comparison.errors[ok]
         else:
             errors_down, errors_up = comparison.total_errors()
@@ -284,6 +343,7 @@ def panel_ylim(
     * relative difference: the ratio's range of the values plus one, shifted back;
     * difference: symmetric, 1.1 times the largest magnitude of those
       percentiles, or ``(-1, 1)`` when everything is zero;
+    * asymmetry: the difference's range, at most :data:`ASYMMETRY_YLIM` either way;
     * pull: symmetric, 1.1 times the 95th percentile of the magnitudes, at least
       3 and at most 5;
     * significance: from zero to 1.25 times the highest value plus its error.
@@ -310,13 +370,15 @@ def panel_ylim(
         return (-half, half)
     shift = 1.0 if kind == "relative_difference" else 0.0
     ranges = _extents(comparisons, visible, band, view, shift=shift)
-    if kind == "difference":
+    if kind in ("difference", "asymmetry"):
         bound = 0.0
         for lower, upper in ranges:
             if lower.size and upper.size:
                 q_low, q_high = np.percentile(lower, 5), np.percentile(upper, 95)
                 bound = max(bound, abs(float(q_low)), abs(float(q_high)))
         half = 1.1 * bound if bound > 0 else 1.0
+        if kind == "asymmetry":
+            half = min(half, ASYMMETRY_YLIM)
         return (-half, half)
     low, high = _ratio_range(ranges)
     return (low - shift, high - shift)

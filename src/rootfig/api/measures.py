@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any
 
 import numpy as np
 
 from rootfig.api._common import style_for
+from rootfig.api._panel import PanelPlan, resolve_points
 from rootfig.histograms import (
+    Comparison,
+    ComparisonKind,
+    Efficiency,
+    Profile,
     ProfileStatistic,
     build_histograms,
     load_columns,
@@ -30,11 +35,13 @@ from rootfig.model import (
 from rootfig.plotting import (
     AxesLike,
     Finish,
+    Layout,
     Plot,
     add_experiment_label,
     add_legend,
     color_cycle,
     draw_efficiencies,
+    draw_panel,
     draw_profiles,
     finish_axes,
     finish_figure,
@@ -69,6 +76,10 @@ def efficiency(
     logx: bool | None = None,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float | None, float | None] | None = None,
+    panel: ComparisonKind | None = None,
+    reference: str | None = None,
+    panel_ylim: tuple[float, float] | None = None,
+    panel_label: str | None = None,
     legend: bool | str | None = None,
     text: str | Sequence[str] | None = None,
     style: StyleLike = None,
@@ -89,6 +100,14 @@ def efficiency(
     objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a
     ``range`` infers one robustly, shared by numerator and denominator (see
     :func:`plot`).
+
+    ``panel`` compares the efficiencies in a lower panel (``"ratio"`` for a
+    scale factor, ``"relative_difference"``, ``"difference"``, ``"pull"``,
+    ``"asymmetry"``): data over the first simulated sample, or every further
+    sample over the first, or every other one over the sample ``reference``
+    names; the intervals are propagated as independent, keeping their
+    asymmetry. ``panel_ylim`` and ``panel_label`` set its range and y label, and
+    ``Plot.comparisons`` holds the :class:`~rootfig.histograms.Comparison` objects.
 
     Examples
     --------
@@ -117,11 +136,18 @@ def efficiency(
         efficiency_of(p.hist, t.hist, z=z, label=sample.label)
         for p, t, sample in zip(passes, totals, samples, strict=True)
     ]
+    plan = resolve_points(
+        efficiencies,
+        [s.is_data for s in samples],
+        panel=panel,
+        reference=reference,
+        label=panel_label,
+    )
     resolved_style = style_for(style, text, lumi)
     if legend is not None:
         resolved_style = resolved_style.replace(legend=legend)
     with style_context(resolved_style) as st:
-        layout = make_figure(st, panel=False, ax=ax, figsize=figsize)
+        layout = make_figure(st, panel=plan is not None, ax=ax, figsize=figsize)
         cycle = iter(color_cycle(len(samples), st))
         colors = [s.color or next(cycle) for s in samples]
         low, high = draw_efficiencies(efficiencies, layout.main, style=st, colors=colors)
@@ -129,7 +155,7 @@ def efficiency(
         finish_axes(
             layout.main,
             data_range=(low, high),
-            xlabel=fixed.axis_label,
+            xlabel=None,
             ylabel=ylabel or "Efficiency",
             xlim=outer,
             ylim=ylim,
@@ -141,6 +167,10 @@ def efficiency(
             layout.main.set_title(title)
         add_experiment_label(layout.main, st, has_data=any(s.is_data for s in samples))
         legend_artist = add_legend(layout.main, st)
+        comparisons = _draw_panel(
+            layout, plan, efficiencies, colors, outer=outer, logx=logx, ylim=panel_ylim
+        )
+        layout.xlabel_axes.set_xlabel(fixed.axis_label, loc="right")
         headroom = None
         if ylim is None or ylim[1] is None:
             edges = efficiencies[0].edges
@@ -159,11 +189,13 @@ def efficiency(
             )
         pin_fonts(layout.fig)  # last: fonts
     # outside the style context, against the layout the figure is drawn with
-    finish_figure(layout.fig, [Finish(layout.main, xlabel=layout.main, headroom=headroom)])
+    finish_figure(layout.fig, [_finish(layout, headroom)])
     result = Plot(
         fig=layout.fig,
         ax=layout.main,
+        panel_ax=layout.panel,
         histograms=list(passes),
+        comparisons=comparisons,
         variable=fixed,
         efficiencies=efficiencies,
     )
@@ -193,6 +225,10 @@ def profile(
     logy: bool | None = None,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float | None, float | None] | None = None,
+    panel: ComparisonKind | None = None,
+    reference: str | None = None,
+    panel_ylim: tuple[float, float] | None = None,
+    panel_label: str | None = None,
     legend: bool | str | None = None,
     text: str | Sequence[str] | None = None,
     style: StyleLike = None,
@@ -214,7 +250,10 @@ def profile(
     variance is negative has no standard deviation (``nan``). An integer
     ``bins`` without a ``range`` infers the x range robustly (see :func:`plot`).
     The :class:`~rootfig.histograms.Profile` objects are returned in
-    ``Plot.profiles``.
+    ``Plot.profiles``. ``panel``, ``reference``, ``panel_ylim`` and
+    ``panel_label`` add a lower panel comparing the profiles, as for
+    :func:`efficiency` (``panel="difference"`` compares the response or
+    resolution of two configurations).
 
     Examples
     --------
@@ -251,22 +290,26 @@ def profile(
         )
         for c, s in zip(columns, samples, strict=True)
     ]
+    plan = resolve_points(
+        profiles, [s.is_data for s in samples], panel=panel, reference=reference, label=panel_label
+    )
     resolved_style = style_for(style, text, lumi)
     if legend is not None:
         resolved_style = resolved_style.replace(legend=legend)
     if ylabel is None:
         ylabel = var_y.axis_label if statistic == "mean" else f"Std. dev. of {var_y.axis_label}"
     with style_context(resolved_style) as st:
-        layout = make_figure(st, panel=False, ax=ax, figsize=figsize)
+        layout = make_figure(st, panel=plan is not None, ax=ax, figsize=figsize)
         cycle = iter(color_cycle(len(samples), st))
         colors = [s.color or next(cycle) for s in samples]
         low, high = draw_profiles(profiles, layout.main, style=st, colors=colors)
+        outer = xlim or (float(edges[0]), float(edges[-1]))
         finish_axes(
             layout.main,
             data_range=(low, high),
-            xlabel=var_x.replace(bins=axis).axis_label,
+            xlabel=None,
             ylabel=ylabel,
-            xlim=xlim or (float(edges[0]), float(edges[-1])),
+            xlim=outer,
             ylim=ylim,
             logx=logx,
             logy=logy,
@@ -277,6 +320,10 @@ def profile(
             layout.main.set_title(title)
         add_experiment_label(layout.main, st, has_data=any(s.is_data for s in samples))
         legend_artist = add_legend(layout.main, st)
+        comparisons = _draw_panel(
+            layout, plan, profiles, colors, outer=outer, logx=logx, ylim=panel_ylim
+        )
+        layout.xlabel_axes.set_xlabel(var_x.replace(bins=axis).axis_label, loc="right")
         headroom = None
         if ylim is None or ylim[1] is None:
             heights = np.nanmax(
@@ -301,8 +348,52 @@ def profile(
             )
         pin_fonts(layout.fig)  # last: fonts
     # outside the style context, against the layout the figure is drawn with
-    finish_figure(layout.fig, [Finish(layout.main, xlabel=layout.main, headroom=headroom)])
-    result = Plot(fig=layout.fig, ax=layout.main, variable=var_x, profiles=profiles)
+    finish_figure(layout.fig, [_finish(layout, headroom)])
+    result = Plot(
+        fig=layout.fig,
+        ax=layout.main,
+        panel_ax=layout.panel,
+        comparisons=comparisons,
+        variable=var_x,
+        profiles=profiles,
+    )
     if save:
         result.save(save)
     return result
+
+
+def _draw_panel(
+    layout: Layout,
+    plan: PanelPlan | None,
+    points: Sequence[Efficiency] | Sequence[Profile],
+    colors: Sequence[str],
+    *,
+    outer: tuple[float, float],
+    logx: bool,
+    ylim: tuple[float, float] | None,
+) -> list[Comparison]:
+    """Draw the lower panel of ``plan`` into ``layout``; return its comparisons."""
+    if plan is None or layout.panel is None:
+        return []
+    comparisons = plan.comparisons()
+    color_of = dict(zip(map(id, points), colors, strict=True))
+    draw_panel(
+        comparisons,
+        layout.panel,
+        colors=[color_of[id(p)] for p in plan.numerators],
+        observed=plan.observed,
+        ylim=ylim,
+        ylabel=plan.label,
+        view=[outer],
+    )
+    if logx:
+        layout.panel.set_xscale("log")
+    layout.panel.set_xlim(*outer)
+    return comparisons
+
+
+def _finish(layout: Layout, headroom: Callable[[], None] | None) -> Finish:
+    """Return what an efficiency or profile plot does once laid out."""
+    return Finish(
+        layout.main, panels=layout.panel_axes, xlabel=layout.xlabel_axes, headroom=headroom
+    )

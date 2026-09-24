@@ -197,20 +197,23 @@ variances:
 | `"relative_difference"` | `n / d − 1`, around 0 | the ratio's | the ratio's, around 0 | the ratio's range moved down by one: at least −0.5 to 0.5, within −1 to 2 (−4 to 2) |
 | `"difference"` | `n − d`, around 0 | `√(vn + vd)` / `√vn` | `√vd` around 0 | symmetric: ±1.1 times the largest magnitude of the 5th and 95th percentiles of the points, their systematic extent and the band; ±1 when all are zero |
 | `"pull"` | `(n − d) / σ`, `σ² = vn + vd + σ_syst²` | none: 1 by construction | none | symmetric: ±1.1 times the 95th percentile of the magnitudes, at least ±3 and at most ±5 |
+| `"asymmetry"` | `(n − d) / (n + d)`, around 0 | `2·√(d²·vn + n²·vd) / (n + d)²`; `propagate` only | none | the difference's, at most ±1.1 so that ±1 (an empty side) stays in the frame |
 | `"s/sqrt(b)"`, `"s/sqrt(s+b)"` | `S/√B`, `S/√(S+B)` per bin, the reference as background | statistical, propagated | none | 0 to 1.25 times the highest point plus its error |
 
-Ratios, relative and absolute differences are points with error bars and a
-dashed line at their baseline, over the grey reference band where one is drawn
-(the `"numerator"` mode below); pulls are filled bars from 0
+Ratios, relative and absolute differences and asymmetries are points with
+error bars and a dashed line at their baseline, over the grey reference band
+where one is drawn (the `"numerator"` mode below); pulls are filled bars from 0
 in the numerator's colour; significances are points without a baseline. Every
 numerator gets its own series, in its histogram's colour. A bin is left empty
 where the value is undefined: an empty reference for a ratio or a relative
-difference, `σ = 0` for a pull, and no background (or no signal plus
-background) for a significance. Only the bins inside the visible x range
-(`xlim`, both segments of `xbreak`) set the automatic range. Statistical error
-bars do not widen it, so a few low-statistics bins cannot squash the panel; a
-significance is the exception, its upper limit following the highest point
-plus its error.
+difference, `σ = 0` for a pull, `n + d = 0` for an asymmetry, and no background
+(or no signal plus background) for a significance. Only the bins inside the
+visible x range (`xlim`, both segments of `xbreak`) set the automatic range.
+Statistical error bars do not widen it, so a few low-statistics bins cannot
+squash the panel; a significance is the exception, its upper limit following
+the highest point plus its error. A point beyond the range is marked by a
+triangle at the edge it left through, in its colour, so the robust range never
+hides a bin; the markers follow a later `p.panel_ax.set_ylim(...)`.
 
 `σ_syst` of a pull is the combined [systematic
 uncertainty](#systematic-uncertainties) of `n − d`: a source carried by both
@@ -245,8 +248,8 @@ bars in one of two modes, chosen per numerator: data over simulation keeps the
 reference uncertainty as the grey band (`"numerator"`, mplhep's
 `split_ratio`), and everything else propagates both sides (`"propagate"`), so
 sources shared by numerator and reference cancel. `panel_uncertainty=` applies
-one mode to all numerators; it raises for a pull or a significance, which have
-no band.
+one mode to all numerators; it raises for a pull, an asymmetry or a
+significance, which have no band.
 
 **Range and label.** `panel_ylim` and `panel_label` override the automatic
 range and label. The label names the reference, `MC` for the stack total, and
@@ -260,6 +263,7 @@ the general label:
 | `"relative_difference"` | `(Data − MC) / MC` | `Rel. difference to X` |
 | `"difference"` | `Data − MC` | `Difference to X` |
 | `"pull"` | `Pull` | `Pull` |
+| `"asymmetry"` | `(Data − MC) / (Data + MC)` | `Asymmetry to X` |
 | `"s/sqrt(b)"`, `"s/sqrt(s+b)"` | `S/√B`, `S/√(S+B)` | the same |
 
 A rotated y label is bounded by the height of the short panel, so a long one
@@ -283,7 +287,18 @@ rf.plot([full, fast], "Muon_pt", normalize=True, panel="relative_difference")
 ```
 
 The gallery shows a [ratio to a chosen sample](gallery/ratio_reference.md), a
-[pull](gallery/pull.md) and a [significance panel](gallery/selective_stack.md).
+[pull](gallery/pull.md), a [significance panel](gallery/selective_stack.md) and a
+[ratio of efficiencies](gallery/efficiency.md).
+
+**Efficiencies and profiles.** [`rf.efficiency`](#efficiencies) and
+[`rf.profile`](#profiles-and-resolutions) take `panel=` (every kind but the
+significances, which count events), `reference=`, `panel_ylim` and `panel_label`.
+The roles are those without a stack: data over the first simulated sample, or
+every further sample over the first. Both sides are independent points, so
+their intervals are propagated to first order, each side entering with the error
+that moves the result the same way: a ratio of Wilson intervals keeps its
+asymmetry (`Comparison.errors` is then `(down, up)`), and a pull divides by the
+errors facing the other side. There is no band and no `panel_uncertainty`.
 
 ## Binning and range
 
@@ -538,7 +553,12 @@ deviations by default; weighted samples use effective entries). Options are
 the usual axis, legend, label and style ones (`xlabel`, `ylabel`, `unit`,
 `title`, `logx`, `xlim`, `ylim`, `legend`, `text`, `style`, `figsize`, `ax`,
 `save`); the [`Efficiency`][rootfig.Efficiency] objects (`values`, `lower`,
-`upper`, `edges`) are in `Plot.efficiencies`.
+`upper`, `edges`) are in `Plot.efficiencies`. `panel="ratio"` adds the
+[lower panel](#lower-panel) of a scale factor, data over simulation:
+
+```python
+rf.efficiency([mc, data], "Muon_pt", passed="Muon_isTight", bins=(20, 0, 100), panel="ratio")
+```
 
 ## Profiles and resolutions
 
@@ -551,7 +571,19 @@ with its standard error (ROOT's `TProfile`); `"std"` draws the standard
 deviation with its error, the usual resolution-versus-variable plot. `x` and
 `y` must have the same structure; `xlabel` and `unit` describe the x axis. The
 [`Profile`][rootfig.Profile] objects (`values`, `errors`, `counts`, `edges`)
-are in `Plot.profiles`.
+are in `Plot.profiles`. A [lower panel](#lower-panel) compares configurations,
+here the resolution of a new reconstruction against the nominal one:
+
+```python
+rf.profile(
+    [nominal, new],
+    "true_E",
+    "(reco_E - true_E) / true_E",
+    statistic="std",
+    bins=(20, 0, 100),
+    panel="difference",
+)
+```
 
 Negative weights (NLO samples) can make a weighted variance negative or an
 efficiency leave `[0, 1]`. rootfig then reports `nan` for the standard
