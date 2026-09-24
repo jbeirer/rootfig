@@ -24,7 +24,10 @@ from rootfig.errors import (
     SystematicError,
 )
 from rootfig.histograms import (
+    COMPARISON_KINDS,
+    Efficiency,
     Histogram,
+    Profile,
     Summary,
     as_weight_storage,
     build_histograms,
@@ -279,6 +282,8 @@ class TestCompare:
             ("relative_difference", [1, 2], [np.sqrt(3), 2], [1, 1], [0.7071, 0.5774]),
             ("difference", [2, 6], [2.4495, 3.4641], [2, 3], [1.4142, 1.7321]),
             ("pull", [0.8165, 1.7321], [1, 1], None, None),
+            # 2 sqrt(d^2 vn + n^2 vd) / (n + d)^2
+            ("asymmetry", [1 / 3, 0.5], [2 * np.sqrt(48) / 36, 0.25], None, None),
             ("s/sqrt(b)", [2.8284, 5.1962], None, None, None),
             ("s/sqrt(s+b)", [1.6330, 2.5981], None, None, None),
         ],
@@ -318,6 +323,7 @@ class TestCompare:
             ("ratio", [0, 0], [2, 3]),
             ("relative_difference", [0, 0], [1, 2]),
             ("difference", [0.2, 0.6], [2, 6]),
+            ("asymmetry", [0, 0], [1 / 3, 0.5]),
         ],
     )
     def test_a_shared_normalisation_source(
@@ -349,15 +355,15 @@ class TestCompare:
         equal = compare(up, _poisson([2.0]), kind="pull")
         np.testing.assert_allclose(equal.values, [0.0])
 
-    @pytest.mark.parametrize("kind", ["ratio", "relative_difference", "s/sqrt(b)", "pull"])
+    @pytest.mark.parametrize(
+        "kind", ["ratio", "relative_difference", "s/sqrt(b)", "pull", "asymmetry"]
+    )
     def test_an_empty_reference_bin_is_nan(self, kind: Any) -> None:
         result = compare(_poisson([0.0, 2.0]), _poisson([0.0, 1.0]), kind=kind)
         assert np.isnan(result.values[0])
         assert np.isfinite(result.values[1])
 
-    @pytest.mark.parametrize(
-        "kind", ["ratio", "relative_difference", "difference", "pull", "s/sqrt(b)", "s/sqrt(s+b)"]
-    )
+    @pytest.mark.parametrize("kind", COMPARISON_KINDS)
     def test_hist_and_histogram_inputs_agree(self, kind: Any) -> None:
         n, d = _poisson(list(self.N)), _poisson(list(self.D))
         plain = compare(n, d, kind=kind)
@@ -602,6 +608,118 @@ def _hist(values: list[float], weights: list[float] | None = None) -> hist.Hist:
     h = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
     h.fill(values, weight=weights)
     return h
+
+
+class TestComparePoints:
+    """Efficiencies and profiles: independent points, asymmetric intervals propagated."""
+
+    EDGES = np.array([0.0, 1.0, 2.0])
+
+    def _efficiencies(self) -> tuple[Efficiency, Efficiency]:
+        a = Efficiency(
+            values=np.array([0.5, 0.9]),
+            lower=np.array([0.4, 0.8]),
+            upper=np.array([0.55, 0.95]),
+            edges=self.EDGES,
+            label="A",
+        )
+        b = Efficiency(
+            values=np.array([0.25, 0.9]),
+            lower=np.array([0.2, 0.85]),
+            upper=np.array([0.35, 0.92]),
+            edges=self.EDGES,
+            label="B",
+        )
+        return a, b
+
+    def test_a_ratio_keeps_the_intervals_asymmetric(self) -> None:
+        a, b = self._efficiencies()
+        (a_down, a_up), (b_down, b_up) = a.errors, b.errors
+        result = compare(a, b)
+        np.testing.assert_allclose(result.values, [2.0, 1.0])
+        assert isinstance(result.errors, tuple)
+        down, up = result.errors
+        # lowering a / b lowers a or raises b: a's lower error with b's upper one
+        np.testing.assert_allclose(down, np.hypot(a_down / b.values, a.values * b_up / b.values**2))
+        np.testing.assert_allclose(up, np.hypot(a_up / b.values, a.values * b_down / b.values**2))
+        assert (result.label, result.reference, result.band) == ("A", "B", None)
+        assert result.reference_hist is None
+        assert result.reference_points is b
+        np.testing.assert_array_equal(result.total_errors()[0], down)
+        relative = compare(a, b, kind="relative_difference")
+        np.testing.assert_allclose(relative.values, [1.0, 0.0])
+        np.testing.assert_allclose(relative.errors, result.errors)
+
+    def test_difference_asymmetry_and_pull(self) -> None:
+        a, b = self._efficiencies()
+        (a_down, a_up), (b_down, b_up) = a.errors, b.errors
+        difference = compare(a, b, kind="difference")
+        np.testing.assert_allclose(difference.values, [0.25, 0.0], atol=1e-12)
+        np.testing.assert_allclose(
+            difference.errors, (np.hypot(a_down, b_up), np.hypot(a_up, b_down))
+        )
+        asymmetry = compare(a, b, kind="asymmetry")
+        total = a.values + b.values
+        np.testing.assert_allclose(asymmetry.values, (a.values - b.values) / total, atol=1e-12)
+        pa, pb = 2 * b.values / total**2, 2 * a.values / total**2
+        np.testing.assert_allclose(
+            asymmetry.errors, (np.hypot(pa * a_down, pb * b_up), np.hypot(pa * a_up, pb * b_down))
+        )
+        pull = compare(a, b, kind="pull")
+        # a > b in bin 0: the lower error of a - b faces zero; a == b in bin 1: the upper
+        np.testing.assert_allclose(pull.values, [0.25 / np.hypot(0.1, 0.1), 0.0], atol=1e-12)
+        np.testing.assert_array_equal(pull.errors, [1.0, 1.0])
+
+    def test_profiles_propagate_symmetric_errors(self) -> None:
+        def profile_(values: list[float], errors: list[float], label: str) -> Profile:
+            return Profile(
+                values=np.array(values),
+                errors=np.array(errors),
+                counts=np.ones(2),
+                edges=self.EDGES,
+                label=label,
+            )
+
+        a, b = profile_([2.0, 4.0], [0.2, 0.4], "A"), profile_([1.0, 2.0], [0.1, 0.1], "B")
+        result = compare(a, b)
+        expected = result.values * np.hypot(a.errors / a.values, b.errors / b.values)
+        down, up = result.errors
+        np.testing.assert_allclose(down, expected)
+        np.testing.assert_allclose(up, expected)
+        std = Profile(a.values, a.errors, a.counts, a.edges, statistic="std")
+        with pytest.raises(ValueError, match="one statistic"):
+            compare(std, b)
+
+    def test_undefined_points_have_no_errors(self) -> None:
+        a, b = self._efficiencies()
+        empty = Efficiency(
+            values=np.array([0.0, np.nan]),
+            lower=np.array([0.0, np.nan]),
+            upper=np.array([0.1, np.nan]),
+            edges=self.EDGES,
+        )
+        result = compare(a, empty)
+        assert np.isnan(result.values).all()  # an efficiency of zero, and an empty bin
+        assert all(np.isnan(side).all() for side in result.errors)
+        unknown = Efficiency(a.values, np.array([np.nan, 0.8]), a.upper, self.EDGES)
+        down, up = compare(unknown, b).errors  # negative weights: no interval, no error bar
+        assert np.isnan(down[0])
+        assert np.isfinite(up[0])
+
+    def test_refusals(self) -> None:
+        a, b = self._efficiencies()
+        profile_ = Profile(a.values, a.values, a.values, self.EDGES)
+        with pytest.raises(TypeError, match="two efficiencies or two profiles"):
+            compare(a, profile_)
+        with pytest.raises(TypeError, match="two efficiencies or two profiles"):
+            compare(_poisson([1.0, 2.0]), a)
+        with pytest.raises(ValueError, match="counts signal and background"):
+            compare(a, b, kind="s/sqrt(b)")
+        with pytest.raises(ValueError, match="reference band"):
+            compare(a, b, uncertainty="numerator")
+        shifted = Efficiency(b.values, b.lower, b.upper, self.EDGES + 1)
+        with pytest.raises(BinningError, match="identical bin edges"):
+            compare(a, shifted)
 
 
 class TestSignificance:

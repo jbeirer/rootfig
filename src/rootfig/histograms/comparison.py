@@ -1,4 +1,4 @@
-"""Bin-by-bin comparisons of two histograms: ratios, differences, pulls and significances."""
+"""Bin-by-bin comparisons: ratios, differences, asymmetries, pulls and significances."""
 
 from __future__ import annotations
 
@@ -9,9 +9,11 @@ from typing import Any, Literal, TypeAlias
 
 import numpy as np
 
+from rootfig._storage import same_edges
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning
 from rootfig.histograms.build import Histogram, compatible_binning
+from rootfig.histograms.efficiency import Efficiency, Profile
 from rootfig.histograms.systematics import Uncertainty
 
 __all__ = [
@@ -23,7 +25,7 @@ __all__ = [
 ]
 
 ComparisonKind: TypeAlias = Literal[
-    "ratio", "difference", "relative_difference", "pull", "s/sqrt(b)", "s/sqrt(s+b)"
+    "ratio", "difference", "relative_difference", "pull", "asymmetry", "s/sqrt(b)", "s/sqrt(s+b)"
 ]
 """What a comparison computes per bin: see :func:`compare`."""
 
@@ -32,6 +34,7 @@ COMPARISON_KINDS: tuple[ComparisonKind, ...] = (
     "difference",
     "relative_difference",
     "pull",
+    "asymmetry",
     "s/sqrt(b)",
     "s/sqrt(s+b)",
 )
@@ -54,6 +57,7 @@ UncertaintyMode: TypeAlias = Literal["propagate", "numerator"]
 """
 
 _Variations: TypeAlias = Mapping[str, tuple[Hist, Hist]]
+_Errors: TypeAlias = tuple[FloatArray, FloatArray]
 
 
 @dataclass(frozen=True)
@@ -72,7 +76,8 @@ class Comparison:
         reference for a ratio, a zero uncertainty for a pull).
     errors
         Statistical uncertainty on ``values`` (see :data:`UncertaintyMode`); 1
-        for a pull, whose uncertainty is its unit.
+        for a pull, whose uncertainty is its unit. A ``(down, up)`` pair for
+        efficiencies, whose intervals are asymmetric.
     edges
         Bin edges shared by both histograms.
     band
@@ -91,20 +96,25 @@ class Comparison:
         reference's uncertainty is only in the band, which is then drawn.
     reference_hist
         The histogram compared with, which a panel drawing several comparisons
-        checks they share; ``None`` for a :class:`Comparison` built by hand.
+        checks they share; ``None`` for efficiencies and profiles and for a
+        :class:`Comparison` built by hand.
+    reference_points
+        The efficiency or profile compared with, checked like ``reference_hist``;
+        ``None`` for histograms and for a :class:`Comparison` built by hand.
     """
 
     kind: ComparisonKind
     label: str
     reference: str
     values: FloatArray
-    errors: FloatArray
+    errors: FloatArray | _Errors
     edges: FloatArray
     band: FloatArray | None = None
     syst_errors: tuple[FloatArray, FloatArray] | None = None
     syst_band: tuple[FloatArray, FloatArray] | None = None
     uncertainty: UncertaintyMode = "propagate"
     reference_hist: Hist | None = None
+    reference_points: Efficiency | Profile | None = None
 
     @property
     def centers(self) -> FloatArray:
@@ -116,12 +126,13 @@ class Comparison:
         """Half bin widths (for horizontal error bars)."""
         return np.asarray(0.5 * np.diff(self.edges), dtype=float)
 
-    def total_errors(self) -> tuple[FloatArray, FloatArray]:
+    def total_errors(self) -> _Errors:
         """Statistical and systematic uncertainty on ``values`` in quadrature, ``(down, up)``."""
+        down, up = self.errors if isinstance(self.errors, tuple) else (self.errors, self.errors)
         if self.syst_errors is None:
-            return self.errors, self.errors
-        down, up = self.syst_errors
-        return np.hypot(self.errors, down), np.hypot(self.errors, up)
+            return down, up
+        syst_down, syst_up = self.syst_errors
+        return np.hypot(down, syst_down), np.hypot(up, syst_up)
 
     def total_band(self) -> tuple[FloatArray, FloatArray] | None:
         """Return the reference's total uncertainty, ``(down, up)``; ``None`` without a band."""
@@ -134,8 +145,8 @@ class Comparison:
 
 
 def compare(
-    numerator: Hist | Histogram,
-    reference: Hist | Histogram,
+    numerator: Hist | Histogram | Efficiency | Profile,
+    reference: Hist | Histogram | Efficiency | Profile,
     *,
     kind: ComparisonKind = "ratio",
     uncertainty: UncertaintyMode = "propagate",
@@ -146,6 +157,7 @@ def compare(
 
     * ``"ratio"`` is ``n / d``, ``"relative_difference"`` ``n / d - 1`` (same
       uncertainties), ``"difference"`` ``n - d``;
+    * ``"asymmetry"`` is ``(n - d) / (n + d)``, both sides propagated;
     * ``"pull"`` is ``(n - d) / sqrt(vn + vd + syst**2)``, where ``syst`` is the
       systematic uncertainty of ``n - d`` on the side facing the reference (the
       lower one where ``n > d``, the upper one elsewhere);
@@ -164,13 +176,27 @@ def compare(
     reference bin leaves that bin's systematic uncertainty ``nan``, with a
     :class:`~rootfig.errors.RootfigWarning`.
 
+    Two :class:`~rootfig.histograms.Efficiency` or two
+    :class:`~rootfig.histograms.Profile` objects compare their values the same
+    way, with their intervals propagated to first order as independent: the
+    lower error of the result takes each side's lower or upper error, whichever
+    lowers it, so the asymmetric intervals of an efficiency stay asymmetric
+    (``errors`` is then ``(down, up)``). A pull divides by the errors facing the
+    other side. Significances, which count events, and ``"numerator"``, which
+    needs a band, are refused for them.
+
     Raises
     ------
     BinningError
-        If the histograms do not share the same one-dimensional binning.
+        If the inputs do not share the same one-dimensional binning.
+    TypeError
+        For a histogram compared with an efficiency or a profile, or an
+        efficiency with a profile.
     ValueError
-        For an unknown ``kind`` or ``uncertainty``, or ``uncertainty="numerator"``
-        with a pull or a significance, which have no band.
+        For an unknown ``kind`` or ``uncertainty``, ``uncertainty="numerator"``
+        with a pull, an asymmetry or a significance, which have no band, and
+        for efficiencies and profiles as described above, or profiles of
+        different statistics.
     """
     if kind not in COMPARISON_KINDS:
         msg = f"kind must be one of {COMPARISON_KINDS}, got {kind!r}"
@@ -178,6 +204,8 @@ def compare(
     if uncertainty not in ("propagate", "numerator"):
         msg = f"uncertainty must be 'propagate' or 'numerator', got {uncertainty!r}"
         raise ValueError(msg)
+    if isinstance(numerator, Efficiency | Profile) or isinstance(reference, Efficiency | Profile):
+        return _compare_points(numerator, reference, kind=kind, uncertainty=uncertainty)
     if uncertainty == "numerator" and kind not in BAND_KINDS:
         msg = f"uncertainty='numerator' needs a reference band, which kind={kind!r} does not have"
         raise ValueError(msg)
@@ -196,6 +224,8 @@ def compare(
                 fields = _difference(num, ref, propagate=propagate)
             case "pull":
                 fields = _pull(num, ref)
+            case "asymmetry":
+                fields = _asymmetry(num, ref)
             case _:
                 fields = _significance(num, ref, kind)
     return Comparison(
@@ -306,6 +336,25 @@ def _pull(num: _Side, ref: _Side) -> dict[str, Any]:
     return {"values": values, "errors": np.where(np.isfinite(values), 1.0, np.nan)}
 
 
+def _asymmetry(num: _Side, ref: _Side) -> dict[str, Any]:
+    """``(n - d) / (n + d)`` with both sides propagated; ``nan`` where the sum is zero."""
+    n, d, vn, vd = num.values, ref.values, num.variances, ref.variances
+
+    def asymmetry(top: FloatArray, bottom: FloatArray) -> FloatArray:
+        total = top + bottom
+        return np.asarray(np.where(total != 0, (top - bottom) / total, np.nan))
+
+    values = asymmetry(n, d)
+    total = n + d
+    # d/dn = 2d / (n+d)^2, d/dd = -2n / (n+d)^2
+    errors = np.where(total != 0, 2 * np.sqrt(d**2 * vn + n**2 * vd) / total**2, np.nan)
+    return {
+        "values": values,
+        "errors": np.asarray(errors, dtype=float),
+        "syst_errors": _combined(values, _source_shifts(asymmetry, values, num, ref)),
+    }
+
+
 def _significance(signal: _Side, background: _Side, kind: ComparisonKind) -> dict[str, Any]:
     """Per-bin significance of ``signal`` over ``background``, statistical only.
 
@@ -372,3 +421,99 @@ def _combined(
     edges = np.arange(len(like) + 1, dtype=float)  # combined bin by bin: the edges do not enter
     summary = Uncertainty(edges=edges, nominal=like, stat=np.zeros_like(like), components=shifts)
     return summary.syst_down, summary.syst_up
+
+
+def _compare_points(
+    numerator: object, reference: object, *, kind: ComparisonKind, uncertainty: UncertaintyMode
+) -> Comparison:
+    """Compare two efficiencies or two profiles, their intervals independent."""
+    pair = (type(numerator).__name__, type(reference).__name__)
+    num: Efficiency | Profile
+    ref: Efficiency | Profile
+    if isinstance(numerator, Efficiency) and isinstance(reference, Efficiency):
+        num, ref = numerator, reference
+    elif isinstance(numerator, Profile) and isinstance(reference, Profile):
+        if numerator.statistic != reference.statistic:
+            msg = (
+                f"compare needs profiles of one statistic, got {numerator.statistic!r} and "
+                f"{reference.statistic!r}"
+            )
+            raise ValueError(msg)
+        num, ref = numerator, reference
+    else:
+        msg = f"compare takes two histograms, two efficiencies or two profiles, got {pair}"
+        raise TypeError(msg)
+    if kind in SIGNIFICANCE_KINDS:
+        msg = f"kind={kind!r} counts signal and background events; compare {pair} as a ratio"
+        raise ValueError(msg)
+    if uncertainty != "propagate":
+        msg = (
+            f"uncertainty={uncertainty!r} needs a reference band, which {pair} do not have: "
+            "their intervals are independent and always propagated"
+        )
+        raise ValueError(msg)
+    if not same_edges(num.edges, ref.edges):
+        msg = "compare requires two inputs with identical bin edges"
+        raise BinningError(msg)
+    a, b = num.values, ref.values
+    a_err, b_err = _intervals(num), _intervals(ref)
+    errors: FloatArray | _Errors
+    with np.errstate(divide="ignore", invalid="ignore"):
+        match kind:
+            case "ratio" | "relative_difference":
+                values = np.where(b != 0, a / b, np.nan)
+                errors = _propagated(1 / b, -a / b**2, a_err, b_err)
+                if kind == "relative_difference":
+                    values = values - 1.0
+            case "difference":
+                values = a - b
+                errors = _propagated(1.0, -1.0, a_err, b_err)
+            case "asymmetry":
+                total = a + b
+                values = np.where(total != 0, (a - b) / total, np.nan)
+                errors = _propagated(2 * b / total**2, -2 * a / total**2, a_err, b_err)
+            case _:  # pull
+                down, up = _propagated(1.0, -1.0, a_err, b_err)
+                sigma = np.where(a > b, down, up)  # the side of a - b facing zero
+                values = np.where(sigma > 0, (a - b) / sigma, np.nan)
+                errors = np.where(np.isfinite(values), 1.0, np.nan)
+    values = np.asarray(values, dtype=float)
+    if isinstance(errors, tuple):
+        undefined = ~np.isfinite(values)
+        errors = (np.where(undefined, np.nan, errors[0]), np.where(undefined, np.nan, errors[1]))
+    return Comparison(
+        kind=kind,
+        label=num.label,
+        reference=ref.label,
+        values=values,
+        errors=errors,
+        edges=np.asarray(num.edges, dtype=float),
+        reference_points=ref,
+    )
+
+
+def _intervals(points: Efficiency | Profile) -> _Errors:
+    """Return the ``(down, up)`` errors of an efficiency or a profile."""
+    if isinstance(points, Efficiency):
+        return points.errors
+    return points.errors, points.errors
+
+
+def _propagated(pa: Any, pb: Any, a_err: _Errors, b_err: _Errors) -> _Errors:
+    """First-order ``(down, up)`` errors of ``f(a, b)`` with partial derivatives ``pa`` and ``pb``.
+
+    ``f`` goes down with ``a`` where ``pa >= 0`` and up with it elsewhere, so its
+    lower error takes ``a``'s lower error there and ``a``'s upper error elsewhere;
+    the same for ``b``. The two sides are independent and add in quadrature.
+    """
+
+    def moved(partial: Any, err: _Errors) -> _Errors:
+        down, up = err
+        rising = np.asarray(partial) >= 0
+        return (
+            np.asarray(np.where(rising, partial * down, -partial * up), dtype=float),
+            np.asarray(np.where(rising, partial * up, -partial * down), dtype=float),
+        )
+
+    (a_down, a_up), (b_down, b_up) = moved(pa, a_err), moved(pb, b_err)
+    return np.hypot(a_down, b_down), np.hypot(a_up, b_up)

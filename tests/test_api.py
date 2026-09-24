@@ -1587,6 +1587,7 @@ class TestPublicSurface:
             "difference",
             "relative_difference",
             "pull",
+            "asymmetry",
             "s/sqrt(b)",
             "s/sqrt(s+b)",
         )
@@ -1721,6 +1722,75 @@ class TestEfficiencyProfileSignificance:
         assert p.profiles[0].values[1] == pytest.approx(met[n == 1].std())
         assert p.ax.get_ylabel() == "Std. dev. of E [GeV]"
         assert p.ax.get_xlim() == (0.0, 2.0)
+
+    def test_efficiency_panel(self, signal_file: Path, background_file: Path) -> None:
+        mc = rf.Sample(signal_file, tree="events", label="MC")
+        data = rf.Sample(background_file, tree="events", label="Data", is_data=True)
+        options: dict[str, Any] = {"passed": "Muon_isTight", "bins": (5, 0, 200), "unit": "GeV"}
+        p = rf.efficiency([data, mc], "Muon_pt", panel="ratio", **options)
+        assert p.panel_ax is not None
+        (scale_factor,) = p.comparisons  # data over simulation, whatever the order
+        assert (scale_factor.label, scale_factor.reference) == ("Data", "MC")
+        assert panel_ylabel(p) == "Data / MC"
+        eff_data, eff_mc = p.efficiencies
+        np.testing.assert_allclose(scale_factor.values, eff_data.values / eff_mc.values)
+        assert isinstance(scale_factor.errors, tuple)
+        assert p.panel_ax.get_xlabel() == "Muon_pt [GeV]"
+        assert p.ax.get_xlabel() == ""
+        named = rf.efficiency(
+            [data, mc], "Muon_pt", panel="difference", reference="Data", panel_label="D", **options
+        )
+        assert (named.comparisons[0].label, named.comparisons[0].reference) == ("MC", "Data")
+        assert panel_ylabel(named) == "D"
+        fig, (main, lower) = plt.subplots(2)
+        into = rf.efficiency([mc, data], "Muon_pt", panel="pull", ax=(main, lower), **options)
+        assert (into.ax, into.panel_ax) == (main, lower)
+        assert lower.get_ylabel() == "Pull"
+        options["bins"] = (5, 1, 200)
+        logx = rf.efficiency([mc, data], "Muon_pt", panel="ratio", logx=True, **options)
+        assert logx.panel_ax is not None
+        assert logx.panel_ax.get_xscale() == "log"
+        assert logx.panel_ax.get_xlim() == pytest.approx((1.0, 200.0))
+
+    def test_profile_panel(self, signal_file: Path, background_file: Path) -> None:
+        a = rf.Sample(signal_file, tree="events", label="A")
+        b = rf.Sample(background_file, tree="events", label="B")
+        p = rf.profile(
+            [a, b], "nMuon", "MET", bins=(3, -0.5, 2.5), panel="difference", panel_ylim=(-9, 9)
+        )
+        assert p.panel_ax is not None
+        assert p.panel_ax.get_ylim() == (-9.0, 9.0)
+        (difference,) = p.comparisons
+        assert (difference.label, difference.reference) == ("B", "A")
+        assert panel_ylabel(p) == "Difference to A"
+        first, second = p.profiles
+        np.testing.assert_allclose(difference.values, second.values - first.values)
+        assert rf.profile([a, b], "nMuon", "MET", bins=(3, -0.5, 2.5)).panel_ax is None
+
+    @pytest.mark.parametrize(
+        ("options", "match"),
+        [
+            ({"panel": "s/sqrt(b)"}, "count events"),
+            ({"panel": "bogus"}, "is not one of"),
+            ({"panel": "ratio", "reference": "X"}, "is not the label"),
+            ({"reference": "A"}, "choose the panel too"),
+        ],
+    )
+    def test_efficiency_and_profile_panels_refuse_before_drawing(
+        self, signal_file: Path, background_file: Path, options: dict[str, Any], match: str
+    ) -> None:
+        samples = [
+            rf.Sample(signal_file, tree="events", label="A"),
+            rf.Sample(background_file, tree="events", label="B"),
+        ]
+        before = plt.get_fignums()
+        with pytest.raises(ValueError, match=match):
+            rf.efficiency(samples, "MET", passed="nMuon >= 1", bins=(4, 0, 200), **options)
+        with pytest.raises(ValueError, match=match):
+            rf.profile(samples, "nMuon", "MET", bins=(3, -0.5, 2.5), **options)
+        with pytest.raises(ValueError, match="at least two"):
+            rf.profile(samples[:1], "nMuon", "MET", bins=(3, -0.5, 2.5), panel="ratio")
+        assert plt.get_fignums() == before
 
     def test_significance_panel(self, signal_file: Path, background_file: Path) -> None:
         sig = rf.Sample(signal_file, tree="events", label="S", scale=0.1)

@@ -26,7 +26,9 @@ from rootfig.errors import BinningError, RootfigWarning
 from rootfig.histograms import (
     Comparison,
     ComparisonKind,
+    Efficiency,
     Histogram,
+    Profile,
     compare,
     fill,
     summarize,
@@ -869,6 +871,44 @@ class TestPanel:
         draw_panel([against[0], compare(numerator, copied, uncertainty="numerator")], ax)
         plt.close(fig)
 
+    def test_points_references_must_agree_beyond_their_label(
+        self, mc_hists: list[Histogram]
+    ) -> None:
+        edges = np.array([0.0, 1.0, 2.0])
+
+        def eff(values: list[float], label: str = "MC") -> Efficiency:
+            return Efficiency(
+                values=np.array(values),
+                lower=np.array(values) - 0.1,
+                upper=np.array(values) + 0.05,
+                edges=edges,
+                label=label,
+            )
+
+        numerator, mc = eff([0.5, 0.6], "Data"), eff([0.4, 0.5])
+        fig, ax = plt.subplots()
+        # two references labelled "MC" that differ: not one reference to draw
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel([compare(numerator, mc), compare(numerator, eff([0.3, 0.5]))], ax)
+        # the same reference, or an equal copy of it: one reference
+        draw_panel([compare(numerator, mc), compare(eff([0.45, 0.6]), mc)], ax)
+        draw_panel([compare(numerator, mc), compare(numerator, eff([0.4, 0.5]))], ax)
+
+        def profile_(statistic: Any) -> Profile:
+            values = np.array([0.4, 0.5])
+            return Profile(values, values / 10, np.ones(2), edges, statistic=statistic)
+
+        std = Profile(np.ones(2), np.ones(2), np.ones(2), edges, statistic="std")
+        same = [compare(std, profile_("std")), compare(std, profile_("std"))]
+        draw_panel(same, ax)
+        with pytest.raises(ValueError, match="one reference"):  # a profile is not an efficiency
+            draw_panel([compare(numerator, mc), same[0]], ax)
+        # a histogram never stands for points with the same label (asymmetries: no band either)
+        histogram = compare(mc_hists[1], mc_hists[0].replace(label="MC"), kind="asymmetry")
+        with pytest.raises(ValueError, match="one reference"):
+            draw_panel([compare(numerator, mc, kind="asymmetry"), histogram], ax)
+        plt.close(fig)
+
     def test_category_references_must_list_the_same_categories(self) -> None:
         # a category axis reports numeric index edges, which say nothing about its categories
         def categories(names: str, value: float) -> Any:
@@ -975,6 +1015,8 @@ class TestPanel:
             ("difference", False, "Difference to MC"),
             ("pull", True, "Pull"),
             ("pull", False, "Pull"),
+            ("asymmetry", True, "(Data \N{MINUS SIGN} MC) / (Data + MC)"),
+            ("asymmetry", False, "Asymmetry to MC"),
             ("s/sqrt(b)", False, r"$S/\sqrt{B}$"),
             ("s/sqrt(s+b)", False, r"$S/\sqrt{S+B}$"),
         ],
@@ -1045,6 +1087,69 @@ class TestPanel:
         assert low == -high
         assert panel_ylim([comparison([-40.0, 30.0, 50.0], kind="pull")]) == (-5.0, 5.0)
         assert panel_ylim([comparison([np.nan], kind="pull")]) == (-3.0, 3.0)
+
+    def test_asymmetry_ylim_keeps_its_bounds_in_the_frame(self) -> None:
+        values = np.linspace(-0.2, 0.3, 100)
+        low, high = panel_ylim([comparison(values, kind="asymmetry")])
+        assert low == -high
+        assert high == pytest.approx(1.1 * np.percentile(values, 95))
+        # an empty side is -1 or 1: shown, never beyond
+        bounds = comparison([-1.0, 1.0, 1.0, -1.0], kind="asymmetry")
+        assert panel_ylim([bounds]) == pytest.approx((-1.1, 1.1))
+
+    def test_asymmetry_panel(self, mc_hists: list[Histogram]) -> None:
+        fig, rax = plt.subplots()
+        draw_panel([compare(mc_hists[1], mc_hists[0], kind="asymmetry")], rax)
+        assert rax.get_ylabel() == "Asymmetry to A"
+        assert rax.lines[0].get_ydata() == [0.0, 0.0]
+        assert rax.lines[0].get_linestyle() == "--"
+        assert not [c for c in rax.collections if isinstance(c, PolyCollection)]  # no band
+        plt.close(fig)
+
+
+def _off_scale(ax: Axes) -> dict[str, list[float]]:
+    """The x of the off-scale markers at the top (``^``) and bottom (``v``), once drawn."""
+    ax.figure.canvas.draw()
+    marked: dict[str, list[float]] = {"^": [], "v": []}
+    for line in ax.lines:
+        if line.get_marker() in marked and line.get_linestyle() == "None":
+            marked[str(line.get_marker())] += [float(x) for x in line.get_xdata()]
+    return marked
+
+
+class TestOffScaleMarkers:
+    def test_points_beyond_the_range_are_marked_at_their_edge(self) -> None:
+        fig, ax = plt.subplots()
+        values = [0.5, 1.0, 5.0, -2.0, np.nan]
+        draw_panel([comparison(values)], ax, ylim=(0.0, 2.0), colors=["red"])
+        assert _off_scale(ax) == {"^": [2.5], "v": [3.5]}
+        markers = [line for line in ax.lines if line.get_marker() in ("^", "v")]
+        assert {to_hex(line.get_color()) for line in markers} == {"#ff0000"}
+        assert not any(line.get_in_layout() for line in markers)
+        # clipped to the axes (a rectangular clip path becomes a clip box): x outside is hidden
+        assert all(line.get_clip_on() and line.get_clip_box() is not None for line in markers)
+        ax.set_ylim(-3.0, 6.0)  # the markers follow the range
+        assert _off_scale(ax) == {"^": [], "v": []}
+        ax.set_ylim(0.8, 1.2)
+        assert _off_scale(ax) == {"^": [2.5], "v": [0.5, 3.5]}
+        plt.close(fig)
+
+    def test_the_automatic_range_marks_what_it_leaves_out(self) -> None:
+        fig, ax = plt.subplots()
+        draw_panel([comparison([1.0, 1.1, 0.9, 1.0, 50.0])], ax)
+        assert ax.get_ylim()[1] == 3.0
+        assert _off_scale(ax) == {"^": [4.5], "v": []}
+        plt.close(fig)
+
+    def test_nothing_inside_the_range_and_no_pull_is_marked(
+        self, mc_hists: list[Histogram]
+    ) -> None:
+        fig, (ax, pull_ax) = plt.subplots(2)
+        draw_panel([compare(mc_hists[1], mc_hists[0])], ax, ylim=(-100.0, 100.0))
+        assert _off_scale(ax) == {"^": [], "v": []}
+        draw_panel([comparison([0.0, 9.0], kind="pull")], pull_ax)  # a bar ends at the edge
+        assert _off_scale(pull_ax) == {"^": [], "v": []}
+        plt.close(fig)
 
 
 class TestAnnotations:

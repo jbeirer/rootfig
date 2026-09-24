@@ -64,7 +64,6 @@ from rootfig.plotting import (
     finish_axes,
     finish_figure,
     fold_flow_bins,
-    foreground,
     label_flow_bins,
     legend_location,
     make_figure,
@@ -245,8 +244,9 @@ def plot(
         entries in the colour cycle.
     panel
         What a lower panel shows: ``"ratio"``, ``"relative_difference"``,
-        ``"difference"``, ``"pull"``, ``"s/sqrt(b)"`` or ``"s/sqrt(s+b)"``, each
-        defined in the plotting guide ("Lower panel"); ``None`` draws none.
+        ``"difference"``, ``"pull"``, ``"asymmetry"``, ``"s/sqrt(b)"`` or
+        ``"s/sqrt(s+b)"``, each defined in the plotting guide ("Lower panel");
+        ``None`` draws none. A point beyond the panel's range is marked at its edge.
     reference
         The label of the one histogram the panel compares with, the background
         of a significance: every other histogram, data included, is compared
@@ -700,7 +700,7 @@ def draw_plot(
                 draw_panel(
                     comparisons,
                     axis,
-                    colors=[color_of.get(id(h), h.color or foreground()) for h in plan.numerators],
+                    colors=[color_of[id(h)] for h in plan.numerators],  # all drawn
                     observed=plan.observed,
                     ylim=panel_ylim,
                     ylabel=plan.label if index == 0 else "",

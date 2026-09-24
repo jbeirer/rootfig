@@ -145,8 +145,8 @@ book.save_pdf("zh.pdf")  # rf.ALL in place of the list plots every histogram the
   `count(Jet_pt) >= 2` or `Muon_pt > 20`; event and object selections have
   explicit rules, and event weights carry through to each selected object.
 - **Compare samples with a few keywords.** Overlays, stacks, data points and a
-  lower panel (ratio, difference, relative difference, pull or significance,
-  against a reference you name) share binning and propagate histogram
+  lower panel (ratio, difference, relative difference, asymmetry, pull or
+  significance, against a reference you name) share binning and propagate histogram
   uncertainties; bin edges
   and `(n, low, high)` are used as given, while a range inferred from the data
   ignores far outliers, so `-999` sentinels do not set the axis. Normalise to
