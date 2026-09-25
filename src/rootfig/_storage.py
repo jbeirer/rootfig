@@ -27,7 +27,7 @@ _COUNT_STORAGES = (
 )
 
 
-def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
+def as_weight_storage(histogram: Hist, *, variances_from_contents: bool = False) -> Hist:
     """Return ``histogram`` with ``Weight`` storage (a copy if it had another storage).
 
     Plain count storages (``Double``, ``Int64``, ...) carry no sum of squared
@@ -35,8 +35,8 @@ def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
     counts (Poisson) for unweighted fills. Two cases leave no usable variances:
     after a weighted fill or arithmetic on such a storage ``hist`` reports none
     at all, and a count storage with negative contents reports negative ones
-    (the counts). Either is an error unless ``assume_poisson=True``, which uses
-    the absolute bin contents as variances (the Poisson guess; a
+    (the counts). Either is an error unless ``variances_from_contents=True``, which uses
+    the absolute bin contents as variances (a count's variance; a
     :class:`~rootfig.errors.RootfigWarning` says so). A ``Weight`` storage is
     returned as it is unless it reports negative variances, which get the same
     treatment.
@@ -46,7 +46,7 @@ def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
     TypeError
         If the storage is not a count or ``Weight`` storage (``Mean``, ...).
     ValueError
-        If the histogram has no usable variances and ``assume_poisson`` is False.
+        If the histogram has no usable variances and ``variances_from_contents`` is False.
     """
     if histogram.storage_type is hist.storage.Weight:
         weight_variances = np.asarray(histogram.variances(flow=True), dtype=float)
@@ -77,14 +77,14 @@ def as_weight_storage(histogram: Hist, *, assume_poisson: bool = False) -> Hist:
             reported = None
     values = np.asarray(histogram.values(flow=True), dtype=float)
     if reported is None:
-        if not assume_poisson:
+        if not variances_from_contents:
             msg = (
                 f"{what}. Fill it with hist.storage.Weight() to keep the uncertainties, or pass "
-                "assume_poisson=True to use the absolute bin contents as variances"
+                "variances_from_contents=True to use the absolute bin contents as variances"
             )
             raise ValueError(msg)
         warnings.warn(
-            f"{what}; using the absolute bin contents as variances (Poisson guess)",
+            f"{what}; using the absolute bin contents as variances",
             RootfigWarning,
             stacklevel=3,
         )

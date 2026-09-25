@@ -766,7 +766,8 @@ class TestPanelRoles:
             ({"panel": "bogus"}, "is not one of"),
             ({"panel": "pull", "panel_uncertainty": "numerator"}, "does not have"),
             ({"panel": "s/sqrt(b)", "panel_uncertainty": "propagate"}, "does not have"),
-            ({"panel": "ratio", "panel_uncertainty": "both"}, "'propagate' or 'numerator'"),
+            ({"panel": "ratio", "panel_uncertainty": "both"}, "'numerator' or 'poisson-ratio'"),
+            ({"panel": "difference", "panel_uncertainty": "poisson-ratio"}, "interval of a ratio"),
         ],
     )
     def test_bad_requests_raise_before_a_figure_exists(
@@ -900,12 +901,12 @@ class TestBrokenAxis:
 
 
 class TestPlotHistograms:
-    def test_lost_variances_need_assume_poisson(self) -> None:
+    def test_lost_variances_need_variances_from_contents(self) -> None:
         weighted = hist.Hist(hist.axis.Regular(2, 0, 2)).fill([0.5, 1.5], weight=[2.0, -1.0])
-        with pytest.raises(ValueError, match="assume_poisson=True"):
+        with pytest.raises(ValueError, match="variances_from_contents=True"):
             rf.plot([weighted])
-        with pytest.warns(RootfigWarning, match="Poisson guess"):
-            p = rf.plot([weighted], assume_poisson=True)
+        with pytest.warns(RootfigWarning, match="absolute bin contents as variances"):
+            p = rf.plot([weighted], variances_from_contents=True)
         np.testing.assert_allclose(p.histograms[0].variances(), [2.0, 1.0])
 
     def test_skipped_normalisation_keeps_events_label(self) -> None:
@@ -3435,3 +3436,108 @@ class TestDataErrors:
         with pytest.raises(ValueError, match="data_errors must be"):
             rf.plot([expected], observed=[counts], data_errors="garwood")  # type: ignore[arg-type]
         plt.close("all")
+
+
+ERROR_OPTIONS = Path(__file__).parent / "data" / "error_options.root"
+
+
+class TestStatisticalOptions:
+    """Confidence levels, ROOT's saved error options, shapes and Poisson ratios through the api."""
+
+    @staticmethod
+    def _counts(label: str = "Data", **options: Any) -> rf.Sample:
+        values = np.repeat([0.5, 1.5, 2.5, 3.5], [1, 4, 0, 9])
+        return rf.Sample({"x": values}, label=label, **options)
+
+    def test_data_errors_at_a_confidence_level(self) -> None:
+        mc = self._counts("MC")
+        p = rf.plot(mc, "x", bins=(4, 0, 4), observed=self._counts(is_data=True), data_errors=0.95)
+        data = p.histograms[-1]
+        assert data.poisson == 0.95
+        low, high = poisson_interval([1.0, 4.0, 0.0, 9.0], 0.95)
+        np.testing.assert_allclose(data.errors()[1], high - [1.0, 4.0, 0.0, 9.0])
+        p.close()
+        with pytest.raises(ValueError, match="confidence level between 0 and 1"):
+            rf.plot(mc, "x", bins=(4, 0, 4), observed=self._counts(is_data=True), data_errors=2.0)
+
+    def test_saved_error_options_are_the_default(self) -> None:
+        stored = rf.plot(ERROR_OPTIONS, "normal", observed=rf.Sample(ERROR_OPTIONS, label="D"))
+        assert not stored.histograms[-1].poisson  # kNormal
+        poisson2 = rf.Sample(ERROR_OPTIONS, label="Data")
+        kept = rf.plot(ERROR_OPTIONS, "poisson2", observed=poisson2)
+        assert kept.histograms[-1].poisson == 0.95  # kPoisson2
+        assert rf.plot(ERROR_OPTIONS, "poisson2", observed=poisson2, data_errors="poisson")
+        forced = rf.plot(ERROR_OPTIONS, "poisson2", observed=poisson2, data_errors="sumw2")
+        assert not forced.histograms[-1].poisson
+        # a histogram rootfig read from the file keeps it when given as an object
+        read = rf.io.FileSource(ERROR_OPTIONS).read_histogram("poisson")
+        assert rf.plot([read]).histograms[0].poisson is True
+        plt.close("all")
+
+    def test_shape_uncertainty(self) -> None:
+        p = rf.plot(
+            self._counts(), "x", bins=(4, 0, 4), normalize=True, normalize_uncertainty="shape"
+        )
+        fraction = np.array([1.0, 4.0, 0.0, 9.0]) / 14
+        np.testing.assert_allclose(p.histograms[0].variances(), fraction * (1 - fraction) / 14)
+        p.close()
+        with pytest.raises(ValueError, match="own total"):
+            rf.plot(self._counts(), "x", bins=(4, 0, 4), normalize_uncertainty="shape")
+        (shape,) = rf.histograms(
+            self._counts(), "x", bins=(4, 0, 4), normalize=True, normalize_uncertainty="shape"
+        )
+        np.testing.assert_allclose(shape.variances(), fraction * (1 - fraction) / 14)
+
+    def test_poisson_ratio_panel(self) -> None:
+        data = self._counts(is_data=True)
+        mc = rf.Sample({"x": np.repeat([0.5, 1.5, 2.5, 3.5], [2, 3, 1, 7])}, label="MC")
+        p = rf.plot(
+            mc, "x", bins=(4, 0, 4), observed=data, panel="ratio", panel_uncertainty="poisson-ratio"
+        )
+        (ratio,) = p.comparisons
+        assert ratio.uncertainty == "poisson-ratio"
+        expected = rf.compare(p.histograms[-1], p.histograms[0], uncertainty="poisson-ratio")
+        for got, want in zip(ratio.errors, expected.errors, strict=True):
+            np.testing.assert_allclose(got, want)
+        p.close()
+        figures = plt.get_fignums()
+        weighted = mc.replace(scale=0.5)
+        with pytest.raises(ValueError, match="holds no known counts"):
+            rf.plot(
+                weighted,
+                "x",
+                bins=(4, 0, 4),
+                observed=data,
+                panel="ratio",
+                panel_uncertainty="poisson-ratio",
+            )
+        assert plt.get_fignums() == figures  # refused before a figure exists
+
+    def test_efficiency_methods_levels_and_empty_bins(self) -> None:
+        x = np.array([0.5, 0.5, 0.5, 0.5])
+        sample = rf.Sample({"x": x, "ok": np.array([1, 1, 1, 0])}, label="S")
+        p = rf.efficiency(
+            sample,
+            "x",
+            passed="ok == 1",
+            bins=(2, 0, 2),
+            interval=rf.Bayesian(1, 1),
+            cl=0.95,
+            show_empty=True,
+        )
+        (eff,) = p.efficiencies
+        assert eff.values[0] == pytest.approx(4 / 6)  # posterior mean of 3 of 4, Beta(1, 1)
+        assert eff.values[1] == 0.5  # the empty bin shows the prior
+        from scipy.special import betaincinv
+
+        np.testing.assert_allclose(eff.lower[0], betaincinv(4, 2, 0.025))
+        p.close()
+        table = rf.cutflow(sample, ["ok == 1"], interval="mid-p", cl=0.95)
+        assert table.get("S").cl == 0.95
+
+
+def test_a_confidence_level_replaces_a_saved_one() -> None:
+    kept = rf.Sample(ERROR_OPTIONS, label="Data")
+    p = rf.plot(ERROR_OPTIONS, "poisson", observed=kept, data_errors=0.9)
+    assert p.histograms[-1].poisson == 0.9  # the counts are known: any level
+    p.close()

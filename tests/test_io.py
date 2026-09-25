@@ -6,12 +6,21 @@ from pathlib import Path
 from typing import Any
 
 import awkward as ak
+import hist
 import numpy as np
 import pytest
 import uproot
 
 from rootfig.errors import BinningError, RootfigWarning, SourceError
-from rootfig.io import ArraySource, FileSource, ReadCache, Source, as_source, resolve_files
+from rootfig.io import (
+    ArraySource,
+    FileSource,
+    ReadCache,
+    Source,
+    as_source,
+    resolve_files,
+    stored_error_option,
+)
 
 
 class TestResolveFiles:
@@ -731,11 +740,11 @@ class TestStoredHistograms:
     def test_negative_contents_without_sumw2(self, stored_dir: Path) -> None:
         source = FileSource(stored_dir / "negative.root")
         with pytest.raises(
-            SourceError, match=r"negative\.root.*negative bin contents.*assume_poisson"
+            SourceError, match=r"negative\.root.*negative bin contents.*variances_from_contents"
         ):
             source.read_histogram("mz")
-        with pytest.warns(RootfigWarning, match="Poisson guess"):
-            h = source.read_histogram("mz", assume_poisson=True)
+        with pytest.warns(RootfigWarning, match="absolute bin contents as variances"):
+            h = source.read_histogram("mz", variances_from_contents=True)
         assert (h.variances() >= 0).all()
         np.testing.assert_array_equal(h.variances(), np.abs(h.values()))
         # a partner file cannot hide the problem in a sum either
@@ -888,7 +897,7 @@ class TestBatchReads:
         assert calls[-1] == ["cutflow"]
         cache.histograms(source, ["mz", "cutflow"])  # everything held: nothing is read
         assert len(calls) == 2
-        cache.histogram(source, "mz", assume_poisson=True)  # another key
+        cache.histogram(source, "mz", variances_from_contents=True)  # another key
         assert len(calls) == 3
         assert h.values(flow=True).sum() == pytest.approx(0.5 * 2000)
 
@@ -1156,3 +1165,14 @@ class TestBranchFormFailures:
         self._failing_interpretation(monkeypatch, "y", RuntimeError("broken streamer"))
         with pytest.raises(RuntimeError, match="broken streamer"):
             FileSource(path, tree="events").branch_forms()
+
+
+def test_stored_error_options_are_read() -> None:
+    source = FileSource(DATA / "error_options.root")
+    options = {
+        name: stored_error_option(source.read_histogram(name))
+        for name in ("normal", "poisson", "poisson2")
+    }
+    assert options == {"normal": "normal", "poisson": "poisson", "poisson2": "poisson2"}
+    assert stored_error_option(source.read_histogram("poisson").copy() * 2.0) == "poisson"
+    assert stored_error_option(hist.Hist(hist.axis.Regular(1, 0, 1))) == "normal"

@@ -369,7 +369,7 @@ def build_histograms(
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
     cache: ReadCache | None = None,
 ) -> list[Histogram]:
     """Fill one 1D histogram per sample or group, with a binning shared by all of them.
@@ -383,7 +383,7 @@ def build_histograms(
 
     A bare variable name that addresses a histogram stored in the samples'
     files (see :func:`~rootfig.histograms.stored_mode`) is read instead of
-    filled; ``assume_poisson`` then accepts stored histograms without a sum of
+    filled; ``variances_from_contents`` then accepts stored histograms without a sum of
     squared weights.
 
     A ``cache`` (:class:`~rootfig.io.ReadCache`) serves the branch arrays and
@@ -401,7 +401,7 @@ def build_histograms(
             lumi=lumi,
             nonfinite=nonfinite,
             systematics=systematics,
-            assume_poisson=assume_poisson,
+            variances_from_contents=variances_from_contents,
             cache=cache,
         )
         return regroup_histograms(items, stored)
@@ -696,7 +696,7 @@ def build_histograms_2d(
     weight: str | None = None,
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
 ) -> list[Histogram]:
     """Fill one 2D histogram per sample; ``x`` and ``y`` must share their structure.
 
@@ -717,7 +717,7 @@ def build_histograms_2d(
             weight=weight,
             lumi=lumi,
             nonfinite=nonfinite,
-            assume_poisson=assume_poisson,
+            variances_from_contents=variances_from_contents,
             include_systematics=False,
         )
     if y is None:

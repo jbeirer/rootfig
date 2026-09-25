@@ -11,6 +11,7 @@ import numpy as np
 from rootfig.api._common import style_for
 from rootfig.api._panel import PanelPlan, resolve_points
 from rootfig.histograms import (
+    ONE_SIGMA,
     Comparison,
     ComparisonKind,
     Efficiency,
@@ -89,8 +90,9 @@ def efficiency(
     style: StyleLike = None,
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
-    z: float = 1.0,
+    cl: float = ONE_SIGMA,
     interval: EfficiencyInterval = "auto",
+    show_empty: bool = False,
     nonfinite: NonFinitePolicy = "drop",
     save: str | None = None,
 ) -> Plot:
@@ -99,18 +101,24 @@ def efficiency(
     For every sample two histograms are filled with the same binning, all
     entries satisfying ``selection`` (the denominator) and those also
     satisfying ``passed`` (the numerator); the ratio is drawn as points with
-    confidence intervals of ``z`` standard deviations. ``interval="auto"``
-    gives what ROOT's ``TEfficiency`` gives: Clopper-Pearson for unweighted
-    entries, the normal approximation for weighted ones. The sample's
-    ``scale`` and luminosity factor cancel in an efficiency and are left out,
-    so an unweighted sample stays unweighted. ``"clopper-pearson"``,
-    ``"normal"`` and ``"wilson"`` choose one, as in ROOT (Clopper-Pearson and
-    Wilson for unweighted entries only), and ``"wilson-effective"`` is the Wilson
-    interval of the effective entries for weighted samples (see
+    confidence intervals of confidence level ``cl`` (one standard deviation,
+    68.27 %, by default, as ROOT's). ``interval="auto"`` gives what ROOT's
+    ``TEfficiency`` gives: Clopper-Pearson for unweighted entries, the normal
+    approximation for weighted ones. The sample's ``scale`` and luminosity
+    factor cancel in an efficiency and are left out, so an unweighted sample
+    stays unweighted. ``interval`` names any of ROOT's methods, as ROOT means
+    them: ``"clopper-pearson"``, ``"normal"``, ``"wilson"``,
+    ``"agresti-coull"``, ``"feldman-cousins"`` and ``"mid-p"`` (all but the
+    normal approximation for unweighted entries only), the Bayesian
+    ``"jeffreys"`` and ``"uniform"`` or any ``rf.Bayesian(alpha, beta, mode=,
+    shortest=)`` prior (weighted entries too; the efficiency is then the
+    posterior's mean or mode), and ``"wilson-effective"``, the Wilson interval
+    of the effective entries for weighted samples (see
     :data:`~rootfig.histograms.binomial.EfficiencyInterval`). A binomial
     interval (any but the normal approximation) is not drawn, with a warning, for
     a bin that an entry with a negative weight falls into, which keeps its
-    efficiency.
+    efficiency. Empty bins are left out; ``show_empty=True`` draws them as
+    ROOT's ``"e0"`` does (0 in ``[0, 1]``, or the prior for a Bayesian interval).
     The :class:`~rootfig.histograms.Efficiency`
     objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a
     ``range`` infers one robustly, shared by numerator and denominator (see
@@ -154,10 +162,11 @@ def efficiency(
         efficiency_of(
             h,
             fill([axis], t),
-            z=z,
+            cl=cl,
             label=sample.label,
             negative_weights=negative_bins(axis, t),  # which the sums cannot always tell
             interval=interval,
+            show_empty=show_empty,
         )
         for h, t, sample in zip(pass_hists, totals, samples, strict=True)
     ]

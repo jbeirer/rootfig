@@ -11,10 +11,11 @@ from rootfig.expressions import parse
 from rootfig.histograms.binomial import (
     EfficiencyInterval,
     check_interval,
-    efficiency_bounds,
+    efficiency_interval,
     is_unweighted,
     resolve_interval,
 )
+from rootfig.histograms.intervals import ONE_SIGMA, check_cl
 from rootfig.histograms.pipeline import combined_weight, read_arrays
 from rootfig.model.cuts import Cut, CutLike, as_cut
 from rootfig.model.samples import Sample
@@ -73,16 +74,30 @@ class Cutflow:
     unweighted), else the normal approximation. A cut that removes every
     weighted event therefore makes the later relative efficiencies
     Clopper-Pearson, while those measured against the first step stay normal.
+    ``cl`` is the confidence level of the intervals. Bayesian intervals are
+    refused: they report the posterior's mean or mode as the efficiency, where a
+    cut flow reports the ratio of its yields.
     """
 
     sample: str
     steps: tuple[CutflowStep, ...]
     interval: EfficiencyInterval = "auto"
+    cl: float = ONE_SIGMA
 
     def __post_init__(self) -> None:
         check_interval(self.interval)
-        if self.interval != "auto":  # methods of counts need unweighted events in every step
-            resolve_interval(self.interval, bool(self._unweighted().all()), self.sample)
+        check_cl(self.cl)
+        if self.interval == "auto":
+            return
+        # methods of counts need unweighted events in every step
+        method = resolve_interval(self.interval, bool(self._unweighted().all()), self.sample)
+        if not isinstance(method, str):
+            msg = (
+                f"{self.sample}: a Bayesian interval reports the posterior's mean or mode as the "
+                "efficiency, and a cut flow reports the ratio of its yields; use rf.efficiency "
+                "for Bayesian intervals, or a frequentist one here"
+            )
+            raise ValueError(msg)
 
     @property
     def labels(self) -> list[str]:
@@ -157,16 +172,18 @@ class Cutflow:
     def _errors(self, index: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Errors of ``values``, each step measured against the step ``index`` names."""
         w, w2 = self._sums()
+        sums = (w, w[index], w2, w2[index])
         if self.interval == "auto":  # per pair of steps, as TEfficiency decides per two histograms
             unweighted = self._unweighted()
             counts = unweighted & unweighted[index]
-            clopper = efficiency_bounds("clopper-pearson", w, w[index], w2, w2[index])
-            normal = efficiency_bounds("normal", w, w[index], w2, w2[index])
+            _, *clopper = efficiency_interval("clopper-pearson", *sums, cl=self.cl)
+            _, *normal = efficiency_interval("normal", *sums, cl=self.cl)
             lower, upper = (np.where(counts, *pair) for pair in zip(clopper, normal, strict=True))
             binomial = counts
         else:
-            lower, upper = efficiency_bounds(self.interval, w, w[index], w2, w2[index])
-            binomial = np.full(len(self.steps), self.interval != "normal")
+            method = resolve_interval(self.interval, bool(self._unweighted().all()))
+            _, lower, upper = efficiency_interval(method, *sums, cl=self.cl, weighted=True)
+            binomial = np.full(len(self.steps), method != "normal")
         negative = np.array([step.negative_weights for step in self.steps])[index]
         signed = negative & binomial  # binomial intervals need non-negative weights
         down = np.where(signed, np.nan, values - lower)
@@ -245,6 +262,7 @@ def cutflow(
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
     interval: EfficiencyInterval = "auto",
+    cl: float = ONE_SIGMA,
 ) -> Cutflow:
     """Apply ``cuts`` one after another to ``sample`` and count events and yields.
 
@@ -259,9 +277,11 @@ def cutflow(
     ``"auto"`` is Clopper-Pearson for an efficiency between two steps whose sums
     of event weights equal their sums of squared weights (weights of 1, or 0 and
     1), before the sample's scale and luminosity factor, which cancel in an
-    efficiency, and the normal approximation otherwise.
+    efficiency, and the normal approximation otherwise; ``cl`` is their
+    confidence level.
     """
     check_interval(interval)
+    check_cl(cl)
     steps: list[Cut] = []
     for item in cuts:
         cut = as_cut(item)
@@ -303,4 +323,4 @@ def cutflow(
     for cut in steps:
         passing &= event_mask(cut.expression, arrays, length=n_events)
         result.append(step(cut.label or cut.expression, cut.expression))
-    return Cutflow(sample=sample.label, steps=tuple(result), interval=interval)
+    return Cutflow(sample=sample.label, steps=tuple(result), interval=interval, cl=cl)

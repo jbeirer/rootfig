@@ -31,6 +31,7 @@ from rootfig.histograms import (
     DataErrors,
     Histogram,
     NormalizeSpec,
+    NormalizeUncertainty,
     ReadPlan,
     UncertaintyMode,
     build_histograms,
@@ -128,6 +129,7 @@ def plot(
     unit: str | None = None,
     title: str | None = None,
     normalize: NormalizeSpec = None,
+    normalize_uncertainty: NormalizeUncertainty = "scale",
     stack: StackSpec = False,
     panel: ComparisonKind | None = None,
     reference: str | None = None,
@@ -151,7 +153,7 @@ def plot(
     ax: AxesLike = None,
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
     save: str | None = None,
 ) -> Plot:
     """Histogram a variable from one or more samples and draw it.
@@ -235,6 +237,13 @@ def plot(
         bin width) or a number to normalise to. With any stacked histograms,
         only ``None``, ``False`` and ``"width"`` are allowed: normalising each
         component separately would not give a normalised total.
+    normalize_uncertainty
+        What normalising to a histogram's own total (``True``, ``"unity"``,
+        ``"density"``, a number) does to its statistical uncertainty:
+        ``"scale"`` keeps every bin's relative uncertainty, as ``TH1::Scale``;
+        ``"shape"`` lets the total fluctuate with the bins (the uncertainty of
+        a shape: a binomial fraction, Clopper-Pearson for counts; see
+        :data:`~rootfig.histograms.normalize.NormalizeUncertainty`).
     stack
         ``True`` stacks every non-data histogram, ``False`` or ``[]`` overlays
         all. A legend label or sequence of labels stacks every histogram carrying
@@ -264,7 +273,11 @@ def plot(
         relative difference or difference (``"propagate"``, or ``"numerator"``
         with the reference's uncertainty as a band; by default each numerator
         uses ``"numerator"`` for data over simulation and ``"propagate"``
-        otherwise, so shared systematic sources cancel). The label is shrunk,
+        otherwise, so shared systematic sources cancel). ``"poisson-ratio"``
+        takes the exact interval of the ratio of two Poisson means for a ratio
+        of counts, as ROOT's ``TGraphAsymmErrors::Divide(..., "pois")``: every
+        compared histogram must hold known counts (see
+        :meth:`~rootfig.histograms.Histogram.counts`). The label is shrunk,
         and if needed wrapped onto two lines, to fit the short panel; pass a
         shorter ``panel_label`` (``"Ratio"``) to keep it at full size.
     logx, logy
@@ -282,12 +295,16 @@ def plot(
         histograms. ``None`` draws them only for ``"errorbar"`` histtypes.
     data_errors
         The statistical uncertainty of observed data, in the main and the lower
-        panel alike. ``None`` (default) is ROOT's ``TH1`` default, ``sqrt(sum of
-        squared weights)`` (``sqrt(N)`` for counts), unless a histogram object
-        carries ``poisson=True``; ``"sumw2"`` forces it for every data
-        histogram. ``"poisson"`` is ROOT's ``TH1::kPoisson``, the Garwood 68 %
-        interval of the counts, asymmetric and with an upper error for an empty
-        bin; it refuses anything but unit-weight counts (every bin a whole
+        panel alike. ``None`` (default) keeps each histogram's own: ROOT's
+        ``TH1`` default, ``sqrt(sum of squared weights)`` (``sqrt(N)`` for
+        counts), unless it carries a Poisson interval or errors of its own (a
+        histogram object with ``poisson=`` or ``stat_errors=``, a stored ``TH1``
+        saved with ``kPoisson``/``kPoisson2``); ``"sumw2"`` forces ``sqrt(sum of
+        squared weights)`` on every data histogram. ``"poisson"`` is ROOT's
+        ``TH1::kPoisson``, the Garwood 68 % interval of the counts, asymmetric
+        and with an upper error for an empty bin; a confidence level such as
+        ``0.95`` (ROOT's ``TH1::kPoisson2``) is the Garwood interval at that
+        level. Both refuse anything but unit-weight counts (every bin a whole
         number equal to its variance, before any normalisation). ``"auto"`` is
         Poisson for unit-weight counts and ``sqrt(sum of squared weights)``
         otherwise.
@@ -328,7 +345,7 @@ def plot(
         independent and added in quadrature;
         ``Plot.uncertainty()`` returns the components. Histogram objects carry
         theirs in :attr:`~rootfig.histograms.Histogram.variations`.
-    assume_poisson
+    variances_from_contents
         Accept a histogram (stored or object) with a plain count storage that
         was filled with weights or rescaled, so ``hist`` reports no variances:
         the absolute bin contents are used instead (a warning says so). Fill
@@ -356,13 +373,14 @@ def plot(
         unit=unit,
         nonfinite=nonfinite,
         systematics=systematics,
-        assume_poisson=assume_poisson,
+        variances_from_contents=variances_from_contents,
     )
     return draw_plot(
         prepared,
         ylabel=ylabel,
         title=title,
         normalize=normalize,
+        normalize_uncertainty=normalize_uncertainty,
         stack=stack,
         panel=panel,
         reference=reference,
@@ -404,7 +422,7 @@ def prepare_plot(
     unit: str | None = None,
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
     cache: ReadCache | None = None,
 ) -> PreparedPlot:
     """Read or fill the histograms :func:`plot` draws; see there for the options.
@@ -430,13 +448,15 @@ def prepare_plot(
             if variable is None
             else as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
         )
-        hists = wrap_histograms(objects, label, assume_poisson=assume_poisson)
+        hists = wrap_histograms(objects, label, variances_from_contents=variances_from_contents)
         if observed is not None:
             observed_objects = histogram_objects(observed)
             if observed_objects is None:
                 msg = "observed= must be histogram objects when data are histogram objects"
                 raise TypeError(msg)
-            hists += wrap_histograms(observed_objects, assume_poisson=assume_poisson, is_data=True)
+            hists += wrap_histograms(
+                observed_objects, variances_from_contents=variances_from_contents, is_data=True
+            )
         require_dimension(hists, 1, "plot")
         hists = rebin_ready_made(
             hists,
@@ -457,7 +477,7 @@ def prepare_plot(
             lumi=lumi,
             nonfinite=nonfinite,
             systematics=systematics,
-            assume_poisson=assume_poisson,
+            variances_from_contents=variances_from_contents,
             cache=cache,
         )
     return PreparedPlot(hists, var, xlabel=xlabel, unit=unit, lumi=lumi)
@@ -484,7 +504,7 @@ def prefetch_plots(
 
     Each entry of ``options`` is a set of :func:`prepare_plot` keywords to read
     for; those deciding what is read (``tree``, ``label``, ``observed``,
-    ``weight``, ``systematics``, ``assume_poisson``) are used, the others are
+    ``weight``, ``systematics``, ``variances_from_contents``) are used, the others are
     accepted and ignored. All of them are planned before anything is read, so
     sets needing different branches, such as two variants with different
     weights, cost one pass over each file rather than one each.
@@ -513,7 +533,7 @@ def prefetch_plots(
                 selections=selections,
                 weight=option_set.get("weight"),
                 systematics=option_set.get("systematics"),
-                assume_poisson=bool(option_set.get("assume_poisson", False)),
+                variances_from_contents=bool(option_set.get("variances_from_contents", False)),
             )
     plan.read()
 
@@ -524,6 +544,7 @@ def draw_plot(
     ylabel: str | None = None,
     title: str | None = None,
     normalize: NormalizeSpec = None,
+    normalize_uncertainty: NormalizeUncertainty = "scale",
     stack: StackSpec = False,
     panel: ComparisonKind | None = None,
     reference: str | None = None,
@@ -588,7 +609,13 @@ def draw_plot(
         raise ValueError(msg)
     histograms_ = with_data_errors(histograms_, data_errors)
     if normalize is not None and normalize is not False:
-        histograms_ = [normalize_for_plot(h, normalize) for h in histograms_]
+        histograms_ = [normalize_for_plot(h, normalize, normalize_uncertainty) for h in histograms_]
+    elif normalize_uncertainty != "scale":
+        msg = (
+            f"normalize_uncertainty={normalize_uncertainty!r} needs a normalisation to the "
+            "histogram's own total: normalize=True, 'unity', 'density' or a number"
+        )
+        raise ValueError(msg)
     resolved_style = style_for(style, text, prepared.lumi)
     if legend is not None:
         resolved_style = resolved_style.replace(legend=legend)

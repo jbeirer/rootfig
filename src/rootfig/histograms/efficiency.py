@@ -11,14 +11,15 @@ import numpy.typing as npt
 
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning
+from rootfig.histograms.bayesian import Bayesian, bayesian_interval
 from rootfig.histograms.binomial import (
     EfficiencyInterval,
-    efficiency_bounds,
+    efficiency_interval,
     is_unweighted,
     resolve_interval,
 )
 from rootfig.histograms.build import compatible_binning
-from rootfig.histograms.intervals import check_z
+from rootfig.histograms.intervals import ONE_SIGMA, check_cl
 
 __all__ = ["Efficiency", "Profile", "ProfileStatistic", "efficiency", "profile"]
 
@@ -33,13 +34,14 @@ class Efficiency:
     Attributes
     ----------
     values
-        The efficiency ``passed / total``; ``nan`` where the total weight is zero
-        (an empty bin, or weights that cancel).
+        The efficiency ``passed / total``, or the posterior's mean or mode for a
+        Bayesian interval (as ROOT's ``TEfficiency``); ``nan`` where the total
+        weight is zero (an empty bin, or weights that cancel) unless empty bins
+        are shown (see :func:`efficiency`).
     lower, upper
-        Bounds of the confidence interval (``z`` standard deviations; ``z = 1``
-        is the usual 68 % band; see :func:`efficiency` for the method). The
-        interval always contains the value; it is ``nan`` where none is defined
-        (see :func:`efficiency`) while the ratio itself is still reported.
+        Bounds of the confidence interval (see :func:`efficiency` for the
+        method and confidence level). It is ``nan`` where none is defined (see
+        :func:`efficiency`) while the ratio itself is still reported.
     edges
         Bin edges.
     label
@@ -64,23 +66,29 @@ class Efficiency:
 
     @property
     def errors(self) -> tuple[FloatArray, FloatArray]:
-        """``(values - lower, upper - values)``, ready for ``yerr``."""
-        return (
-            np.asarray(self.values - self.lower, dtype=float),
-            np.asarray(self.upper - self.values, dtype=float),
-        )
+        """``(values - lower, upper - values)``, ready for ``yerr``.
+
+        Never negative: a posterior's mode can lie outside its central interval,
+        which then reaches only one way.
+        """
+        with np.errstate(invalid="ignore"):
+            return (
+                np.asarray(np.maximum(self.values - self.lower, 0.0), dtype=float),
+                np.asarray(np.maximum(self.upper - self.values, 0.0), dtype=float),
+            )
 
 
 def efficiency(
     passed: Hist,
     total: Hist,
     *,
-    z: float = 1.0,
+    cl: float = ONE_SIGMA,
     label: str = "",
     negative_weights: npt.ArrayLike | None = None,
     interval: EfficiencyInterval = "auto",
+    show_empty: bool = False,
 ) -> Efficiency:
-    """Compute ``passed / total`` per bin with a confidence interval.
+    """Compute ``passed / total`` per bin with a confidence interval of confidence level ``cl``.
 
     Both histograms must share their binning; ``passed`` should be a subset of
     ``total``. ``interval`` (see
@@ -88,7 +96,13 @@ def efficiency(
     ROOT's ``TEfficiency`` gives: Clopper-Pearson when both histograms are
     unweighted (their sum of weights equals their sum of squared weights, as
     ROOT decides), else the normal approximation of a weighted pass fraction.
-    The interval is clipped to ``[0, 1]`` and always contains the efficiency.
+    The interval is clipped to ``[0, 1]``. A :class:`~rootfig.histograms.bayesian.Bayesian`
+    interval (``"jeffreys"``, ``"uniform"`` or any prior) reports the posterior's
+    mean or mode as the efficiency, as ``TEfficiency`` does.
+
+    An empty bin has no efficiency; ``show_empty=True`` shows it as ROOT's
+    ``TGraphAsymmErrors::Divide`` does with ``"e0"``: 0 in ``[0, 1]``, or the
+    prior's mean and interval for a Bayesian interval.
 
     The intervals other than ``"normal"`` are binomial, so they need
     non-negative weights. A bin gets ``nan`` bounds from them and a
@@ -110,13 +124,14 @@ def efficiency(
     BinningError
         If the binnings differ.
     ValueError
-        If ``z`` is not a positive finite number, for an unknown ``interval``,
-        or ``"clopper-pearson"`` or ``"wilson"`` for weighted histograms.
+        If ``cl`` is not a confidence level between 0 and 1, for an unknown
+        ``interval``, or a method of counts (Clopper-Pearson, Wilson,
+        Agresti-Coull, Feldman-Cousins, mid-P) for weighted histograms.
     """
     if not compatible_binning(passed, total):
         msg = "efficiency requires two one-dimensional histograms with identical bin edges"
         raise BinningError(msg)
-    check_z(z)
+    check_cl(cl)
     k = np.asarray(passed.values(), dtype=float)
     n = np.asarray(total.values(), dtype=float)
     vk = np.asarray(passed.variances(), dtype=float)
@@ -125,8 +140,8 @@ def efficiency(
     method = resolve_interval(interval, unweighted, label)
     ok = n != 0
     with np.errstate(divide="ignore", invalid="ignore"):
-        p = np.where(ok, k / n, np.nan)
-    lower, upper = efficiency_bounds(method, k, n, vk, vn, z=z)
+        ratio = np.where(ok, k / n, np.nan)
+    p, lower, upper = efficiency_interval(method, k, n, vk, vn, cl=cl, weighted=not unweighted)
     if method == "normal":
         problem = (
             "a negative total, an efficiency outside [0, 1] or a passed variance too large "
@@ -141,13 +156,27 @@ def efficiency(
         if negative_weights is not None:
             signed |= np.asarray(negative_weights, dtype=bool)
         lower, upper = np.where(signed, np.nan, lower), np.where(signed, np.nan, upper)
+        # no posterior where weights are signed: the plain ratio, as for the other methods
+        p = np.where(signed | np.isnan(p), ratio, p)
     undefined = int(np.count_nonzero(ok & np.isnan(lower)))
     if undefined:
+        name = "Bayesian" if isinstance(method, Bayesian) else method
         warnings.warn(
             f"{label + ': ' if label else ''}{undefined} bin(s) hold {problem}; no "
-            f"{method} confidence interval is drawn for them",
+            f"{name} confidence interval is drawn for them",
             RootfigWarning,
             stacklevel=2,
+        )
+    p, lower, upper = (np.where(ok, a, np.nan) for a in (p, lower, upper))
+    if show_empty and not ok.all():
+        empty = ~ok
+        if isinstance(method, Bayesian):  # the prior: the posterior of no entries
+            prior = bayesian_interval(method, np.zeros(1), np.zeros(1), cl=cl)
+            fill = [float(side[0]) for side in prior]
+        else:
+            fill = [0.0, 0.0, 1.0]
+        p, lower, upper = (
+            np.where(empty, f, a) for f, a in zip(fill, (p, lower, upper), strict=True)
         )
     return Efficiency(
         values=np.asarray(p, dtype=float),

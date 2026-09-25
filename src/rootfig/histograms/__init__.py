@@ -1,5 +1,6 @@
 """Histogram construction, normalisation, comparisons and statistics."""
 
+from rootfig.histograms.bayesian import Bayesian
 from rootfig.histograms.binomial import EfficiencyInterval
 from rootfig.histograms.build import (
     Histogram,
@@ -19,12 +20,16 @@ from rootfig.histograms.comparison import (
 from rootfig.histograms.cutflow import Cutflow, CutflowStep, CutflowTable, cutflow
 from rootfig.histograms.efficiency import Efficiency, Profile, ProfileStatistic, efficiency, profile
 from rootfig.histograms.intervals import (
+    ONE_SIGMA,
     DataErrors,
+    check_cl,
     poisson_interval,
 )
 from rootfig.histograms.normalize import (
     NormalizeSpec,
+    NormalizeUncertainty,
     normalize,
+    shape_covariance,
 )
 from rootfig.histograms.pipeline import (
     build_histograms,
@@ -36,11 +41,19 @@ from rootfig.histograms.pipeline import (
 )
 from rootfig.histograms.prefetch import ReadPlan, prefetch
 from rootfig.histograms.stats import Summary, correlation_matrix, describe_table, summarize
-from rootfig.histograms.stored import describe_axes, read_stored, stored_mode, stored_names
+from rootfig.histograms.stored import (
+    describe_axes,
+    read_stored,
+    stored_mode,
+    stored_names,
+    with_saved_errors,
+)
 from rootfig.histograms.systematics import Uncertainty, sum_histograms, uncertainty
 
 __all__ = [
     "COMPARISON_KINDS",
+    "ONE_SIGMA",
+    "Bayesian",
     "Comparison",
     "ComparisonKind",
     "Cutflow",
@@ -51,6 +64,7 @@ __all__ = [
     "EfficiencyInterval",
     "Histogram",
     "NormalizeSpec",
+    "NormalizeUncertainty",
     "Profile",
     "ProfileStatistic",
     "ReadPlan",
@@ -60,6 +74,7 @@ __all__ = [
     "as_weight_storage",
     "build_histograms",
     "build_histograms_2d",
+    "check_cl",
     "combined_selection",
     "compare",
     "compatible_binning",
@@ -79,9 +94,11 @@ __all__ = [
     "profile",
     "read_arrays",
     "read_stored",
+    "shape_covariance",
     "stored_mode",
     "stored_names",
     "sum_histograms",
     "summarize",
     "uncertainty",
+    "with_saved_errors",
 ]

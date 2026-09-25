@@ -10,9 +10,18 @@ import numpy as np
 
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning, SystematicError
-from rootfig.histograms.build import Histogram, as_weight_storage
+from rootfig.histograms.build import Histogram, _error_sides, as_weight_storage
+from rootfig.histograms.intervals import count_scale
+from rootfig.histograms.shape import shape_bounds, shape_covariance_matrix, shape_variances
 
-__all__ = ["NormalizeSpec", "normalization_label", "normalize", "normalize_hist"]
+__all__ = [
+    "NormalizeSpec",
+    "NormalizeUncertainty",
+    "normalization_label",
+    "normalize",
+    "normalize_hist",
+    "shape_covariance",
+]
 
 NormalizeSpec: TypeAlias = bool | Literal["unity", "density", "width"] | float | int | None
 """How to normalise a histogram.
@@ -23,6 +32,20 @@ NormalizeSpec: TypeAlias = bool | Literal["unity", "density", "width"] | float |
   (contents divided by bin width and total).
 * ``"width"`` - divide each bin by its width (``Events / GeV``), no rescaling.
 * a number - scale so the visible bins sum to that number.
+"""
+
+
+NormalizeUncertainty: TypeAlias = Literal["scale", "shape"]
+"""What normalising to a histogram's own total does to its statistical uncertainty.
+
+* ``"scale"`` - the factor is taken as a constant, as ``TH1::Scale`` does: every
+  bin keeps its relative uncertainty.
+* ``"shape"`` - the total fluctuates with the bins, which are then
+  anti-correlated: a bin's variance is propagated to first order through the
+  division by the total (``p (1 - p) / N`` for a fraction ``p`` of ``N``
+  counts), and counts with a Poisson interval get the Clopper-Pearson interval
+  of their fraction of the total, at the same confidence level. See
+  :func:`shape_covariance` for the correlations.
 """
 
 
@@ -144,8 +167,114 @@ def _warn(message: str) -> None:
     warnings.warn(message, RootfigWarning, stacklevel=5)
 
 
-def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
+def _rescales(mode: str | float | None) -> bool:
+    """Whether ``mode`` divides by the histogram's own total."""
+    return mode is not None and mode != "width"
+
+
+def _check_uncertainty(uncertainty: str, mode: str | float | None) -> None:
+    if uncertainty not in ("scale", "shape"):
+        msg = f"the normalisation uncertainty must be 'scale' or 'shape', got {uncertainty!r}"
+        raise ValueError(msg)
+    if uncertainty == "shape" and not _rescales(mode):
+        msg = (
+            "a shape uncertainty needs a normalisation to the histogram's own total "
+            f"(True, 'unity', 'density' or a number), got {mode!r}"
+        )
+        raise ValueError(msg)
+
+
+def _visible(histogram: Hist) -> np.ndarray:
+    """Return which cells (flow cells included) are visible bins."""
+    marker = histogram.copy()
+    view: Any = marker.view(flow=True)
+    view.value = 0.0
+    inner: Any = marker.view(flow=False)
+    inner.value = 1.0
+    return np.asarray(marker.values(flow=True) == 1.0, dtype=bool)
+
+
+def _gain(histogram: Hist, mode: str | float, *, flow: bool) -> FloatArray | float:
+    """Return the factor of ``values / total`` a rescaling mode applies: target or 1 / size."""
+    if mode == "density":
+        sizes = _bin_sizes(histogram)
+        if not flow:
+            sizes = sizes[_visible(histogram)].reshape(np.shape(histogram.values(flow=False)))
+        return np.asarray(1.0 / sizes, dtype=float)
+    return 1.0 if mode == "unity" else float(mode)
+
+
+def shape_covariance(histogram: Histogram | Hist, spec: NormalizeSpec = True) -> FloatArray:
+    """Return the covariance matrix of the visible bins of ``histogram`` normalised by ``spec``.
+
+    The histogram's own total fluctuates with its bins, so they are
+    anti-correlated (see :data:`NormalizeUncertainty`): the first-order
+    covariance ``J V J^T`` of ``normalize(histogram, spec)``, the bins
+    flattened in C order. Its diagonal holds the variances that
+    ``normalize(..., uncertainty="shape")`` gives a histogram of summed weights.
+
+    Raises
+    ------
+    ValueError
+        Unless ``spec`` normalises to the histogram's own total.
+    """
+    mode = _mode(spec)
+    _check_uncertainty("shape", mode)
+    assert mode is not None
+    hist_ = histogram.hist if isinstance(histogram, Histogram) else as_weight_storage(histogram)
+    values = np.asarray(hist_.values(flow=False), dtype=float)
+    variances = np.asarray(hist_.variances(flow=False), dtype=float)
+    return shape_covariance_matrix(values, variances, _gain(hist_, mode, flow=False))
+
+
+def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | float) -> Histogram:
+    """Give ``normalized`` the uncertainty of a shape (see :data:`NormalizeUncertainty`)."""
+    values = original.values(flow=True)
+    visible = _visible(original.hist)
+    gain = np.broadcast_to(_gain(original.hist, mode, flow=True), values.shape)
+    if original.poisson and original._unit is not None:
+        unit = original._unit
+        factor = count_scale(unit.values(flow=True), np.asarray(unit.variances(flow=True)))
+        known = factor[visible]
+        if known.size and np.all(known > 0) and np.allclose(known, known.flat[0], rtol=1e-12):
+            counts = np.rint(np.where(factor > 0, values / np.where(factor > 0, factor, 1.0), 0.0))
+            bounds = shape_bounds(counts, gain, visible, original._cl)
+            if bounds is not None:
+                flow = np.sqrt(
+                    shape_variances(values, original.variances(flow=True), gain, visible)
+                )
+                sides = (np.where(visible, bounds[0], flow), np.where(visible, bounds[1], flow))
+                return normalized.replace(
+                    poisson=False,
+                    _unit=None,
+                    _errors=_error_sides(normalized.hist, sides, normalized.label),
+                )
+    if original._errors is not None:
+        down, up = (
+            np.sqrt(shape_variances(values, np.asarray(side.variances(flow=True)), gain, visible))
+            for side in original._errors
+        )
+        sides = (down, up)
+        return normalized.replace(
+            poisson=False,
+            _unit=None,
+            _errors=_error_sides(normalized.hist, sides, normalized.label),
+        )
+    result = normalized.hist.copy()
+    view: Any = result.view(flow=True)
+    view.variance = shape_variances(values, original.variances(flow=True), gain, visible)
+    return normalized.replace(hist=result, poisson=False, _weighted=True)
+
+
+def normalize(
+    histogram: Histogram, spec: NormalizeSpec, *, uncertainty: NormalizeUncertainty = "scale"
+) -> Histogram:
     """Return a normalised copy of a :class:`Histogram`, recording the mode.
+
+    ``uncertainty`` says what normalising to the histogram's own total does to
+    its statistical uncertainty (see :data:`NormalizeUncertainty`): ``"scale"``
+    keeps every bin's relative uncertainty, as ``TH1::Scale``; ``"shape"``
+    lets the total fluctuate with the bins.
 
     ``normalization`` is set only when the normalisation was actually applied;
     a histogram that could not be normalised (see :func:`normalize_hist`) keeps
@@ -161,12 +290,17 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
     normalised contents in the uncertainty.
     """
     mode = _mode(spec)
+    _check_uncertainty(uncertainty, mode)
     if mode is None:
         return histogram
     result, applied, factor = _normalize_hist(histogram.hist, spec)
     if not applied:
         return histogram.replace(
-            hist=result, normalization=None, _unit=histogram._unit, _weighted=histogram._weighted
+            hist=result,
+            normalization=None,
+            _unit=histogram._unit,
+            _weighted=histogram._weighted,
+            _errors=histogram._errors,
         )
     label = normalization_label(spec)
     variations = {}
@@ -182,12 +316,28 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
                 raise SystematicError(msg)
             normalized.append(shifted)
         variations[name] = (normalized[0], normalized[1])
-    unit = histogram._unit  # one count per cell, normalised by the nominal's factor
+    # the record of counts and the given errors follow the nominal's factor
+    unit = histogram._unit
     if unit is not None:
         unit = _normalize_hist(unit, spec, factor=factor)[0]
-    return histogram.replace(
-        hist=result, normalization=label, variations=variations, _unit=unit, _weighted=True
+    errors = histogram._errors
+    if errors is not None:
+        errors = (
+            _normalize_hist(errors[0], spec, factor=factor)[0],
+            _normalize_hist(errors[1], spec, factor=factor)[0],
+        )
+    rescaled = histogram.replace(
+        hist=result,
+        normalization=label,
+        variations=variations,
+        _unit=unit,
+        _weighted=True,
+        _errors=errors,
     )
+    if uncertainty == "shape":
+        assert mode is not None
+        return _with_shape_errors(histogram, rescaled, mode)
+    return rescaled
 
 
 def normalization_label(spec: NormalizeSpec) -> str | None:

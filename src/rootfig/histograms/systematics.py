@@ -132,10 +132,13 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     objects (``per_object``) if any input does, and is observed data
     (``is_data``) if every input is. It keeps the Poisson interval
     (:attr:`~rootfig.histograms.Histogram.poisson`) when every input has it
-    with the same factor per count in every bin, however the inputs reached
-    their binning, since counts of one factor add up to counts of it,
-    as ``TH1::Add`` keeps ``kPoisson`` for unweighted histograms; otherwise it
-    has ``sqrt(sum w^2)``.
+    at one confidence level with the same factor per count in every bin,
+    however the inputs reached their binning, since counts of one factor add up
+    to counts of it,
+    as ``TH1::Add`` keeps ``kPoisson`` for unweighted histograms. Otherwise, if
+    an input has errors of its own (``stat_errors``), each input's ``(down,
+    up)`` errors add in quadrature side by side, an approximation for
+    asymmetric errors; else the sum has ``sqrt(sum w^2)``.
 
     Raises
     ------
@@ -176,11 +179,21 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     unit = first._unit  # one count per bin, set exactly for Poisson histograms
     shared = unit is not None and all(
         h._unit is not None
+        and h._cl == first._cl
         and np.allclose(_count_scale(h._unit), _count_scale(unit), rtol=1e-12, atol=0)
         for h in histograms[1:]
     )
+    total = add_hists([h.hist for h in histograms])
+    errors: tuple[FloatArray, FloatArray] | None = None
+    if not shared and any(h._errors is not None for h in histograms):
+        # given errors add in quadrature side by side, every input with its own (down, up)
+        sides = [h.errors(flow=True) for h in histograms]
+        errors = (
+            np.sqrt(np.sum([side[0] ** 2 for side in sides], axis=0)),
+            np.sqrt(np.sum([side[1] ** 2 for side in sides], axis=0)),
+        )
     return Histogram(
-        add_hists([h.hist for h in histograms]),
+        total,
         label=label,
         normalization=first.normalization
         if all(h.normalization == first.normalization for h in histograms)
@@ -188,9 +201,10 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
         variations=variations,
         per_object=any(h.per_object for h in histograms),
         is_data=all(h.is_data for h in histograms),
-        poisson=shared,
+        poisson=first.poisson if shared else False,
         _unit=unit.copy() if shared and unit is not None else None,
         _weighted=any(h._weighted for h in histograms),
+        stat_errors=errors,
     )
 
 

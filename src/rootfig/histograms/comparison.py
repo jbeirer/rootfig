@@ -12,8 +12,10 @@ import numpy as np
 from rootfig._storage import same_edges
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning
+from rootfig.histograms.binomial import clopper_pearson
 from rootfig.histograms.build import Histogram, compatible_binning
 from rootfig.histograms.efficiency import Efficiency, Profile
+from rootfig.histograms.intervals import ONE_SIGMA
 from rootfig.histograms.systematics import Uncertainty
 
 __all__ = [
@@ -46,7 +48,7 @@ BAND_KINDS: tuple[ComparisonKind, ...] = ("ratio", "relative_difference", "diffe
 SIGNIFICANCE_KINDS: tuple[ComparisonKind, ...] = ("s/sqrt(b)", "s/sqrt(s+b)")
 """The kinds comparing a signal with its background, statistical only."""
 
-UncertaintyMode: TypeAlias = Literal["propagate", "numerator"]
+UncertaintyMode: TypeAlias = Literal["propagate", "numerator", "poisson-ratio"]
 """How the uncertainties of a ratio, relative difference or difference enter its error bars.
 
 * ``"propagate"`` - the statistical uncertainties of both sides, uncorrelated,
@@ -54,6 +56,11 @@ UncertaintyMode: TypeAlias = Literal["propagate", "numerator"]
   source shared by both sides cancels where the comparison allows.
 * ``"numerator"`` - only the numerator's; the reference's uncertainty is the
   :attr:`Comparison.band` (the usual data/MC convention, mplhep's ``split_ratio``).
+* ``"poisson-ratio"`` - the exact interval of the ratio of two independent
+  Poisson means, for two histograms of counts (a ratio or a relative difference
+  only): the Clopper-Pearson interval of ``n / (n + d)`` turned into one of
+  ``n / d``, as ROOT's ``TGraphAsymmErrors::Divide(..., "pois")``. Scaled counts
+  keep it, scaled like the contents; systematics enter as with ``"propagate"``.
 """
 
 _Variations: TypeAlias = Mapping[str, tuple[Hist, Hist]]
@@ -179,15 +186,18 @@ def compare(
     different sources then combine like those of one histogram (see
     :mod:`rootfig.histograms.systematics`). With ``uncertainty="numerator"``
     only the numerator's sources enter the error bars; the reference's are the
-    band. In a ratio or a relative difference, a variation that empties a
-    reference bin leaves that bin's systematic uncertainty ``nan``, with a
-    :class:`~rootfig.errors.RootfigWarning`.
+    band. ``uncertainty="poisson-ratio"`` takes the exact interval of the ratio
+    of two Poisson means instead of the propagated one, for two histograms of
+    counts (see :data:`UncertaintyMode`). In a ratio or a relative difference,
+    a variation that empties a reference bin leaves that bin's systematic
+    uncertainty ``nan``, with a :class:`~rootfig.errors.RootfigWarning`.
 
     Two :class:`~rootfig.histograms.Efficiency` or two
     :class:`~rootfig.histograms.Profile` objects compare their values the same
     way, their intervals propagated as independent, so the asymmetric intervals
     of an efficiency stay asymmetric. Significances, which count events, and
-    ``"numerator"``, which needs a band, are refused for them.
+    ``"numerator"``, which needs a band, and ``"poisson-ratio"``, which needs
+    counts, are refused for them.
 
     Raises
     ------
@@ -205,19 +215,24 @@ def compare(
     if kind not in COMPARISON_KINDS:
         msg = f"kind must be one of {COMPARISON_KINDS}, got {kind!r}"
         raise ValueError(msg)
-    if uncertainty not in ("propagate", "numerator"):
-        msg = f"uncertainty must be 'propagate' or 'numerator', got {uncertainty!r}"
+    if uncertainty not in ("propagate", "numerator", "poisson-ratio"):
+        msg = (
+            f"uncertainty must be 'propagate', 'numerator' or 'poisson-ratio', got {uncertainty!r}"
+        )
         raise ValueError(msg)
     if isinstance(numerator, Efficiency | Profile) or isinstance(reference, Efficiency | Profile):
         return _compare_points(numerator, reference, kind=kind, uncertainty=uncertainty)
     if uncertainty == "numerator" and kind not in BAND_KINDS:
         msg = f"uncertainty='numerator' needs a reference band, which kind={kind!r} does not have"
         raise ValueError(msg)
+    if uncertainty == "poisson-ratio" and kind not in ("ratio", "relative_difference"):
+        msg = f"uncertainty='poisson-ratio' is the interval of a ratio, not of kind={kind!r}"
+        raise ValueError(msg)
     num, ref = _Side.of(numerator), _Side.of(reference)
     if not compatible_binning(num.hist, ref.hist):
         msg = "compare requires two one-dimensional histograms with identical bin edges"
         raise BinningError(msg)
-    propagate = uncertainty == "propagate"
+    propagate = uncertainty != "numerator"
     with np.errstate(divide="ignore", invalid="ignore"):
         match kind:
             case "ratio" | "relative_difference":
@@ -232,6 +247,9 @@ def compare(
                 fields = _asymmetry(num, ref)
             case _:
                 fields = _significance(num, ref, kind)
+        if uncertainty == "poisson-ratio":
+            ratio = fields["values"] + (1.0 if kind == "relative_difference" else 0.0)
+            fields["errors"] = _poisson_ratio_errors(numerator, reference, ratio)
     return Comparison(
         kind=kind,
         label=num.label,
@@ -241,6 +259,37 @@ def compare(
         reference_hist=ref.hist,
         **fields,
     )
+
+
+def _poisson_ratio_errors(
+    numerator: Hist | Histogram, reference: Hist | Histogram, ratio: FloatArray
+) -> _Errors:
+    """Return the interval of the ratio of two Poisson means around ``ratio``, ``(down, up)``.
+
+    Given ``n + d`` counts, ``n`` is binomial with ``f = mu_n / (mu_n + mu_d)``;
+    the Clopper-Pearson interval of ``f`` maps to ``f / (1 - f)``, times the
+    ratio of the counts' factors. Undefined (``nan``) where ``d`` is 0.
+
+    Raises
+    ------
+    ValueError
+        If a side does not hold known counts (see :meth:`Histogram.counts`).
+    """
+    sides = [
+        h if isinstance(h, Histogram) else Histogram(h, label="") for h in (numerator, reference)
+    ]
+    (n, n_factor), (d, d_factor) = (h.counts() for h in sides)
+    poisson = [h for h in sides if h.poisson]
+    cl = poisson[0]._cl if poisson else ONE_SIGMA
+    lower, upper = clopper_pearson(n, n + d, cl)
+    defined = d > 0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scale = n_factor / d_factor
+        low = lower / (1.0 - lower) * scale
+        high = np.where(upper < 1.0, upper / (1.0 - upper), np.inf) * scale
+        down = np.where(defined, np.maximum(ratio - low, 0.0), np.nan)
+        up = np.where(defined, np.maximum(high - ratio, 0.0), np.nan)
+    return np.asarray(down, dtype=float), np.asarray(up, dtype=float)
 
 
 @dataclass(frozen=True)
@@ -475,8 +524,9 @@ def _compare_points(
         msg = f"kind={kind!r} counts signal and background events; compare {pair} as a ratio"
         raise ValueError(msg)
     if uncertainty != "propagate":
+        needs = "counts" if uncertainty == "poisson-ratio" else "a reference band"
         msg = (
-            f"uncertainty={uncertainty!r} needs a reference band, which {pair} do not have: "
+            f"uncertainty={uncertainty!r} needs {needs}, which {pair} do not have: "
             "their intervals are independent and always propagated"
         )
         raise ValueError(msg)
