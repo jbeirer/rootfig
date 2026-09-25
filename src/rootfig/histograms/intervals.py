@@ -30,16 +30,18 @@ DataErrors: TypeAlias = Literal["sumw2", "poisson", "auto"] | float
 
 ``None`` keeps each histogram's own model: ``sqrt(sum of squared weights)``, ROOT's
 ``TH1`` default, unless it carries the Poisson interval
-(:attr:`~rootfig.histograms.Histogram.poisson`).
+(:attr:`~rootfig.histograms.Histogram.poisson`) or errors of its own.
 
-* ``"sumw2"`` - ``sqrt(sum of squared weights)`` on both sides, also for a
-  histogram that carries the Poisson interval or errors of its own.
-* ``"poisson"`` - the Garwood interval of the counts (:func:`poisson_interval`),
-  ROOT's ``TH1::kPoisson``; unit-weight counts only (:func:`count_problem`).
+* ``"auto"`` - a model of the histogram's own is kept; otherwise the Poisson
+  interval for unit-weight counts and ``sqrt(sum of squared weights)`` for
+  anything else: the usual convention for data points.
+* ``"sumw2"`` - ``sqrt(sum of squared weights)`` on both sides, replacing any
+  other model.
+* ``"poisson"`` - the one-sigma Garwood interval of the counts
+  (:func:`poisson_interval`), ROOT's ``TH1::kPoisson``, replacing any other
+  model; for histograms known to hold counts only.
 * a confidence level such as ``0.95`` - the Garwood interval at that level
-  (ROOT's ``TH1::kPoisson2`` is 0.95), for every data histogram.
-* ``"auto"`` - ``"poisson"`` for unit-weight counts, ``sqrt(sum of squared
-  weights)`` otherwise: the usual convention for data points (mplhep's).
+  (ROOT's ``TH1::kPoisson2`` is 0.95), as ``"poisson"``.
 """
 
 _WHOLE_ULPS = 4

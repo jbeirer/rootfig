@@ -19,12 +19,9 @@ from collections.abc import Mapping, Sequence
 from os import PathLike
 from typing import Any
 
-import numpy as np
-
 from rootfig._typing import Hist
 from rootfig.errors import SelectionError, SourceError, SystematicError, annotate
 from rootfig.histograms.build import Histogram, from_sample
-from rootfig.histograms.intervals import count_problem
 from rootfig.histograms.sources import shared_source
 from rootfig.io import FileSource, ReadCache, stored_error_option
 from rootfig.io.objects import is_tree_class
@@ -38,7 +35,6 @@ from rootfig.selection import NonFinitePolicy
 __all__ = [
     "describe_axes",
     "read_stored",
-    "saved_poisson",
     "stored_mode",
     "stored_names",
     "with_saved_errors",
@@ -212,7 +208,7 @@ def read_stored(
     One :class:`~rootfig.histograms.Histogram` per sample, in ``Weight``
     storage, scaled by the sample's ``scale`` and luminosity factor. A ``TH1``
     saved with ``kPoisson`` or ``kPoisson2`` brings its Poisson interval (see
-    :func:`with_saved_errors`). A
+    :func:`with_saved_errors`) unless a factor other than 1 made it weighted. A
     variable's ``bins`` and ``range`` crop and merge the stored bins. An integer
     count merges the whole axis; explicit edges must coincide with stored ones,
     and a range without bins keeps the stored bins between its ends, which must
@@ -283,9 +279,9 @@ def read_stored(
             )
             for syst_name, syst in sources.items()
         }
-        # counts only if read as stored
+        # a sample's factor makes the contents weighted, as for a tree and TH1::Scale
         histogram = from_sample(sample, nominal, variations=variations, weighted=factor != 1.0)
-        histogram = with_saved_errors(histogram, named, factor)
+        histogram = with_saved_errors(histogram, named)
         result.append(
             histogram.rebinned_to([v.bins for v in variables], range=[v.range for v in variables])
         )
@@ -355,34 +351,18 @@ def _read_scaled(
     return named if factor == 1.0 else named * factor
 
 
-def saved_poisson(histogram: Hist) -> bool | float:
-    """Return the Poisson interval a stored ``TH1`` was saved with, as :attr:`Histogram.poisson`.
+def with_saved_errors(histogram: Histogram, stored: Hist) -> Histogram:
+    """Give ``histogram``, read as ``stored``, the Poisson interval its ``TH1`` was saved with.
 
-    ``True`` for ``kPoisson``, 0.95 for ``kPoisson2`` and ``False`` for
-    ``kNormal`` or a histogram not read from a file (see
-    :func:`rootfig.io.stored_error_option`).
+    A ``TH1`` saved with ``kPoisson`` or ``kPoisson2`` (see
+    :func:`rootfig.io.stored_error_option`) that holds counts gets the Poisson
+    interval at 68.27 % or 95 %. Weighted contents, scaled ones included,
+    keep ``sqrt(sum w^2)``, as ROOT falls back to it for a weighted histogram.
     """
-    return {"poisson": True, "poisson2": 0.95}.get(stored_error_option(histogram), False)
-
-
-def with_saved_errors(histogram: Histogram, stored: Hist, factor: float = 1.0) -> Histogram:
-    """Give ``histogram``, ``stored`` read and scaled by ``factor``, the errors it was saved with.
-
-    A ``TH1`` saved with ``kPoisson`` or ``kPoisson2`` holding unit-weight
-    counts gets the Poisson interval at 68.27 % or 95 %, scaled by ``factor``
-    like its contents (rootfig keeps it through the sample's scale, where
-    ``TH1::Scale`` falls back to ``sqrt(sum w^2)``). Otherwise, weighted
-    contents included, it keeps ``sqrt(sum w^2)``, as ROOT does for a weighted
-    histogram.
-    """
-    level = saved_poisson(stored)
-    values = np.asarray(stored.values(flow=True), dtype=float)
-    variances = np.asarray(stored.variances(flow=True), dtype=float)
-    if not level or factor < 0 or count_problem(values, variances) is not None:
+    level = {"poisson": True, "poisson2": 0.95}.get(stored_error_option(stored), False)
+    if not level or histogram._unit is None:
         return histogram
-    unit = Histogram(stored, label=histogram.label, poisson=level)._unit
-    assert unit is not None
-    return histogram.replace(poisson=level, _unit=unit * factor)
+    return histogram.replace(poisson=level)
 
 
 def _read_named(

@@ -274,9 +274,9 @@ def plot(
         with the reference's uncertainty as a band; by default each numerator
         uses ``"numerator"`` for data over simulation and ``"propagate"``
         otherwise, so shared systematic sources cancel). ``"poisson-ratio"``
-        takes the exact interval of the ratio of two Poisson means for a ratio
-        of counts, as ROOT's ``TGraphAsymmErrors::Divide(..., "pois")``: every
-        compared histogram must hold known counts (see
+        takes the exact one-sigma interval of the ratio of two Poisson means
+        for a ratio of counts, as ROOT's ``TGraphAsymmErrors::Divide(...,
+        "pois")``: every compared histogram must hold known counts (see
         :meth:`~rootfig.histograms.Histogram.counts`). The label is shrunk,
         and if needed wrapped onto two lines, to fit the short panel; pass a
         shorter ``panel_label`` (``"Ratio"``) to keep it at full size.
@@ -299,15 +299,15 @@ def plot(
         ``TH1`` default, ``sqrt(sum of squared weights)`` (``sqrt(N)`` for
         counts), unless it carries a Poisson interval or errors of its own (a
         histogram object with ``poisson=`` or ``stat_errors=``, a stored ``TH1``
-        saved with ``kPoisson``/``kPoisson2``); ``"sumw2"`` forces ``sqrt(sum of
-        squared weights)`` on every data histogram. ``"poisson"`` is ROOT's
-        ``TH1::kPoisson``, the Garwood 68 % interval of the counts, asymmetric
-        and with an upper error for an empty bin; a confidence level such as
-        ``0.95`` (ROOT's ``TH1::kPoisson2``) is the Garwood interval at that
-        level. Both refuse anything but unit-weight counts (every bin a whole
-        number equal to its variance, before any normalisation). ``"auto"`` is
-        Poisson for unit-weight counts and ``sqrt(sum of squared weights)``
-        otherwise.
+        saved with ``kPoisson``/``kPoisson2``). ``"auto"`` keeps such a model
+        too and otherwise draws the Poisson interval for unit-weight counts and
+        ``sqrt(sum of squared weights)`` for anything else. The explicit choices
+        replace any model: ``"sumw2"`` forces ``sqrt(sum of squared weights)``;
+        ``"poisson"`` is ROOT's ``TH1::kPoisson``, the Garwood 68 % interval of
+        the counts, asymmetric and with an upper error for an empty bin; a
+        confidence level such as ``0.95`` (ROOT's ``TH1::kPoisson2``) is the
+        Garwood interval at that level. Both raise for data not known to hold
+        counts (weighted data, see :meth:`~rootfig.histograms.Histogram.counts`).
     xlim, ylim
         Axis limits; ``ylim`` entries may be ``None`` to keep the automatic value.
     xbreak

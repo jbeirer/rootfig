@@ -37,75 +37,84 @@ backgrounds with a signal drawn over them and a significance panel.
 
 ## Uncertainties of data
 
-`data_errors=` chooses the statistical uncertainty of observed data, in the main
-panel and in the lower panel alike, and in `p.uncertainty("Data")`:
+By default every histogram, data included, has ROOT's `TH1` errors: `√(Σw²)` on
+both sides, `√N` for counts. For observed counts the asymmetric Poisson
+(Garwood) interval is the usual choice, and one keyword gives it:
+
+```python
+rf.plot(mc, "m_ll", observed=data, data_errors="auto")  # Poisson where data is counts
+rf.plot(mc, "m_ll", observed=data, data_errors="poisson")  # Poisson, or an error if not counts
+```
+
+`data_errors=` applies to observed data in the main panel, in the lower panel
+and in `p.uncertainty("Data")`:
 
 | `data_errors=` | Error bars |
 | --- | --- |
-| `None` (default) | each histogram's own: ROOT's `TH1` default, `√(Σw²)` on both sides (`√N` for counts, so an empty bin is 0 ± 0), unless it carries a model of its own: a stored `TH1` saved with `kPoisson` or `kPoisson2`, or a histogram object with `poisson=` or `stat_errors=` |
-| `"sumw2"` | `√(Σw²)` for every data histogram, whatever model it carries |
-| `"poisson"` | ROOT's `TH1::kPoisson`: the Garwood 68 % interval of the counts, asymmetric, and 0 +1.84 for an empty bin |
-| a confidence level, `0.95` | the Garwood interval at that level for every data histogram; `0.95` is ROOT's `TH1::kPoisson2` (0 +3.69 for an empty bin) |
-| `"auto"` | `"poisson"` where a data histogram holds unit-weight counts, `√(Σw²)` otherwise: the usual convention for data points |
+| `None` (default) | each histogram's own: `√(Σw²)`, so an empty bin is 0 ± 0, unless it carries a model of its own (a stored `TH1` saved with `kPoisson` or `kPoisson2`, or a histogram object with `poisson=` or `stat_errors=`) |
+| `"auto"` | a model of its own is kept; otherwise the Poisson interval for unit-weight counts and `√(Σw²)` for weighted or scaled data: the usual convention for data points |
+| `"sumw2"` | `√(Σw²)` for every data histogram, replacing any model it carries |
+| `"poisson"` | ROOT's `TH1::kPoisson` for every data histogram, replacing any model it carries: the Garwood 68 % interval of the counts, 0 +1.84 for an empty bin |
+| a confidence level, `0.95` | the Garwood interval at that level, replacing any model; `0.95` is ROOT's `TH1::kPoisson2` (0 +3.69 for an empty bin) |
 
 - The model is decided on each data histogram as filled or read, before
   `normalize=` and `flow=` change it, so normalising data keeps its error model.
+- `"poisson"` and a confidence level need data known to hold counts, and raise
+  `ValueError` otherwise. Unweighted data filled from a tree holds them, and so
+  does a stored `TH1` without `Sumw2` holding whole numbers, which ROOT itself
+  treats as unweighted: every bin a non-negative whole number equal to its
+  variance. Weighted data does not, nor does data scaled by a common weight: the
+  sums of weights (`Σw`, `Σw²`) cannot tell counts scaled by one factor from
+  unequal weights (`[1, 1, 4]` sums like two entries of weight 3), so no
+  interval of counts describes them. `"auto"` keeps `√(Σw²)` for them instead.
+- Data filled from a tree with a `weight=` or a `scale` (or read from a file
+  with a `scale`) is weighted even where no entry falls, so an empty selection
+  of weighted data keeps `0 ± 0` under `"auto"`. Histograms from elsewhere
+  (stored `TH1`s, histogram objects) are judged by their contents, as ROOT
+  judges a `TH1` by its sums: an empty one holds counts.
 - A stored `TH1` brings the statistical error option it was saved with
   (`TH1::SetBinErrorOption`, the first file's for a sample of several, as
   `hadd` keeps it): `kPoisson` and `kPoisson2` give it the Poisson interval at
   68.27 % or 95 %, which `data_errors=None` shows as ROOT would. Weighted
-  contents keep `√(Σw²)`, as ROOT falls back to it for a weighted histogram; a
-  sample's `scale` keeps the interval, scaled like the contents, where
-  `TH1::Scale` would fall back too. A histogram read with
-  `rf.io.FileSource(...).read_histogram(...)` and given as an object keeps it.
-- `"poisson"` and a confidence level need unit-weight counts: every bin a non-negative whole number
-  equal to its variance. Unweighted data filled from a tree holds them, and so
-  does a stored `TH1` without `Sumw2` holding whole numbers, which ROOT itself
-  treats as unweighted. Anything else raises `ValueError`, data scaled by a
-  common weight included: the sums of weights (`Σw`, `Σw²`) cannot tell counts
-  scaled by one factor from unequal weights (`[1, 1, 4]` sums like two entries
-  of weight 3), so no interval of counts describes them. `"auto"` keeps
-  `√(Σw²)` for them instead.
-- Data filled from a tree with a `weight=` or a `scale` (or read from a file
-  with a `scale`) is weighted even where no entry falls, so an empty selection
-  of weighted data keeps `0 ± 0` under `"auto"` and is refused by
-  `"poisson"`. Histograms from elsewhere (stored `TH1`s, histogram objects) are
-  judged by their contents, as ROOT judges a `TH1` by its sums: an empty one
-  holds counts.
+  contents keep `√(Σw²)`, as ROOT falls back to it for a weighted histogram, and
+  so does a histogram read with a sample `scale` or luminosity factor, as after
+  `TH1::Scale`. A histogram read with `rf.io.FileSource(...).read_histogram(...)`
+  and given as an object keeps it.
 - The interval of `n` counts runs from `L` to `U` with
-  `P(N ≥ n | L) = P(N ≤ n | U) = 15.87 %` (`L = 0` for `n = 0`), as in ROOT.
+  `P(N ≥ n | L) = P(N ≤ n | U) = 15.87 %` (`L = 0` for `n = 0`), as in ROOT. The
+  bounds are gamma quantiles from SciPy, exact at any count, as ROOT's;
+  [`poisson_interval`][rootfig.histograms.poisson_interval] gives them for any
+  counts.
 - Normalising, rescaling and rebinning keep the interval, scaled like the
-  contents: the histogram carries a record of one count per bin through each of
-  them, which gives every bin its factor. After `normalize="width"` an empty
-  bin gets `0 +1.84` divided by its own width, and an empty histogram scaled by
-  3 gets `0 +5.52`; summed flow bins (`flow="sum"`) get the interval of the
-  summed count. For a known constant (a luminosity, a bin width) this is the
-  interval of the scaled counts. `normalize=True`, `"density"` and numeric
-  targets divide by the histogram's own total, which fluctuates too: the bars
-  are then the counts' interval scaled by the observed total, not an interval of
-  the normalised shape ([Normalisation](#normalisation)). ROOT keeps
-  `kPoisson` for unweighted histograms only and falls back to `√(Σw²)` once a
-  histogram is scaled.
+  contents: rootfig knows the counts behind every bin and their factor, so an
+  empty bin keeps an upper error. After `normalize="width"` an empty bin gets
+  `0 +1.84` divided by its own width, and an empty histogram scaled by 3 gets
+  `0 +5.52`; summed flow bins (`flow="sum"`) get the interval of the summed
+  count. ROOT instead falls back to `√(Σw²)` once a histogram is scaled.
+  `normalize=True`, `"density"` and numeric targets divide by the histogram's
+  own total, which fluctuates too: the bars are then the counts' interval scaled
+  by the observed total, not an interval of the normalised shape (see
+  `normalize_uncertainty="shape"` under [Normalisation](#normalisation)).
 - The [lower panel](#lower-panel) propagates the two sides separately: a
   data/MC ratio runs from `L / d` to `U / d`, and a pull divides by the data
   error facing the prediction (the upper one where data lie below it).
-- The bounds are gamma quantiles from SciPy, exact at any count, as ROOT's.
-  [`poisson_interval`][rootfig.histograms.poisson_interval] gives them for any
-  counts.
 - `rf.Histogram(h, label="Data", is_data=True, poisson=True)` carries the model
   on a histogram of counts you pass yourself (`poisson=0.95` for 95 %), so
-  `rf.compare` uses it too and `None`, `"poisson"` and `"auto"` keep it; counts
-  scaled by `c` are `rf.Histogram(counts, ..., poisson=True).scaled(c)`, and
+  `rf.compare` uses it too; counts scaled by `c` are
+  `rf.Histogram(counts, ..., poisson=True).scaled(c)`. Whether a histogram
+  holds counts is kept apart from its error model: `replace(poisson=False)`
+  draws `√(Σw²)` and `data_errors="poisson"` brings the interval back, and
   `Histogram.counts()` returns the counts and their factor per bin.
-  `sum_histograms` keeps it when every input carries the same factor per count
-  at one level (two data periods), as `TH1::Add` keeps `kPoisson` for unweighted
-  histograms, and the sum of data histograms is data.
+  `sum_histograms` keeps the interval when every input carries the same factor
+  per count at one level (two data periods), as `TH1::Add` keeps `kPoisson` for
+  unweighted histograms, and the sum of data histograms is data.
 - Errors of any other origin, a fit or a bootstrap, are given as
   `rf.Histogram(h, label="Fit", stat_errors=(down, up))`, one per bin (or per
   cell with the flow bins). They are what `errors()`, the drawing and the lower
   panel use; scaling and normalising scale them, and where bins are merged
   (rebinning, `flow="sum"`, `sum_histograms`) they add in quadrature side by
-  side, an approximation for asymmetric errors.
+  side, an approximation for asymmetric errors, whose statistical meaning
+  rootfig does not know.
 
 ## Systematic uncertainties
 
@@ -279,11 +288,17 @@ that into account:
 | `"scale"` (default) | its own, scaled with the contents |
 | `"shape"` | propagated to first order through the division by the fluctuating total: `(g/S)² (v (1 − 2p) + p² Σv)` for contents `x` of variance `v`, `p = x / S`, `S` the visible total and `g` the target (or one over the bin size); counts with a Poisson interval get the Clopper–Pearson interval of their fraction of the total count, at the same level |
 
-A flow bin is divided by the total without entering it. The correlations between
-bins are in `rootfig.histograms.shape_covariance(histogram, spec)`, the
-first-order covariance matrix of the normalised visible bins (its rows sum to
-zero for `True`: the normalised bins always add up to one). `"shape"` needs a
-normalisation to the histogram's own total and raises with `"width"` or none.
+A flow bin is divided by the total without entering it. Each bin's interval is
+a marginal one, bin by bin, not a simultaneous confidence region for the whole
+shape. The correlations between bins are in
+`rootfig.histograms.shape_covariance(histogram, spec)`, the first-order
+covariance matrix of the normalised visible bins from the sums of squared
+weights (its rows sum to zero for `True`: the normalised bins always add up to
+one; for counts its diagonal is the binomial `p (1 − p) / N`, not the exact
+interval). It raises for a histogram without a shape (empty, or with weights
+that cancel) and for one with `stat_errors`, whose asymmetric errors no
+covariance matrix describes. `"shape"` needs a normalisation to the
+histogram's own total and raises with `"width"` or none.
 Systematic variations are normalised by their own totals either way, so a pure
 normalisation uncertainty drops out of the rescaling modes
 ([Systematic uncertainties](#systematic-uncertainties)).
@@ -332,8 +347,9 @@ uncertainty](#systematic-uncertainties) of `n − d`: a source carried by both
 histograms varies them together, and one carried by a single histogram varies
 it against the other's nominal contents. The combination is taken on the side
 facing the other histogram: the lower one where `n > d`, the upper one
-elsewhere (mplhep's rule for Poisson pulls).
-Significance panels use statistical uncertainties only.
+elsewhere (mplhep's rule for Poisson pulls). A pull is a Gaussian diagnostic of
+the error bars, not a likelihood (deviance) residual, so read it with care where
+counts are small. Significance panels use statistical uncertainties only.
 
 **Roles.** Without `reference=`:
 
@@ -365,12 +381,15 @@ significance, which have no band. For a ratio (or relative difference) of two
 histograms of counts, `panel_uncertainty="poisson-ratio"` draws the exact
 interval of the ratio of two independent Poisson means instead of the
 propagated one, as ROOT's `TGraphAsymmErrors::Divide(..., "pois")`: the
-Clopper–Pearson interval of `n / (n + d)` turned into one of `n / d`, which
-stays sensible for few counts and never goes below zero. Every compared
-histogram must hold known counts (unit-weight counts, or a Poisson interval
-through any scaling; `Histogram.counts()`), checked before a figure is made;
-a bin with an empty reference has none. `rf.compare(a, b,
-uncertainty="poisson-ratio")` computes one.
+one-sigma Clopper–Pearson interval of `n / (n + d)` turned into one of `n / d`,
+which stays sensible for few counts and never goes below zero. Its confidence
+level is ROOT's default and belongs to the ratio: drawing data with
+`data_errors=0.95` does not change it. Every compared histogram must hold known
+counts (unit-weight counts, or counts rootfig has scaled since;
+`Histogram.counts()`), checked before a figure is made: weighted histograms are
+refused rather than approximated, and keep the propagated modes. A bin with an
+empty reference has none. `rf.compare(a, b, uncertainty="poisson-ratio")`
+computes one.
 
 **Range and label.** `panel_ylim` and `panel_label` override the automatic
 range and label. The label names the reference, `MC` for the stack total, and
@@ -671,12 +690,12 @@ rf.efficiency([reco], "TrueMuon_pt", passed="TrueMuon_matched", bins=(20, 0, 100
 
 For every sample the entries satisfying `selection` form the denominator and
 those also satisfying `passed` the numerator, with the same binning. The
-efficiency is drawn as points with a confidence interval of confidence level
-`cl=` (one standard deviation, 68.27 %, `rf.ONE_SIGMA`, by default, as ROOT's;
-`cl=0.95` for 95 %), chosen with `interval=`. The passing entries are a subset
-of all of them, so the uncertainty is that of a pass fraction, never that of
-two independent yields. Every method of ROOT's `TEfficiency` is there, as ROOT
-computes it:
+passing entries are a subset of all of them, so the uncertainty is that of a
+pass fraction, never that of two independent yields. By default the points get
+what ROOT's `TEfficiency` gives: the Clopper–Pearson interval for unweighted
+entries and the normal approximation for weighted ones, at one standard
+deviation (68.27 %, `rf.ONE_SIGMA`; `cl=0.95` for 95 %). `interval=` chooses
+another of `TEfficiency`'s methods, computed as ROOT computes it:
 
 | `interval=` | Interval |
 | --- | --- |
@@ -684,12 +703,15 @@ computes it:
 | `"clopper-pearson"` | the exact binomial interval of the counts, never covering less than 68 %; unweighted entries only |
 | `"normal"` | `ε ± z·σ` clipped to `[0, 1]`, with `σ² = (Σw²_pass (1 − 2ε) + Σw²_all ε²) / (Σw_all)²` (`ε(1 − ε) / n` for counts); no width at 0 and 1 |
 | `"wilson"` | the Wilson score interval of the counts; unweighted entries only. It keeps a width at 0 and 1 |
-| `"agresti-coull"` | the normal approximation around the Wilson centre, `(k + z²/2) / (n + z²)`; unweighted entries only |
-| `"feldman-cousins"` | the Neyman construction with Feldman and Cousins' likelihood-ratio ordering; unweighted entries only |
-| `"mid-p"` | Lancaster's mid-P interval, Clopper–Pearson with half the probability of the observed count, less conservative; unweighted entries only |
 | `"jeffreys"`, `"uniform"` | the Bayesian interval of the prior `Beta(0.5, 0.5)` or `Beta(1, 1)`; weighted entries too |
 | `rf.Bayesian(alpha, beta, mode=False, shortest=False)` | any Beta prior; `mode=True` shows the posterior's mode rather than its mean, `shortest=True` the shortest interval rather than the central one (ROOT's `kPosteriorMode` and `kShortestInterval`) |
+| `"agresti-coull"` | the normal approximation around the Wilson centre, `(k + z²/2) / (n + z²)`; unweighted entries only |
 | `"wilson-effective"` | rootfig's extension of `"wilson"` to weighted entries: the Wilson interval of the effective entries `n_eff = (Σw)² / Σw²` of the denominator. Entries passing with probability `ε` give a weighted fraction of variance `ε(1 − ε) / n_eff`, and the interval inverts that. An approximation for non-negative weights: convenient, but with no guaranteed coverage for arbitrary weights. The same as `"wilson"` for counts |
+
+ROOT's Feldman–Cousins and mid-P options are left out: they need numerical
+machinery of their own for intervals that plots of efficiencies rarely use,
+and Clopper–Pearson (conservative) or Wilson (close to nominal coverage) serve
+the same purpose.
 
 Entries count as unweighted by ROOT's aggregate test: when the sum of weights
 equals the sum of squared weights (to 10⁻¹², `TEfficiency`'s tolerance for
@@ -705,9 +727,7 @@ ROOT has no Clopper–Pearson or Wilson interval for weighted entries: asked for
 one, `TEfficiency` warns and uses the normal approximation, and so does
 `TGraphAsymmErrors::Divide` (ROOT 6.40). rootfig raises instead, so an explicit
 method never silently changes. The Clopper–Pearson bounds are beta
-quantiles from SciPy, as ROOT's, and agree with ROOT's to 10⁻¹¹; ROOT bisects
-its Feldman–Cousins and mid-P bounds to about 10⁻⁹ (0 comes out as 9.3·10⁻¹⁰),
-where rootfig's are exact.
+quantiles from SciPy, as ROOT's, and agree with ROOT's to 10⁻¹¹.
 
 A Bayesian interval reports the posterior as ROOT's `TEfficiency` does: its
 mean (or mode) is the efficiency, so 3 of 10 are drawn at 0.318 with
@@ -812,9 +832,9 @@ Efficiencies and their errors come from the event weights alone
 cancel, whatever their sign, and enter only the yields. With
 signed (NLO) weights a yield can be negative and a ratio can lie outside
 `[0, 1]`; the ratio is reported as is, without errors outside `[0, 1]`, and
-with `interval="wilson-effective"` also without errors when measured against events
-that include a negative weight (`CutflowStep.negative_weights`), since no
-binomial interval describes them. Cut flows are statistical only; systematic
+with a binomial interval (any but the normal approximation) also without
+errors when measured against events that include a negative weight
+(`CutflowStep.negative_weights`), since no binomial interval describes them. Cut flows are statistical only; systematic
 variations are not propagated through them.
 
 Cuts apply cumulatively; a sample's own selection is the first row. Per-object

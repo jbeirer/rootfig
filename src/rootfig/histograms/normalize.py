@@ -11,7 +11,6 @@ import numpy as np
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning, SystematicError
 from rootfig.histograms.build import Histogram, _error_sides, as_weight_storage
-from rootfig.histograms.intervals import count_scale
 from rootfig.histograms.shape import shape_bounds, shape_covariance_matrix, shape_variances
 
 __all__ = [
@@ -209,21 +208,40 @@ def shape_covariance(histogram: Histogram | Hist, spec: NormalizeSpec = True) ->
 
     The histogram's own total fluctuates with its bins, so they are
     anti-correlated (see :data:`NormalizeUncertainty`): the first-order
-    covariance ``J V J^T`` of ``normalize(histogram, spec)``, the bins
-    flattened in C order. Its diagonal holds the variances that
-    ``normalize(..., uncertainty="shape")`` gives a histogram of summed weights.
+    covariance ``J V J^T`` of ``normalize(histogram, spec)``, with ``V`` the
+    diagonal of the sums of squared weights and the bins flattened in C order.
+    Its diagonal holds the variances that ``normalize(...,
+    uncertainty="shape")`` gives a histogram of summed weights; for counts with
+    a Poisson interval that gives the exact marginal interval of each bin
+    instead, which no covariance matrix holds.
 
     Raises
     ------
     ValueError
-        Unless ``spec`` normalises to the histogram's own total.
+        Unless ``spec`` normalises to the histogram's own total, if that total
+        is zero or not finite (no shape to normalise to), or for a histogram
+        with ``stat_errors``, whose asymmetric errors no covariance matrix
+        describes.
     """
     mode = _mode(spec)
     _check_uncertainty("shape", mode)
     assert mode is not None
+    if isinstance(histogram, Histogram) and histogram._errors is not None:
+        msg = (
+            f"histogram {histogram.label!r} has statistical errors of its own (stat_errors), "
+            "which no covariance matrix describes"
+        )
+        raise ValueError(msg)
     hist_ = histogram.hist if isinstance(histogram, Histogram) else as_weight_storage(histogram)
     values = np.asarray(hist_.values(flow=False), dtype=float)
     variances = np.asarray(hist_.variances(flow=False), dtype=float)
+    total = float(values.sum())
+    if total == 0.0 or not np.isfinite(total):
+        msg = (
+            f"the visible bins sum to {total:g} (the histogram is empty, its weights cancel or "
+            "its contents are not finite), so it has no shape to normalise to"
+        )
+        raise ValueError(msg)
     return shape_covariance_matrix(values, variances, _gain(hist_, mode, flow=False))
 
 
@@ -232,9 +250,8 @@ def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | f
     values = original.values(flow=True)
     visible = _visible(original.hist)
     gain = np.broadcast_to(_gain(original.hist, mode, flow=True), values.shape)
-    if original.poisson and original._unit is not None:
-        unit = original._unit
-        factor = count_scale(unit.values(flow=True), np.asarray(unit.variances(flow=True)))
+    if original.poisson:
+        factor = original._factors(flow=True)
         known = factor[visible]
         if known.size and np.all(known > 0) and np.allclose(known, known.flat[0], rtol=1e-12):
             counts = np.rint(np.where(factor > 0, values / np.where(factor > 0, factor, 1.0), 0.0))

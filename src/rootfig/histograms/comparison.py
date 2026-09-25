@@ -58,9 +58,11 @@ UncertaintyMode: TypeAlias = Literal["propagate", "numerator", "poisson-ratio"]
   :attr:`Comparison.band` (the usual data/MC convention, mplhep's ``split_ratio``).
 * ``"poisson-ratio"`` - the exact interval of the ratio of two independent
   Poisson means, for two histograms of counts (a ratio or a relative difference
-  only): the Clopper-Pearson interval of ``n / (n + d)`` turned into one of
-  ``n / d``, as ROOT's ``TGraphAsymmErrors::Divide(..., "pois")``. Scaled counts
-  keep it, scaled like the contents; systematics enter as with ``"propagate"``.
+  only): the one-sigma Clopper-Pearson interval of ``n / (n + d)`` turned into
+  one of ``n / d``, as ROOT's ``TGraphAsymmErrors::Divide(..., "pois")``. Both
+  sides must hold known counts (:meth:`~rootfig.histograms.Histogram.counts`):
+  weighted histograms are refused rather than approximated. Scaled counts keep
+  it, scaled like the contents; systematics enter as with ``"propagate"``.
 """
 
 _Variations: TypeAlias = Mapping[str, tuple[Hist, Hist]]
@@ -167,7 +169,8 @@ def compare(
     * ``"asymmetry"`` is ``(n - d) / (n + d)``, both sides propagated;
     * ``"pull"`` is ``(n - d) / sqrt(vn + vd + syst**2)``, where ``syst`` is the
       systematic uncertainty of ``n - d`` on the side facing the reference (the
-      lower one where ``n > d``, the upper one elsewhere);
+      lower one where ``n > d``, the upper one elsewhere): a Gaussian
+      diagnostic of the error bars, not a likelihood (deviance) residual;
     * ``"s/sqrt(b)"`` and ``"s/sqrt(s+b)"`` are per-bin significances of the
       numerator as signal over the reference as background, statistical only.
 
@@ -268,7 +271,9 @@ def _poisson_ratio_errors(
 
     Given ``n + d`` counts, ``n`` is binomial with ``f = mu_n / (mu_n + mu_d)``;
     the Clopper-Pearson interval of ``f`` maps to ``f / (1 - f)``, times the
-    ratio of the counts' factors. Undefined (``nan``) where ``d`` is 0.
+    ratio of the counts' factors. Undefined (``nan``) where ``d`` is 0. The
+    confidence level is one standard deviation, as ``Divide``'s default: it
+    belongs to the ratio, never to the error bars either side is drawn with.
 
     Raises
     ------
@@ -279,9 +284,7 @@ def _poisson_ratio_errors(
         h if isinstance(h, Histogram) else Histogram(h, label="") for h in (numerator, reference)
     ]
     (n, n_factor), (d, d_factor) = (h.counts() for h in sides)
-    poisson = [h for h in sides if h.poisson]
-    cl = poisson[0]._cl if poisson else ONE_SIGMA
-    lower, upper = clopper_pearson(n, n + d, cl)
+    lower, upper = clopper_pearson(n, n + d, ONE_SIGMA)
     defined = d > 0
     with np.errstate(divide="ignore", invalid="ignore"):
         scale = n_factor / d_factor

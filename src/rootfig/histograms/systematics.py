@@ -22,7 +22,6 @@ from rootfig._storage import add_hists
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
-from rootfig.histograms.intervals import count_scale
 
 __all__ = ["Uncertainty", "sum_histograms", "uncertainty"]
 
@@ -130,15 +129,16 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     keeps the inputs' ``normalization`` when they all share it and has none
     otherwise, so it never claims a scaling one of its parts lacks; it counts
     objects (``per_object``) if any input does, and is observed data
-    (``is_data``) if every input is. It keeps the Poisson interval
-    (:attr:`~rootfig.histograms.Histogram.poisson`) when every input has it
-    at one confidence level with the same factor per count in every bin,
-    however the inputs reached their binning, since counts of one factor add up
-    to counts of it,
-    as ``TH1::Add`` keeps ``kPoisson`` for unweighted histograms. Otherwise, if
-    an input has errors of its own (``stat_errors``), each input's ``(down,
-    up)`` errors add in quadrature side by side, an approximation for
-    asymmetric errors; else the sum has ``sqrt(sum w^2)``.
+    (``is_data``) if every input is. Counts of one factor add up to counts of
+    it, so the sum holds known counts (:meth:`~rootfig.histograms.Histogram.counts`)
+    when every input does with the same factor per count in every bin, however
+    the inputs reached their binning, and keeps the Poisson interval
+    (:attr:`~rootfig.histograms.Histogram.poisson`) when every input also has
+    it at one confidence level, as ``TH1::Add`` keeps ``kPoisson`` for
+    unweighted histograms. Otherwise, if an input has errors of its own
+    (``stat_errors``), each input's ``(down, up)`` errors add in quadrature
+    side by side, an approximation for asymmetric errors; else the sum has
+    ``sqrt(sum w^2)``, as ROOT falls back to it.
 
     Raises
     ------
@@ -176,16 +176,14 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
             [h.variations[name][1] if name in h.variations else h.hist for h in histograms]
         )
         variations[name] = (up, down)
-    unit = first._unit  # one count per bin, set exactly for Poisson histograms
-    shared = unit is not None and all(
-        h._unit is not None
-        and h._cl == first._cl
-        and np.allclose(_count_scale(h._unit), _count_scale(unit), rtol=1e-12, atol=0)
+    counted = all(h._unit is not None for h in histograms) and all(
+        np.allclose(h._factors(flow=True), first._factors(flow=True), rtol=1e-12, atol=0)
         for h in histograms[1:]
     )
+    same_level = all(h.poisson and h._cl == first._cl for h in histograms)
     total = add_hists([h.hist for h in histograms])
     errors: tuple[FloatArray, FloatArray] | None = None
-    if not shared and any(h._errors is not None for h in histograms):
+    if any(h._errors is not None for h in histograms):  # then not every input is Poisson
         # given errors add in quadrature side by side, every input with its own (down, up)
         sides = [h.errors(flow=True) for h in histograms]
         errors = (
@@ -201,13 +199,8 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
         variations=variations,
         per_object=any(h.per_object for h in histograms),
         is_data=all(h.is_data for h in histograms),
-        poisson=first.poisson if shared else False,
-        _unit=unit.copy() if shared and unit is not None else None,
-        _weighted=any(h._weighted for h in histograms),
+        poisson=first.poisson if counted and same_level else False,
+        _unit=first._unit.copy() if counted and first._unit is not None else None,
+        _weighted=not counted,
         stat_errors=errors,
     )
-
-
-def _count_scale(unit: Hist) -> FloatArray:
-    """Return the factor of a count in every cell of a Poisson histogram's record of counts."""
-    return count_scale(unit.values(flow=True), np.asarray(unit.variances(flow=True)))

@@ -126,7 +126,7 @@ def efficiency(
     ValueError
         If ``cl`` is not a confidence level between 0 and 1, for an unknown
         ``interval``, or a method of counts (Clopper-Pearson, Wilson,
-        Agresti-Coull, Feldman-Cousins, mid-P) for weighted histograms.
+        Agresti-Coull) for weighted histograms.
     """
     if not compatible_binning(passed, total):
         msg = "efficiency requires two one-dimensional histograms with identical bin edges"

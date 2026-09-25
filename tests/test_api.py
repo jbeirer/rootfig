@@ -3464,11 +3464,15 @@ class TestStatisticalOptions:
         stored = rf.plot(ERROR_OPTIONS, "normal", observed=rf.Sample(ERROR_OPTIONS, label="D"))
         assert not stored.histograms[-1].poisson  # kNormal
         poisson2 = rf.Sample(ERROR_OPTIONS, label="Data")
-        kept = rf.plot(ERROR_OPTIONS, "poisson2", observed=poisson2)
-        assert kept.histograms[-1].poisson == 0.95  # kPoisson2
-        assert rf.plot(ERROR_OPTIONS, "poisson2", observed=poisson2, data_errors="poisson")
+        # None and "auto" keep what was saved; an explicit choice replaces it
+        for mode, level in ((None, 0.95), ("auto", 0.95), ("poisson", True), (0.9, 0.9)):
+            p = rf.plot(ERROR_OPTIONS, "poisson2", observed=poisson2, data_errors=mode)
+            assert p.histograms[-1].poisson == level, mode
+            assert p.histograms[-1].poisson is not False
         forced = rf.plot(ERROR_OPTIONS, "poisson2", observed=poisson2, data_errors="sumw2")
         assert not forced.histograms[-1].poisson
+        for side in forced.histograms[-1].errors():
+            np.testing.assert_array_equal(side, [0.0, 1.0, 2.0])  # sqrt(N) on both sides
         # a histogram rootfig read from the file keeps it when given as an object
         read = rf.io.FileSource(ERROR_OPTIONS).read_histogram("poisson")
         assert rf.plot([read]).histograms[0].poisson is True
@@ -3532,8 +3536,59 @@ class TestStatisticalOptions:
 
         np.testing.assert_allclose(eff.lower[0], betaincinv(4, 2, 0.025))
         p.close()
-        table = rf.cutflow(sample, ["ok == 1"], interval="mid-p", cl=0.95)
+        table = rf.cutflow(sample, ["ok == 1"], interval="wilson", cl=0.95)
         assert table.get("S").cl == 0.95
+
+
+class TestDataErrorPrecedence:
+    """``None`` and ``"auto"`` keep a model of the histogram's own; explicit choices replace it."""
+
+    COUNTS = [1.0, 4.0, 0.0]
+    GIVEN = ([0.5, 1.0, 0.0], [1.0, 2.0, 1.0])
+
+    def _drawn(self, observed: rf.Histogram, mode: Any) -> rf.Histogram:
+        mc = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
+        mc.fill([0.5, 1.5, 1.5, 2.5], weight=0.5)
+        p = rf.plot([mc], observed=[observed], data_errors=mode)
+        p.close()
+        return p.histograms[-1]
+
+    def _counts(self, values: list[float] | None = None) -> hist.Hist:
+        h = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
+        view: Any = h.view()
+        view.value = view.variance = self.COUNTS if values is None else values
+        return h
+
+    def test_errors_of_its_own(self) -> None:
+        fit = rf.Histogram(self._counts(), label="Data", is_data=True, stat_errors=self.GIVEN)
+        for mode in (None, "auto"):
+            np.testing.assert_array_equal(self._drawn(fit, mode).errors(), self.GIVEN)
+        for side in self._drawn(fit, "sumw2").errors():
+            np.testing.assert_array_equal(side, np.sqrt(self.COUNTS))
+        low, high = poisson_interval(self.COUNTS)
+        for mode, level in (("poisson", True), (0.9, 0.9)):
+            drawn = self._drawn(fit, mode)  # the contents are counts: the Poisson interval
+            assert drawn.poisson == level
+            assert drawn._errors is None
+        np.testing.assert_allclose(self._drawn(fit, "poisson").errors()[1], high - self.COUNTS)
+
+    def test_errors_of_its_own_on_contents_that_are_not_counts(self) -> None:
+        weighted = self._counts([1.5, 4.0, 0.0])
+        fit = rf.Histogram(weighted, label="Data", is_data=True, stat_errors=self.GIVEN)
+        with pytest.raises(ValueError, match=r"not whole numbers.*data_errors='sumw2'"):
+            self._drawn(fit, "poisson")
+        assert not self._drawn(fit, "sumw2").poisson
+        np.testing.assert_array_equal(self._drawn(fit, "auto").errors(), self.GIVEN)
+
+    def test_scaled_counts_keep_what_they_are(self) -> None:
+        # counts scaled by 2 and drawn with sqrt(sum w^2): still known counts, so the Poisson
+        # interval can be asked for again; "auto" takes only unit-weight counts
+        counts = rf.Histogram(self._counts(), label="Data", is_data=True, poisson=True)
+        plain = counts.scaled(2.0).replace(poisson=False)
+        assert not self._drawn(plain, "auto").poisson
+        np.testing.assert_allclose(
+            self._drawn(plain, "poisson").errors(), counts.scaled(2.0).errors()
+        )
 
 
 def test_a_confidence_level_replaces_a_saved_one() -> None:

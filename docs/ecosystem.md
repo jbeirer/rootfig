@@ -62,7 +62,7 @@ would do to a matplotlib figure, you can do to `Plot.fig` and `Plot.ax`.
 of data (ROOT's `TH1::kPoisson`) and the inverse incomplete beta function for the
 Clopper–Pearson and Bayesian intervals of efficiencies (`TEfficiency`'s default
 and its Beta priors); `scipy.optimize.brentq` finds the bounds that have no
-closed form (mid-P, the shortest Bayesian interval). rootfig decides what the
+closed form (the shortest Bayesian interval). rootfig decides what the
 quantiles are taken of (the counts behind scaled or normalised contents, which
 interval ROOT would choose) and imports SciPy only when it computes one.
 

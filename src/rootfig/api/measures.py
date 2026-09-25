@@ -106,10 +106,10 @@ def efficiency(
     ``TEfficiency`` gives: Clopper-Pearson for unweighted entries, the normal
     approximation for weighted ones. The sample's ``scale`` and luminosity
     factor cancel in an efficiency and are left out, so an unweighted sample
-    stays unweighted. ``interval`` names any of ROOT's methods, as ROOT means
-    them: ``"clopper-pearson"``, ``"normal"``, ``"wilson"``,
-    ``"agresti-coull"``, ``"feldman-cousins"`` and ``"mid-p"`` (all but the
-    normal approximation for unweighted entries only), the Bayesian
+    stays unweighted. ``interval`` names another method, as ROOT means it:
+    ``"clopper-pearson"``, ``"normal"``, ``"wilson"`` and
+    ``"agresti-coull"`` (all but the normal approximation for unweighted
+    entries only), the Bayesian
     ``"jeffreys"`` and ``"uniform"`` or any ``rf.Bayesian(alpha, beta, mode=,
     shortest=)`` prior (weighted entries too; the efficiency is then the
     posterior's mean or mode), and ``"wilson-effective"``, the Wilson interval

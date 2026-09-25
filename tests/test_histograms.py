@@ -54,14 +54,12 @@ from rootfig.histograms.bayesian import Bayesian, bayesian_interval
 from rootfig.histograms.binomial import (
     agresti_coull,
     clopper_pearson,
-    feldman_cousins,
-    mid_p,
     normal_interval,
     wilson_interval,
 )
 from rootfig.histograms.build import from_sample
 from rootfig.histograms.groups import group_histogram, regroup_histograms
-from rootfig.histograms.intervals import count_problem, count_scale, poisson_errors
+from rootfig.histograms.intervals import ONE_SIGMA, count_problem, count_scale, poisson_errors
 from rootfig.histograms.normalize import normalization_label, normalize_hist
 from rootfig.histograms.pipeline import combined_weight
 from rootfig.model import Cut, Group, Sample, Systematic, Variable
@@ -1074,8 +1072,10 @@ class TestPoissonHistograms:
         counts = Histogram(empty, label="Data")
         assert not counts.scaled(1.0)._weighted
         scaled = counts.scaled(2.0)
+        # scaled by rootfig: known counts of factor 2, whose empty bins get 0 +2 x 1.84
+        assert scaled.replace(poisson=True).errors()[1] == pytest.approx([2 * 1.8410216450] * 2)
         with pytest.raises(ValueError, match="filled with weights or scaled"):
-            scaled.replace(poisson=True)
+            Histogram(scaled.hist, label="Data", poisson=True, _weighted=True)
         assert scaled.rebinned(2)._weighted  # rebinning keeps what filled it
         assert sum_histograms([counts, scaled])._weighted
         assert normalize(counts, "width")._weighted
@@ -1142,7 +1142,10 @@ class TestPoissonHistograms:
         np.testing.assert_allclose(unchanged.errors()[1], [1.84102164] * 2)
         merged = empty.scaled(2.0).rebinned(2)
         np.testing.assert_allclose(merged.errors()[1], [3.68204329])
-        assert empty.replace(poisson=False)._unit is None
+        # the error model changes, what is known about the counts stays
+        plain = empty.scaled(2.0).replace(poisson=False)
+        np.testing.assert_array_equal(plain.errors()[1], 0.0)
+        np.testing.assert_allclose(plain.replace(poisson=True).errors()[1], [3.68204329] * 2)
         tripled = empty.scaled(3.0)
         np.testing.assert_allclose(tripled.replace(label="x").errors()[1], [5.52306493] * 2)
         with pytest.warns(RootfigWarning, match="no entries"):  # skipped: the scale stays
@@ -1835,6 +1838,22 @@ class TestCutflow:
             [absolute_down[2], absolute_up[2]], [5 / 8 - lower[0], upper[0] - 5 / 8]
         )
 
+    def test_a_negative_weight_that_survives_the_cuts(self) -> None:
+        from rootfig.histograms import cutflow
+
+        # the numerators hold the negative weight, and so do the steps they are measured
+        # against, whose flag alone decides: every step keeps a subset of the one before
+        weights = np.r_[np.ones(9), -1.0]
+        sample = Sample({"n": np.arange(10.0), "w": weights}, weight="w")
+        flow = cutflow(sample, ["n >= 1", "n >= 5"], interval="wilson-effective")
+        assert [step.negative_weights for step in flow.steps] == [True, True, True]
+        np.testing.assert_allclose(flow.efficiencies, [1.0, 7 / 8, 3 / 7])
+        for down, up in (flow.efficiency_errors, flow.absolute_efficiency_errors):
+            assert np.isnan(down[1:]).all()
+            assert np.isnan(up[1:]).all()
+        default = cutflow(sample, ["n >= 1", "n >= 5"])  # normal: holds for signed weights
+        assert np.isfinite(default.efficiency_errors[0][1:]).all()
+
     def test_table(self) -> None:
         from rootfig.histograms import CutflowTable, cutflow
 
@@ -2042,8 +2061,6 @@ class TestEfficiencyDomain:
             lambda: normal_interval([1.0], [2.0], [1.0], [2.0], cl),
             lambda: wilson_interval([1.0], [2.0], [2.0], cl),
             lambda: agresti_coull([1.0], [2.0], cl),
-            lambda: feldman_cousins([1.0], [2.0], cl),
-            lambda: mid_p([1.0], [2.0], cl),
             lambda: bayesian_interval(Bayesian(), [1.0], [2.0], cl=cl),
         ):
             with pytest.raises(ValueError, match="confidence level"):
@@ -4213,29 +4230,15 @@ def test_tree_and_ready_made_variable_agree() -> None:
 ERROR_OPTIONS = Path(__file__).parent / "data" / "error_options.root"
 """Counts 0, 1, 4 saved by ROOT 6.40 with kNormal, kPoisson and kPoisson2 (see CONTRIBUTING.md)."""
 
-# ROOT 6.40 TEfficiency's static intervals at one standard deviation, (passed, total):
-# (lower, upper). ROOT's Feldman-Cousins and mid-P bisections stop at about 1e-9.
+# ROOT 6.40, TEfficiency::AgrestiCoull at one standard deviation of (passed, total):
+# (lower, upper)
 INTERVAL_CASES = [(0, 10), (3, 10), (10, 10), (1, 1), (0, 1), (7, 50), (2.5, 3.0)]
-ROOT_INTERVALS = {
-    "agresti-coull": (
-        [0.0, 0.17774673166969893, 0.8917409745720222, 0.44381378215210276, 0.0,
-         0.09746586744522794, 0.5334936490538904],
-        [0.10825902542797795, 0.45861690469393745, 1.0, 1.0, 0.5561862178478972,
-         0.1966517796135956, 0.9665063509461096],
-    ),
-    "feldman-cousins": (
-        [9.313225746154785e-10, 0.1154527748003602, 0.8845472251996398, 0.3173105074092746,
-         9.313225746154785e-10, 0.08547402266412973, 0.649789304472506],
-        [0.1154527748003602, 0.5000000009313226, 0.9999999990686774, 0.9999999990686774,
-         0.6826894925907254, 0.1976925889030099, 0.8805237459018826],
-    ),
-    "mid-p": (
-        [9.313225746154785e-10, 0.1721518849954009, 0.8915556268766522, 0.3173105074092746,
-         9.313225746154785e-10, 0.09720307309180498, 0.4976176517084241],
-        [0.10844437312334776, 0.4656431498005986, 0.9999999990686774, 0.9999999990686774,
-         0.6826894925907254, 0.19704447221010923, 0.9766290625557303],
-    ),
-}  # fmt: skip
+ROOT_AGRESTI_COULL = (
+    [0.0, 0.17774673166969893, 0.8917409745720222, 0.44381378215210276, 0.0,
+     0.09746586744522794, 0.5334936490538904],
+    [0.10825902542797795, 0.45861690469393745, 1.0, 1.0, 0.5561862178478972,
+     0.1966517796135956, 0.9665063509461096],
+)  # fmt: skip
 # ROOT 6.40, TEfficiency::BetaMean/BetaMode/BetaCentralInterval/BetaShortestInterval of the
 # posterior of (alpha, beta) after k of n: (k, n, mean, mode, central, shortest)
 ROOT_BAYESIAN = {
@@ -4269,36 +4272,16 @@ ROOT_BAYESIAN = {
 
 
 class TestMoreEfficiencyIntervals:
-    """ROOT's other TEfficiency methods: Agresti-Coull, Feldman-Cousins, mid-P and Bayesian."""
+    """ROOT's other TEfficiency methods: Agresti-Coull and Bayesian."""
 
-    @pytest.mark.parametrize("method", sorted(ROOT_INTERVALS))
-    def test_frequentist_methods_are_tefficiency(self, method: str) -> None:
-        function = {"agresti-coull": agresti_coull, "feldman-cousins": feldman_cousins}.get(
-            method, mid_p
-        )
+    def test_agresti_coull_is_tefficiency(self) -> None:
         passed, total = (np.array(c, dtype=float) for c in zip(*INTERVAL_CASES, strict=True))
-        lower, upper = function(passed, total)
-        tolerance = 1e-12 if method == "agresti-coull" else 2e-9  # ROOT's bisection
-        np.testing.assert_allclose(lower, ROOT_INTERVALS[method][0], atol=tolerance)
-        np.testing.assert_allclose(upper, ROOT_INTERVALS[method][1], atol=tolerance)
-        # the exact bounds at the ends, where ROOT's bisection stops 9.3e-10 away
-        if method != "agresti-coull":
-            assert lower[0] == 0.0
-            assert upper[2] == 1.0
-
-    def test_feldman_cousins_at_95_percent(self) -> None:
-        # ROOT 6.40, TEfficiency::FeldmanCousins(n, k, 0.95, ...)
-        lower, upper = feldman_cousins([0, 3, 10, 1], [10, 10, 10, 1], 0.95)
-        root_lower = [0.0, 0.08726443443447351, 0.7329512471333146, 0.049999999813735485]
-        root_upper = [0.2670487528666854, 0.619410659186542, 1.0, 1.0]
-        np.testing.assert_allclose(lower, root_lower, atol=2e-9)
-        np.testing.assert_allclose(upper, root_upper, atol=2e-9)
-
-    def test_undefined_counts(self) -> None:
-        for function in (agresti_coull, feldman_cousins, mid_p):
-            lower, upper = function([1.0, -1.0, 3.0], [0.0, 2.0, 2.0])
-            assert np.isnan(lower).all()
-            assert np.isnan(upper).all()
+        lower, upper = agresti_coull(passed, total)
+        np.testing.assert_allclose(lower, ROOT_AGRESTI_COULL[0], atol=1e-12)
+        np.testing.assert_allclose(upper, ROOT_AGRESTI_COULL[1], atol=1e-12)
+        lower, upper = agresti_coull([1.0, -1.0, 3.0], [0.0, 2.0, 2.0])  # no valid counts
+        assert np.isnan(lower).all()
+        assert np.isnan(upper).all()
 
     @pytest.mark.parametrize("prior", sorted(ROOT_BAYESIAN))
     def test_bayesian_intervals_are_tefficiency(self, prior: tuple[float, float]) -> None:
@@ -4355,9 +4338,11 @@ class TestMoreEfficiencyIntervals:
         passed, total = _hist([0.5] * 3), _hist([0.5] * 10)
         jeffreys = efficiency(passed, total, interval="jeffreys")
         assert jeffreys.values[0] == pytest.approx(0.3181818181818182)  # the posterior mean
-        for method in ("agresti-coull", "feldman-cousins", "mid-p"):
-            with pytest.raises(ValueError, match=f"'{method}' needs unweighted"):
-                efficiency(_hist([0.5], [2.0]), _hist([0.5, 0.5], [2.0, 2.0]), interval=method)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="'agresti-coull' needs unweighted"):
+            efficiency(_hist([0.5], [2.0]), _hist([0.5, 0.5], [2.0, 2.0]), interval="agresti-coull")
+        for removed in ("feldman-cousins", "mid-p"):  # ROOT's, left out of rootfig
+            with pytest.raises(ValueError, match="interval must be"):
+                efficiency(_hist([0.5]), _hist([0.5, 0.5]), interval=removed)  # type: ignore[arg-type]
         for bad in ({"alpha": 0.0}, {"beta": -1.0}, {"alpha": np.inf}):
             with pytest.raises(ValueError, match="positive finite"):
                 Bayesian(**bad)
@@ -4409,8 +4394,7 @@ class TestCutflowIntervals:
         sample = Sample({"n": np.arange(10.0)})
         for method, function in (
             ("agresti-coull", agresti_coull),
-            ("feldman-cousins", feldman_cousins),
-            ("mid-p", mid_p),
+            ("clopper-pearson", clopper_pearson),
         ):
             flow = cutflow(sample, ["n >= 7"], interval=method, cl=0.95)  # type: ignore[arg-type]
             assert flow.cl == 0.95
@@ -4452,6 +4436,10 @@ class TestPoissonLevels:
         np.testing.assert_allclose(factor, [2.5, 2.5])
         with pytest.raises(ValueError, match="holds no known counts"):
             Histogram(_contents([2.0], [4.0]), label="W").counts()
+        with pytest.raises(ValueError, match="negative factor"):
+            Histogram(_poisson([0.0, 3.0]), label="A").scaled(-1.0).counts()
+        with pytest.raises(BinningError, match="statistical errors do not have its binning"):
+            Histogram(_poisson([0.0, 3.0]), label="A", _errors=(_poisson([1.0]), _poisson([1.0])))
 
 
 class TestStatErrors:
@@ -4576,6 +4564,14 @@ class TestPoissonRatio:
         scaled = compare(a.replace(poisson=True).scaled(2.0), b, uncertainty="poisson-ratio")
         np.testing.assert_allclose(scaled.errors[1][:3], 2 * ratio.errors[1][:3])
 
+    def test_the_level_belongs_to_the_ratio(self) -> None:
+        # drawing a side with a 95 % Poisson interval does not change the ratio's interval
+        a, b = Histogram(_poisson(self.A), label="A"), Histogram(_poisson(self.B), label="B")
+        plain = compare(a, b, uncertainty="poisson-ratio")
+        for sides in ((a.replace(poisson=0.95), b), (a, b.replace(poisson=0.95))):
+            wide = compare(*sides, uncertainty="poisson-ratio")
+            np.testing.assert_array_equal(wide.errors, plain.errors)
+
     def test_it_needs_counts_and_a_ratio(self) -> None:
         a = Histogram(_poisson(self.A), label="A")
         weighted = Histogram(_contents([1.0] * 4, [2.0] * 4), label="W")
@@ -4621,10 +4617,14 @@ class TestSavedErrorOptions:
         np.testing.assert_allclose(up, [u for _, u in self.ROOT[name]], rtol=1e-9)
         assert histogram.poisson == {"poisson": True, "poisson2": 0.95}.get(name, False)
 
-    def test_a_sample_scale_keeps_the_interval(self) -> None:
+    def test_a_sample_scale_makes_it_weighted(self) -> None:
+        # as TH1::Scale in ROOT, and as a sample's scale when filling from a tree
         (scaled,) = read_stored([Sample(ERROR_OPTIONS, scale=2.0)], [Variable("poisson")])
-        assert scaled.poisson
-        np.testing.assert_allclose(scaled.errors()[1], [2 * u for _, u in self.ROOT["poisson"]])
+        assert not scaled.poisson
+        for side in scaled.errors():
+            np.testing.assert_allclose(side, [0.0, 2.0, 4.0])  # ROOT 6.40: 2 sqrt(N)
+        with pytest.raises(ValueError, match="weighted or scaled"):
+            scaled.counts()
 
 
 class TestShapeEdges:
@@ -4645,3 +4645,80 @@ class TestShapeEdges:
         visible = normalize(counts, True, uncertainty="shape")
         assert not visible.poisson
         assert np.all(np.isfinite(visible.errors()[1]))
+
+    def test_a_covariance_needs_a_shape(self) -> None:
+        # no visible total to divide by: a clear error, not nan with divide-by-zero warnings
+        for values, variances in (
+            ([0.0, 0.0], [0.0, 0.0]),  # empty
+            ([2.0, -2.0], [4.0, 4.0]),  # signed weights that cancel
+            ([np.inf, 1.0], [1.0, 1.0]),  # not finite
+        ):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                with pytest.raises(ValueError, match="no shape to normalise to"):
+                    shape_covariance(Histogram(_contents(values, variances), label="H"))
+                with pytest.raises(ValueError, match="no shape to normalise to"):
+                    shape_covariance(_contents(values, variances), "density")
+        given = Histogram(
+            _contents([1.0, 3.0], [1.0, 3.0]), label="G", stat_errors=([0.5, 1.0], [1.0, 2.0])
+        )
+        with pytest.raises(ValueError, match="stat_errors"):
+            shape_covariance(given)
+
+
+# every k of n for a few totals, where the named intervals must hold their invariants
+_K, _N = (
+    np.array(side, dtype=float)
+    for side in zip(*((k, n) for n in (1, 2, 7, 30, 250) for k in range(n + 1)), strict=True)
+)
+_BINOMIAL = {
+    "clopper-pearson": clopper_pearson,
+    "wilson": lambda k, n, cl: wilson_interval(k, n, n, cl),
+    "agresti-coull": agresti_coull,
+    "normal": lambda k, n, cl: normal_interval(k, n, k, n, cl),
+    "jeffreys": lambda k, n, cl: bayesian_interval(Bayesian(0.5, 0.5), k, n, cl=cl)[1:],
+    "uniform": lambda k, n, cl: bayesian_interval(Bayesian(1.0, 1.0), k, n, cl=cl)[1:],
+}
+
+
+class TestIntervalInvariants:
+    """What every interval must satisfy, on grids of counts and confidence levels."""
+
+    @pytest.mark.parametrize("cl", [ONE_SIGMA, 0.9, 0.95, 0.99])
+    def test_poisson(self, cl: float) -> None:
+        n = np.array([0.0, 1.0, 2.0, 5.0, 17.0, 100.0, 1e4, 1e7])
+        low, high = poisson_interval(n, cl)
+        assert np.all((low >= 0) & (low <= n) & (n <= high))
+        assert low[0] == 0.0
+        assert high[0] > 0.0
+        wider = poisson_interval(n, (1.0 + cl) / 2)
+        assert np.all((wider[0] <= low) & (wider[1] >= high))
+
+    @pytest.mark.parametrize("cl", [ONE_SIGMA, 0.95])
+    @pytest.mark.parametrize("method", sorted(_BINOMIAL))
+    def test_binomial(self, method: str, cl: float) -> None:
+        interval = _BINOMIAL[method]
+        lower, upper = interval(_K, _N, cl)
+        assert np.all((lower >= 0.0) & (lower <= upper) & (upper <= 1.0))
+        if method not in ("jeffreys", "uniform"):  # a posterior's central interval need not
+            assert np.all((lower <= _K / _N) & (upper >= _K / _N))
+        # failures are passes of the complement, for these symmetric methods and priors
+        mirrored = interval(_N - _K, _N, cl)
+        np.testing.assert_allclose(lower, 1.0 - mirrored[1], atol=1e-12)
+        np.testing.assert_allclose(upper, 1.0 - mirrored[0], atol=1e-12)
+        wider = interval(_K, _N, (1.0 + cl) / 2)
+        assert np.all((wider[0] <= lower + 1e-15) & (wider[1] >= upper - 1e-15))
+
+    @pytest.mark.parametrize("spec", [True, 3.0, "density"])
+    def test_a_normalised_shape_keeps_its_total(self, spec: Any) -> None:
+        rng = np.random.default_rng(3)
+        h = hist.Hist(
+            hist.axis.Variable([0.0, 1.0, 1.5, 4.0, 4.2, 6.0]), storage=hist.storage.Weight()
+        )
+        h.fill(rng.uniform(0, 6, 400), weight=rng.uniform(0.2, 2.0, 400))
+        covariance = shape_covariance(Histogram(h, label="W"), spec)
+        # the normalised bins (times their widths for a density) sum to a constant
+        sizes = np.diff(h.axes[0].edges) if spec == "density" else np.ones(5)
+        np.testing.assert_allclose(covariance @ sizes, 0.0, atol=1e-15)
+        np.testing.assert_allclose(covariance, covariance.T)
+        assert np.all(np.linalg.eigvalsh(covariance) > -1e-15)

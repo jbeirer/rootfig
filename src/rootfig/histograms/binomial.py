@@ -5,8 +5,7 @@ default, whose frequentist options also fall back to the normal approximation
 for weighted histograms in ROOT 6.40): Clopper-Pearson for unweighted counts,
 the normal approximation for weighted entries. Every other name is the method
 ROOT means by it, for the entries ROOT allows it for; ``"wilson-effective"`` is
-rootfig's own. The Bayesian intervals live in :mod:`~rootfig.histograms.bayesian`,
-Feldman-Cousins in :mod:`~rootfig.histograms.feldman_cousins`.
+rootfig's own. The Bayesian intervals live in :mod:`~rootfig.histograms.bayesian`.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ import numpy.typing as npt
 
 from rootfig._typing import FloatArray
 from rootfig.histograms.bayesian import Bayesian, bayesian_interval
-from rootfig.histograms.feldman_cousins import feldman_cousins
 from rootfig.histograms.intervals import ONE_SIGMA, check_cl, normal_quantile
 
 __all__ = [
@@ -31,9 +29,7 @@ __all__ = [
     "check_interval",
     "clopper_pearson",
     "efficiency_interval",
-    "feldman_cousins",
     "is_unweighted",
-    "mid_p",
     "normal_interval",
     "resolve_interval",
     "wilson_interval",
@@ -46,8 +42,6 @@ EfficiencyMethod: TypeAlias = Literal[
     "wilson",
     "wilson-effective",
     "agresti-coull",
-    "feldman-cousins",
-    "mid-p",
     "jeffreys",
     "uniform",
 ]
@@ -60,10 +54,6 @@ EfficiencyMethod: TypeAlias = Literal[
 * ``"wilson"`` - the Wilson score interval of counts; unweighted entries only.
 * ``"agresti-coull"`` - the Agresti-Coull interval of counts: the normal
   approximation around the Wilson centre; unweighted entries only.
-* ``"feldman-cousins"`` - the Neyman construction with Feldman and Cousins'
-  likelihood-ratio ordering; unweighted entries only.
-* ``"mid-p"`` - Lancaster's mid-P interval, a less conservative Clopper-Pearson;
-  unweighted entries only.
 * ``"jeffreys"``, ``"uniform"`` - the Bayesian intervals of the priors
   ``Beta(0.5, 0.5)`` and ``Beta(1, 1)`` (see :class:`Bayesian`, which also
   takes any other prior); weighted entries too.
@@ -86,15 +76,13 @@ Method: TypeAlias = (
         "wilson",
         "wilson-effective",
         "agresti-coull",
-        "feldman-cousins",
-        "mid-p",
     ]
     | Bayesian
 )
 """A resolved :data:`EfficiencyInterval`: no ``"auto"``, the named priors as :class:`Bayesian`."""
 
 _METHODS: tuple[str, ...] = typing.get_args(EfficiencyMethod)
-_COUNTS_ONLY = ("clopper-pearson", "wilson", "agresti-coull", "feldman-cousins", "mid-p")
+_COUNTS_ONLY = ("clopper-pearson", "wilson", "agresti-coull")
 """Methods of counts: ROOT refuses them for weighted entries and falls back to "normal"."""
 _PRIORS = {"jeffreys": Bayesian(0.5, 0.5), "uniform": Bayesian(1.0, 1.0)}
 
@@ -200,10 +188,6 @@ def efficiency_interval(
             bounds = wilson_interval(k, n, total_variance, cl)
         case "agresti-coull":
             bounds = agresti_coull(k, n, cl)
-        case "feldman-cousins":
-            bounds = feldman_cousins(k, n, cl)
-        case "mid-p":
-            bounds = mid_p(k, n, cl)
         case _:
             msg = f"efficiency_interval needs a resolved method, got {method!r}"  # type: ignore[unreachable]
             raise ValueError(msg)
@@ -340,46 +324,3 @@ def agresti_coull(
         lower = np.where(valid, np.maximum(centre - half, 0.0), np.nan)
         upper = np.where(valid, np.minimum(centre + half, 1.0), np.nan)
     return np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)
-
-
-def mid_p(
-    passed: npt.ArrayLike, total: npt.ArrayLike, cl: float = ONE_SIGMA
-) -> tuple[FloatArray, FloatArray]:
-    """Return Lancaster's mid-P interval of ``passed`` of ``total`` counts: ``(lower, upper)``.
-
-    Clopper-Pearson with half the probability of the observed count: the
-    bounds are where ``P(N < passed) + P(N = passed) / 2`` is ``1 - (1 - cl) /
-    2`` and ``(1 - cl) / 2``, extended to real counts through the beta
-    function and, between 0 and 1 passing entries, interpolated linearly, as
-    ``TEfficiency::MidPInterval``. The bounds are exact where ROOT's bisection
-    stops at about 1e-9. ``nan`` where the total is not positive or ``passed``
-    lies outside ``[0, total]``.
-    """
-    from scipy.optimize import brentq  # noqa: PLC0415 - imported only when used
-    from scipy.special import betainc, betaln, xlog1py, xlogy  # noqa: PLC0415
-
-    tail = check_cl(cl)
-    k_all, n_all, valid = _counts(passed, total)
-
-    def bound(k: float, n: float, upper: bool) -> float:
-        if 0.0 < k < 1.0:  # between no and one passing entry: ROOT's linear interpolation
-            none, one = bound(0.0, n, upper), bound(1.0, n, upper)
-            return none + (one - none) * k
-        if (upper and k == n) or (not upper and k == 0.0):
-            return 1.0 if upper else 0.0
-
-        def mid(p: float) -> float:  # P(N < k) + P(N = k) / 2, falling from 1 (or 1/2) to 0
-            log = xlogy(k, p) + xlog1py(n - k, -p) - betaln(k + 1.0, n - k + 1.0)
-            exactly = float(np.exp(log)) / (n + 1.0)
-            below = float(betainc(n - k + 1.0, k, 1.0 - p)) if k >= 1.0 else 0.0
-            return 0.5 * exactly + below - (tail if upper else 1.0 - tail)
-
-        return float(brentq(mid, 0.0, 1.0, xtol=1e-15, rtol=4 * np.finfo(float).eps))
-
-    lower = np.full(k_all.shape, np.nan)
-    upper = np.full(k_all.shape, np.nan)
-    for index in np.ndindex(valid.shape):
-        if valid[index]:
-            k, n = float(k_all[index]), float(n_all[index])
-            lower[index], upper[index] = bound(k, n, upper=False), bound(k, n, upper=True)
-    return lower, upper
