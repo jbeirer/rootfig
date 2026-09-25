@@ -1,0 +1,2440 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Publication-quality figures straight from ROOT trees and histograms, without ROOT.">
+      
+      
+      
+        <link rel="canonical" href="https://jbeirer.github.io/rootfig/batch/">
+      
+      
+        <link rel="prev" href="../composable/">
+      
+      
+        <link rel="next" href="../plotting/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Batch plotting - rootfig</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/gallery.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#batch-plotting" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="rootfig" class="md-header__button md-logo" aria-label="rootfig" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            rootfig
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Batch plotting
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jbeirer/rootfig" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jbeirer/rootfig
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="rootfig" class="md-nav__button md-logo" aria-label="rootfig" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    rootfig
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jbeirer/rootfig" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jbeirer/rootfig
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gallery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gallery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Gallery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/quick/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The one-liner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/overlay_ratio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Several samples, normalised, with a ratio panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    In-memory arrays instead of files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/many_plots/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Many plots in a loop, saved by variable name
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Simulation and data
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Simulation and data
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/stack_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stacked simulation with data and a ratio panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/pull/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A pull panel: data minus the prediction, in units of the uncertainty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/selective_stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stacked backgrounds with a signal overlaid
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/systematics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Systematic uncertainties in a stack and its ratio panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/ratio_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ratio to a chosen sample, per-sample drawing styles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/xbreak_ratio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A broken x axis: peak and far tail without the empty middle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/luminosity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross sections and a luminosity instead of hand-made scale factors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/stored_histograms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Histograms from an analysis framework: grouped, cropped and stacked
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Binning and ranges
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Binning and ranges
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/variable_bins/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variable bin widths, per-width normalisation and overflow bins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/log_axes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logarithmic axes with log-spaced bins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/robust_range/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automatic ranges: robust by default, or the full extent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/density_flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Density normalisation and summed overflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selections and expressions
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Selections and expressions
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/object_vs_event/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-object versus per-event selections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/expressions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Expressions and pre-filled histograms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beyond one dimension
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Beyond one dimension
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/hist2d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A two-dimensional histogram
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/correlation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A correlation matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/efficiency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Efficiency versus a variable with binomial intervals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/profile/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Profiles: a statistic of one variable in bins of another
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Appearance
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Appearance
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/fill_stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Filled histograms, a statistics box and free text
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gallery/style_colors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A custom style: colours, legend position, figure size, rcParams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../expressions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Expressions and selections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../composable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Samples, variables, cuts and styles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Batch plotting
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Batch plotting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-axes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three axes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automatic-variable-discovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automatic variable discovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-passes-through-unchanged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data passes through unchanged
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File names
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-multipage-pdf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One multipage PDF
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-plots-yourself" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running plots yourself
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subsets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-complete-example-histogram-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A complete example: histogram files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-book-does-not-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a book does not do
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plotting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plotting options
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-axes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three axes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automatic-variable-discovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automatic variable discovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-passes-through-unchanged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data passes through unchanged
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File names
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-multipage-pdf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One multipage PDF
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-plots-yourself" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running plots yourself
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subsets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-complete-example-histogram-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A complete example: histogram files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-book-does-not-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a book does not do
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="batch-plotting">Batch plotting<a class="headerlink" href="#batch-plotting" title="Permanent link">&para;</a></h1>
+<p>An analysis rarely needs one plot. It needs every variable, under each
+selection, drawn linear and logarithmic. <code>rf.PlotBook</code> describes that set once
+and runs <a class="autorefs autorefs-internal" title="rootfig.plot" href="../api/#rootfig.plot"><code>rf.plot</code></a> for each member: it is repeated
+<code>rf.plot(...)</code>, not a second plotting engine.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rootfig</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">rf</span>
+
+<span class="n">ww</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"ww.root"</span><span class="p">,</span> <span class="n">tree</span><span class="o">=</span><span class="s2">"events"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"WW"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="s2">"mc_weight"</span><span class="p">)</span>
+<span class="n">zz</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"zz.root"</span><span class="p">,</span> <span class="n">tree</span><span class="o">=</span><span class="s2">"events"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"ZZ"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="s2">"mc_weight"</span><span class="p">)</span>
+<span class="n">signal</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"signal.root"</span><span class="p">,</span> <span class="n">tree</span><span class="o">=</span><span class="s2">"events"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"Signal"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="s2">"mc_weight"</span><span class="p">)</span>
+
+<span class="n">book</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">PlotBook</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">rf</span><span class="o">.</span><span class="n">Group</span><span class="p">([</span><span class="n">ww</span><span class="p">,</span> <span class="n">zz</span><span class="p">],</span> <span class="n">label</span><span class="o">=</span><span class="s2">"VV"</span><span class="p">),</span> <span class="n">signal</span><span class="p">],</span>
+    <span class="p">[</span>
+        <span class="n">rf</span><span class="o">.</span><span class="n">Variable</span><span class="p">(</span><span class="s2">"mass"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">(</span><span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">150</span><span class="p">),</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">),</span>
+        <span class="n">rf</span><span class="o">.</span><span class="n">Variable</span><span class="p">(</span><span class="s2">"pt"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">(</span><span class="mi">50</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">200</span><span class="p">),</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">),</span>
+    <span class="p">],</span>
+    <span class="n">selections</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"baseline"</span><span class="p">:</span> <span class="n">rf</span><span class="o">.</span><span class="n">Cut</span><span class="p">(</span><span class="s2">"nMuon &gt;= 2"</span><span class="p">),</span>
+        <span class="s2">"sr"</span><span class="p">:</span> <span class="n">rf</span><span class="o">.</span><span class="n">Cut</span><span class="p">(</span><span class="s2">"nMuon &gt;= 2"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="s2">"recoil_mass &gt; 120"</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="n">variants</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"lin"</span><span class="p">:</span> <span class="p">{},</span>
+        <span class="s2">"log"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"logy"</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+    <span class="p">},</span>
+    <span class="n">plot_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">"stack"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">"style"</span><span class="p">:</span> <span class="n">rf</span><span class="o">.</span><span class="n">Style</span><span class="p">(</span><span class="n">experiment</span><span class="o">=</span><span class="s2">"ATLAS"</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="s2">"Internal"</span><span class="p">)},</span>
+<span class="p">)</span>
+
+<span class="n">book</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"plots"</span><span class="p">,</span> <span class="n">formats</span><span class="o">=</span><span class="p">[</span><span class="s2">"pdf"</span><span class="p">,</span> <span class="s2">"png"</span><span class="p">])</span>
+</code></pre></div>
+<p>This writes eight plots in two formats, <code>plots/mass__baseline__lin.pdf</code>,
+<code>plots/mass__baseline__lin.png</code>, ... <code>plots/pt__sr__log.png</code>.</p>
+<h2 id="the-three-axes">The three axes<a class="headerlink" href="#the-three-axes" title="Permanent link">&para;</a></h2>
+<p>The tasks of a book are the Cartesian product</p>
+<div class="highlight"><pre><span></span><code>variables × selections × variants
+</code></pre></div>
+<p>in insertion order, variables outermost and variants innermost. Two variables,
+three selections and two variants give twelve tasks, and <code>book.tasks()</code> lists
+them without reading or drawing anything.</p>
+<p><strong>Variables</strong> are names, expressions or <a href="../composable/#variable"><code>Variable</code></a>
+objects; one may be given bare (<code>rf.PlotBook(data, "mass")</code>).
+<code>Variable.safe_name</code> (the <code>name=</code>, else
+<a class="autorefs autorefs-internal" title="rootfig.model.safe_file_stem" href="../api/#rootfig.model.safe_file_stem"><code>safe_file_stem</code></a> of the expression) identifies a
+variable and names its files, so
+two variables of one book must not share it: <code>Variable("Muon_pt", name="pt")</code>
+next to <code>Variable("Electron_pt", name="pt")</code> is rejected.</p>
+<p><strong>Selections</strong> are a mapping from a name to a cut (a string, a
+<a href="../composable/#cut"><code>Cut</code></a> or <code>None</code> for "no cut"). Names are the file name
+component, never derived from the expression or the cut's label.</p>
+<p><strong>Variants</strong> are a mapping from a name to <code>plot()</code> keywords. A variant's
+keywords override the common <code>plot_kwargs</code> for its tasks, so</p>
+<div class="highlight"><pre><span></span><code><span class="n">book</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">PlotBook</span><span class="p">(</span>
+    <span class="n">data</span><span class="p">,</span>
+    <span class="p">[</span><span class="s2">"mass"</span><span class="p">],</span>
+    <span class="n">plot_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">"stack"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">"logy"</span><span class="p">:</span> <span class="kc">False</span><span class="p">},</span>
+    <span class="n">variants</span><span class="o">=</span><span class="p">{</span><span class="s2">"lin"</span><span class="p">:</span> <span class="p">{},</span> <span class="s2">"log"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"logy"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>draws <code>lin</code> with <code>stack=True, logy=False</code> and <code>log</code> with <code>stack=True, logy=True</code>.
+With <code>variants={"stacked": {"stack": True}, "overlaid": {"stack": ["Background"]}}</code>,
+every plot is drawn with the signal inside the stack and over it, from one set of
+prepared histograms. With the signal last and <code>panel="s/sqrt(b)"</code> in
+<code>plot_kwargs</code>, both show the same significance panel.</p>
+<p>Every other keyword of <code>rf.plot</code> (<code>observed=</code>, <code>normalize=</code>, <code>panel=</code>,
+<code>systematics=</code>, <code>style=</code>, ...) goes into <code>plot_kwargs</code> or a variant. The keyword
+names are checked against <code>rf.plot</code>'s signature when the book is built, so a
+misspelt <code>log_y</code> is reported, with <code>logy</code> as the suggestion, before anything is
+drawn rather than after the first tasks have written their files; the values are
+validated by <code>rf.plot</code> itself. Five keywords are the book's own and are rejected:
+<code>data</code>, <code>variable</code> and <code>selection</code> come from the task, <code>save</code> from
+<code>PlotBook.save()</code>, and <code>ax</code> because every task draws its own figure.</p>
+<p>A reserved keyword, an empty <code>selections=</code> or <code>variants=</code>, an unusable name and a
+pair of tasks whose files would collide all raise <code>ValueError</code> when the book is
+built. A <code>selections=</code>, <code>variants=</code> or <code>plot_kwargs=</code> that is not a mapping, a
+name that is not a string, and a keyword <code>rf.plot</code> does not take, raise
+<code>TypeError</code>.</p>
+<p>Selection and variant names become file name components and are checked, like
+<code>Variable.name</code>, for every platform: more than dots and spaces, no trailing dot
+or space, no slash, backslash, control character or <code>&lt;&gt;:"|?*</code>, and not a Windows
+device name (<code>CON</code>, <code>NUL</code>, <code>COM1</code>, ...). The check is
+<a class="autorefs autorefs-internal" title="rootfig.model.check_file_stem" href="../api/#rootfig.model.check_file_stem"><code>check_file_stem</code></a>; its message offers a
+spelling that works.</p>
+<h2 id="automatic-variable-discovery">Automatic variable discovery<a class="headerlink" href="#automatic-variable-discovery" title="Permanent link">&para;</a></h2>
+<p><code>rf.ALL</code> in place of the variable list asks the book to find the variables
+itself:</p>
+<div class="highlight"><pre><span></span><code><span class="n">book</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">PlotBook</span><span class="p">(</span>
+    <span class="n">samples</span><span class="p">,</span>
+    <span class="n">variables</span><span class="o">=</span><span class="n">rf</span><span class="o">.</span><span class="n">ALL</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Discovery reads metadata only. For a <code>TTree</code> or <code>RNTuple</code> it is the schema:
+every branch (or nested field, <code>Muon.pt</code>) whose values are numbers or booleans,
+lists and fixed-size arrays of them included, becomes a variable; strings,
+records and other objects are left out. For a ROOT file read without a tree it
+is the object list: every stored <code>TH1</code> becomes a variable; <code>TH2</code>, <code>TProfile</code>,
+<code>TParameter</code> and the like do not, and a histogram inside a directory is named by
+its path (<code>sel/mz</code>). A file holding both is treated as <code>rf.plot</code> treats it: the
+branches of its one tree plus the stored <code>TH1</code>s no branch shadows; an explicit
+<code>tree=</code> means branches only, and several trees without <code>tree=</code> raise, as they
+do for any plot. In-memory arrays contribute their numeric and boolean columns.
+No event array and no bin content is read, and the first file of a sample
+stands for all of them, as everywhere in rootfig.</p>
+<p>With several samples, groups (through their leaf samples) and <code>observed=</code>, a
+variable must be present in every one of them, the same way: a name that is a
+branch in one sample and a stored histogram in another is not a common
+variable. Variants that change how the histograms are prepared (<code>tree</code>,
+<code>observed</code>, <code>weight</code>, ...) must all be able to plot it too, so the discovered
+set is the intersection over the effective configurations. The files or arrays
+a <code>Systematic.samples</code> variation fills or reads from are surveyed like a sample
+of their own and take part in the intersection, in the mode of the sample they
+vary; a variation that cannot be built or surveyed is left to the task, which
+reports it whatever the variable. A branch that a branch-replacement systematic
+replaces is kept only when its replacement is a plottable branch of the sample,
+since the replacement is read whenever the branch is. Stored histograms
+are left out whenever the book is bound to refuse them: a selection, a
+<code>weight</code>, <code>nonfinite="error"</code>, a <code>stats</code> box, or a
+systematic varying the weight or branches that applies to a sample (the plot's
+unless the sample's own source of that name replaces it, none for observed
+data), in the book's keywords or in any variant's. A file of stored histograms
+only then fails when the book is built, saying why, rather than at its first
+task; the message lists what each sample holds, what was left out and why, and
+which names the samples do not share.</p>
+<p><code>include=</code> and <code>exclude=</code> narrow the set with case-sensitive shell patterns
+(<code>*</code>, <code>?</code>, <code>[...]</code>, as <code>fnmatch</code> reads them), one or a sequence:</p>
+<div class="highlight"><pre><span></span><code><span class="n">book</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">PlotBook</span><span class="p">(</span>
+    <span class="n">samples</span><span class="p">,</span>
+    <span class="n">variables</span><span class="o">=</span><span class="n">rf</span><span class="o">.</span><span class="n">ALL</span><span class="p">,</span>
+    <span class="n">include</span><span class="o">=</span><span class="p">[</span><span class="s2">"Muon_*"</span><span class="p">,</span> <span class="s2">"Electron_*"</span><span class="p">,</span> <span class="s2">"MET*"</span><span class="p">],</span>
+    <span class="n">exclude</span><span class="o">=</span><span class="p">[</span><span class="s2">"*_cov"</span><span class="p">,</span> <span class="s2">"*Index"</span><span class="p">],</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A variable is kept when it matches one <code>include</code> pattern (all do when <code>include</code>
+is not given) and no <code>exclude</code> pattern. Patterns match the source name, <code>sel/mz</code>
+or <code>jet1_b-tag</code>, not the file name component <code>sel_mz</code> made from it. They are
+only valid with <code>rf.ALL</code>: an explicit list is used as it is, and <code>include=</code> or
+<code>exclude=</code> next to one raises. So does a filter that leaves nothing; a pattern
+that matches nothing is fine as long as others do.</p>
+<p>The result is an ordinary tuple of <code>Variable</code> objects, sorted by source name,
+each addressing exactly its branch or histogram (<code>`jet1_b-tag`</code> and
+<code>`sel/mz`</code> in backticks). <code>book.variables</code> shows exactly what was
+discovered, and from there on nothing distinguishes the book from one built
+with that list: the same file names (two names that sanitise to one component,
+<code>a-b</code> and <code>a_b</code>, are rejected as for an explicit list; exclude one or name
+them), the same <code>tasks()</code>, <code>select()</code> (which keeps the discovered variables
+rather than discovering again) and the same batched execution described below.</p>
+<p><code>rf.discover_variables(data, ...)</code> runs the same discovery without building a
+book, under the same <code>selections=</code>, <code>variants=</code>, <code>plot_kwargs=</code>, <code>include=</code> and
+<code>exclude=</code> keywords, and returns the variables. It does not check output file
+names, so two names that sanitise to one component are both returned; tell them
+apart with <code>Variable.replace(name=...)</code> and pass the list to <code>PlotBook</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">variables</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">discover_variables</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">include</span><span class="o">=</span><span class="s2">"jet*"</span><span class="p">)</span>
+<span class="n">renamed</span> <span class="o">=</span> <span class="p">[</span><span class="n">v</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"jet1_btag"</span><span class="p">)</span> <span class="k">if</span> <span class="n">v</span><span class="o">.</span><span class="n">expression</span> <span class="o">==</span> <span class="s2">"`jet1_b-tag`"</span> <span class="k">else</span> <span class="n">v</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">variables</span><span class="p">]</span>
+<span class="n">book</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">PlotBook</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">renamed</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="data-passes-through-unchanged">Data passes through unchanged<a class="headerlink" href="#data-passes-through-unchanged" title="Permanent link">&para;</a></h2>
+<p><code>data</code> is stored as given and handed to <code>rf.plot</code> as is, never copied or
+flattened; with an explicit variable list it is not inspected either, and
+<code>rf.ALL</code> reads its metadata only. Every form of <code>data</code> that <code>rf.plot</code> accepts
+can therefore be used in a book: file paths and globs, <code>Sample</code> objects,
+<code>Group</code> objects (drawn as one histogram), a <code>Group</code> as <code>observed=</code>, variables
+that name a <code>TH1</code> stored in the files, in-memory arrays and <code>hist.Hist</code> or
+<code>Histogram</code> objects. The rules of <code>rf.plot</code> apply unchanged: a book always
+names at least one variable (<code>rf.ALL</code> needs inputs with names to discover, so
+histogram objects take an explicit one), and a <code>selection</code> or <code>weight</code> raises
+for a ready-made histogram, which is drawn as it is.</p>
+<p>The book copies the mappings it is configured with (the variable list,
+<code>selections</code>, <code>variants</code> and each keyword mapping) into read-only copies, so
+adding to or replacing entries of those dictionaries afterwards does not change
+the book. The values inside them are shared, not copied: a <code>Style</code>, a <code>Group</code> or
+a <code>systematics=</code> mapping given in <code>plot_kwargs</code> is the caller's object, and
+changing it changes what the book draws.</p>
+<h2 id="file-names">File names<a class="headerlink" href="#file-names" title="Permanent link">&para;</a></h2>
+<p><code>book.save(directory, formats=("pdf",), **savefig_kwargs)</code> creates the directory
+if needed and writes one file per task and format, named</p>
+<div class="highlight"><pre><span></span><code>&lt;variable&gt;[__&lt;selection&gt;][__&lt;variant&gt;].&lt;format&gt;
+</code></pre></div>
+<p>A component appears whenever its axis was given explicitly, whatever the name:</p>
+<table>
+<thead>
+<tr>
+<th>Book</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rf.PlotBook(data, ["mass"])</code></td>
+<td><code>mass.pdf</code></td>
+</tr>
+<tr>
+<td><code>rf.PlotBook(data, ["mass"], selections={"all": cut})</code></td>
+<td><code>mass__all.pdf</code></td>
+</tr>
+<tr>
+<td><code>rf.PlotBook(data, ["mass"], variants={"default": {"logy": True}})</code></td>
+<td><code>mass__default.pdf</code></td>
+</tr>
+<tr>
+<td>both explicit</td>
+<td><code>mass__sr__log.pdf</code></td>
+</tr>
+</tbody>
+</table>
+<p>One format may be given bare, <code>formats="png"</code>, a leading dot is accepted and
+duplicates are dropped. A format matplotlib cannot write raises <code>ValueError</code>
+before the first figure is drawn, rather than part way through the batch. The
+remaining <code>savefig_kwargs</code> go to <a class="autorefs autorefs-internal" title="save" href="../api/#rootfig.Plot.save"><code>Plot.save</code></a>; <code>format</code> and
+<code>fname</code> are refused, because the file names come from <code>formats</code> and the task.</p>
+<p>Two tasks that would share a name are rejected when the book is built, not
+when the second file overwrites the first. Names are compared ignoring case and
+Unicode normalisation, since <code>lin</code> and <code>LIN</code> are one file on the case-insensitive
+file systems of macOS and Windows; the message lists the spellings that clash.
+<code>save()</code> returns the written paths in task order, then format order, and closes
+every figure after writing it, also when writing fails, so memory stays bounded
+however large the book is.</p>
+<h2 id="one-multipage-pdf">One multipage PDF<a class="headerlink" href="#one-multipage-pdf" title="Permanent link">&para;</a></h2>
+<p><code>book.save_pdf(path)</code> writes every task into a single PDF, several plots per
+page, arranged automatically:</p>
+<div class="highlight"><pre><span></span><code><span class="n">book</span><span class="o">.</span><span class="n">save_pdf</span><span class="p">(</span><span class="s2">"overview.pdf"</span><span class="p">)</span>
+</code></pre></div>
+<p>The two output modes differ only in where the plots land:</p>
+<div class="highlight"><pre><span></span><code>book.save("plots/")          -&gt; one file per task
+book.save_pdf("plots.pdf")   -&gt; one multipage PDF
+</code></pre></div>
+<p>The plots follow <code>book.tasks()</code> order and fill each page row by row, and each
+is drawn as <code>rf.plot</code> would draw it on a figure of its own: the same panels,
+broken axis, style, labels and legend, inside one cell of the page. Nothing is
+added to a cell; a <code>title=</code> in <code>plot_kwargs</code> or a variant appears as it would on
+a standalone figure.</p>
+<p>By default the grid of a page follows the plots it holds. Plots without a lower
+panel or broken axis go up to <code>2 × 3</code> on a page; when one of the plots that
+would land on a page has a <code>panel=</code> or an <code>xbreak=</code>, which need the room,
+the page stops at <code>2 × 2</code>. The last page adapts to what is left rather than
+leaving a lone plot in the corner of a full grid: seven plain plots are a
+<code>2 × 3</code> page followed by a <code>1 × 1</code> one, eight a <code>2 × 3</code> page and a <code>1 × 2</code> one.
+<code>layout=(rows, columns)</code> fixes the grid of every page instead, the last one
+included; its unused cells stay empty:</p>
+<div class="highlight"><pre><span></span><code><span class="n">book</span><span class="o">.</span><span class="n">save_pdf</span><span class="p">(</span><span class="s2">"overview.pdf"</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+</code></pre></div>
+<p>A page is as large as the grid of figures the plots would have on their own,
+plus a narrow gap between neighbouring cells, so a plot in a cell keeps its
+usual size: every cell of the document is as large as the largest figure any
+plot of the book would draw alone (a lower panel makes it taller, a <code>Style</code> with
+a <code>figsize</code> sets its own). A cell is laid out exactly as a figure of its size,
+whatever the grid and the style: the gap above a lower panel, the room for
+labels, the legend and the y limits are the same on a <code>1 × 1</code> page as on an
+<code>8 × 8</code> one. The plots of a page are finished together, so a dense page takes
+about as long as the same plots on pages of their own. <code>figsize=</code> on
+<code>save_pdf()</code> sets the size of the whole page instead, the cells sharing what the
+gaps leave; one too small for the grid is refused before anything is drawn:</p>
+<div class="highlight"><pre><span></span><code><span class="n">book</span><span class="o">.</span><span class="n">save_pdf</span><span class="p">(</span><span class="s2">"overview.pdf"</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">10</span><span class="p">))</span>
+</code></pre></div>
+<p>Each cell carries its own style, so plots with different fonts, sizes or colours
+sit side by side. The one thing a cell cannot have of its own is the <em>page</em>
+background, which belongs to the figure the whole page is drawn on: plots sharing
+a page whose styles ask for different backgrounds are refused before anything is
+drawn, since the labels and legend of a cell are drawn outside its axes and would
+land on the wrong background. Give them pages of their own to keep one document,
+or write a document per style:</p>
+<div class="highlight"><pre><span></span><code><span class="n">book</span><span class="o">.</span><span class="n">save_pdf</span><span class="p">(</span><span class="s2">"overview.pdf"</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>  <span class="c1"># one plot per page</span>
+<span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"light"</span><span class="p">,</span> <span class="s2">"dark"</span><span class="p">):</span>  <span class="c1"># or one file per style</span>
+    <span class="n">book</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">variants</span><span class="o">=</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="n">save_pdf</span><span class="p">(</span><span class="sa">f</span><span class="s2">"overview-</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">.pdf"</span><span class="p">)</span>
+</code></pre></div>
+<p>A <code>figsize</code> in <code>plot_kwargs</code> or a variant has no meaning inside a shared page and
+is rejected before anything is read; pass it to <code>save_pdf()</code>. What a task runs
+with decides: a <code>figsize</code> in <code>plot_kwargs</code> that every variant overrides with
+<code>None</code> leaves no task with one and is accepted.</p>
+<p><code>.pdf</code> is appended to a path without a suffix (<code>"overview"</code> writes
+<code>overview.pdf</code>), parent directories are created, another suffix raises
+<code>ValueError</code> and an existing directory <code>IsADirectoryError</code>. The remaining
+keywords go to <code>PdfPages.savefig</code> for every page (<code>dpi=</code> for rasterised parts),
+except <code>metadata=</code>, the document information dictionary (<code>{"Title": ...}</code>), which
+describes the whole PDF and is applied to it; <code>format</code>, <code>fname</code>, <code>figure</code> and
+<code>backend</code> are refused. The document is written to a temporary file next to its
+final name and renamed onto it once every page is done, so a failure part way
+leaves an existing file as it was and no half-written PDF behind. Pages are
+written one after another and each page's figure is closed before the next
+begins, so memory stays bounded however many plots the book holds.</p>
+<p>The histograms are prepared exactly as for <code>plots()</code> and <code>save()</code>, with the same
+batched reads and the same reuse of one preparation for the variants that only
+change the drawing (see below), so <code>rf.ALL</code> composes naturally:</p>
+<div class="highlight"><pre><span></span><code><span class="n">rf</span><span class="o">.</span><span class="n">PlotBook</span><span class="p">(</span>
+    <span class="s2">"analysis.root"</span><span class="p">,</span>
+    <span class="n">rf</span><span class="o">.</span><span class="n">ALL</span><span class="p">,</span>
+    <span class="n">exclude</span><span class="o">=</span><span class="p">[</span><span class="s2">"*_cov"</span><span class="p">,</span> <span class="s2">"*Index"</span><span class="p">],</span>
+<span class="p">)</span><span class="o">.</span><span class="n">save_pdf</span><span class="p">(</span><span class="s2">"overview.pdf"</span><span class="p">)</span>
+</code></pre></div>
+<p>writes an overview of every plottable branch of the file, and
+<code>book.select(variables=["Muon_pt", "Muon_eta"]).save_pdf("muons.pdf")</code> one of
+a subset. Errors keep their type and gain the task's note as for <code>plots()</code>; a
+failure while writing a page adds one naming the page and the file.</p>
+<h2 id="running-plots-yourself">Running plots yourself<a class="headerlink" href="#running-plots-yourself" title="Permanent link">&para;</a></h2>
+<p><code>book.plots()</code> is a lazy iterator of <code>(task, plot)</code> pairs: one figure per
+step, nothing drawn ahead of time. The plots are ordinary
+<a class="autorefs autorefs-internal" title="rootfig.Plot
+
+
+  
+      dataclass
+  " href="../api/#rootfig.Plot"><code>Plot</code></a> objects, so this is the place to adjust a figure
+or keep it open:</p>
+<div class="highlight"><pre><span></span><code><span class="k">for</span> <span class="n">task</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">book</span><span class="o">.</span><span class="n">plots</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">variable</span><span class="o">.</span><span class="n">safe_name</span><span class="p">,</span> <span class="n">task</span><span class="o">.</span><span class="n">selection_name</span><span class="p">,</span> <span class="n">task</span><span class="o">.</span><span class="n">variant_name</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">ax</span><span class="o">.</span><span class="n">axvline</span><span class="p">(</span><span class="mf">91.2</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">"gray"</span><span class="p">,</span> <span class="n">ls</span><span class="o">=</span><span class="s2">"--"</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="sa">f</span><span class="s2">"plots/</span><span class="si">{</span><span class="n">task</span><span class="o">.</span><span class="n">stem</span><span class="si">}</span><span class="s2">.pdf"</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<p>A <code>PlotTask</code> carries the <code>variable</code>, the <code>selection</code> (<code>Cut</code> or <code>None</code>), the
+<code>selection_name</code> and <code>variant_name</code> (<code>None</code> for an axis the book was built
+without), the merged <code>kwargs</code> and the file <code>stem</code>. Tasks compare and hash by
+their <code>stem</code>, so they work as set members and dictionary keys whatever the
+keyword values hold. Each plot is what</p>
+<div class="highlight"><pre><span></span><code><span class="n">rf</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">book</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">task</span><span class="o">.</span><span class="n">variable</span><span class="p">,</span> <span class="n">selection</span><span class="o">=</span><span class="n">task</span><span class="o">.</span><span class="n">selection</span><span class="p">,</span> <span class="o">**</span><span class="n">task</span><span class="o">.</span><span class="n">kwargs</span><span class="p">)</span>
+</code></pre></div>
+<p>returns: the same histograms, binning, systematics, labels and errors.</p>
+<p>The book only reads less often than that call would. It runs the tasks in
+batches of a few dozen variables: the branches those variables and every
+selection need are read once per sample for the batch, the files a
+<code>Systematic.samples</code> variation fills from included, and variants that only
+change the drawing (<code>stack</code>, <code>logy</code>, <code>normalize</code>, <code>panel</code>, <code>style</code>, ...) are drawn from
+one set of prepared histograms, each figure from its own copy. A variant that
+changes how the histograms are prepared (<code>bins</code>, <code>weight</code>, <code>observed</code>,
+<code>systematics</code>, ...) is prepared on its own, still from the batch's read.
+Variables that name histograms stored in the files are read with one pass over
+each file per batch. A book with an explicit variable list inspects no input
+when it is built; one built with <code>rf.ALL</code> inspects the metadata of its inputs
+then, but never reads event arrays or histogram contents. Neither reads
+anything for <code>tasks()</code>; the first batch is read when the first plot is
+requested and the next one when the iteration reaches it.</p>
+<p>Errors stop the book at the failing task. They keep their type and gain a note
+naming the task, so a traceback for a typo in one expression reads</p>
+<div class="highlight"><pre><span></span><code>rootfig.errors.MissingBranchError: unknown name 'recoil_mas' ...
+while running PlotBook task variable='recoil_mas', selection='sr', variant='log'
+</code></pre></div>
+<p>The words <code>all</code> and <code>default</code> in such messages stand for an axis that was not
+given; they are never used to decide a file name.</p>
+<h2 id="subsets">Subsets<a class="headerlink" href="#subsets" title="Permanent link">&para;</a></h2>
+<p><code>book.select(variables=..., selections=..., variants=...)</code> returns a new book
+restricted to the named variables (by <code>safe_name</code>), selections and variants
+(by key). Each argument left as <code>None</code> keeps its axis, the book's order is kept
+rather than the filter's, and an unknown name raises with the available
+choices:</p>
+<div class="highlight"><pre><span></span><code><span class="n">book</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">variables</span><span class="o">=</span><span class="p">[</span><span class="s2">"mass"</span><span class="p">],</span> <span class="n">variants</span><span class="o">=</span><span class="p">[</span><span class="s2">"log"</span><span class="p">])</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"plots/debug"</span><span class="p">)</span>
+
+<span class="n">book</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">variables</span><span class="o">=</span><span class="p">[</span><span class="s2">"foo"</span><span class="p">])</span>
+<span class="c1"># ValueError: unknown variable 'foo'; available: ['mass', 'pt']</span>
+</code></pre></div>
+<p>A filter that names nothing, <code>select(variables=[])</code>, raises as well, rather than
+quietly producing an empty book.</p>
+<p>An axis the book was built without has the single choice <code>"all"</code> (selections)
+or <code>"default"</code> (variants); selecting it is a no-op and the axis stays implicit.</p>
+<h2 id="a-complete-example-histogram-files">A complete example: histogram files<a class="headerlink" href="#a-complete-example-histogram-files" title="Permanent link">&para;</a></h2>
+<p>An analysis can write one histogram file per process. Files that already
+contain expected yields are read as they are.
+A <code>Group</code> combines the WW and ZZ processes into the VV background category.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rootfig</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">rf</span>
+
+<span class="c1"># Histogram files: one per process, already scaled to 5 ab^-1</span>
+<span class="n">ww</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"outputs/p8_ee_WW_ecm240.root"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"WW"</span><span class="p">)</span>
+<span class="n">zz</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"outputs/p8_ee_ZZ_ecm240.root"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"ZZ"</span><span class="p">)</span>
+<span class="n">zh</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"outputs/p8_ee_ZH_ecm240.root"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"ZH"</span><span class="p">)</span>
+<span class="n">samples</span> <span class="o">=</span> <span class="p">[</span><span class="n">rf</span><span class="o">.</span><span class="n">Group</span><span class="p">([</span><span class="n">ww</span><span class="p">,</span> <span class="n">zz</span><span class="p">],</span> <span class="n">label</span><span class="o">=</span><span class="s2">"VV"</span><span class="p">),</span> <span class="n">zh</span><span class="p">]</span>
+
+<span class="n">fcc</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Style</span><span class="p">(</span><span class="n">experiment</span><span class="o">=</span><span class="s2">"FCC-ee"</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="s2">"Simulation"</span><span class="p">,</span> <span class="n">com</span><span class="o">=</span><span class="s2">"240 GeV"</span><span class="p">,</span> <span class="n">lumi</span><span class="o">=</span><span class="s2">"5 ab^-1"</span><span class="p">)</span>
+<span class="n">variants</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"stack"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"stack"</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>  <span class="c1"># ZH on top of VV</span>
+    <span class="s2">"nostack"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"stack"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"VV"</span><span class="p">]},</span>  <span class="c1"># VV stacked, ZH drawn over it</span>
+    <span class="s2">"log"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"stack"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"VV"</span><span class="p">],</span> <span class="s2">"logy"</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+<span class="p">}</span>
+
+<span class="c1"># every histogram the files share, at a glance</span>
+<span class="n">rf</span><span class="o">.</span><span class="n">PlotBook</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">rf</span><span class="o">.</span><span class="n">ALL</span><span class="p">,</span> <span class="n">variants</span><span class="o">=</span><span class="n">variants</span><span class="p">,</span> <span class="n">plot_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">"style"</span><span class="p">:</span> <span class="n">fcc</span><span class="p">})</span><span class="o">.</span><span class="n">save_pdf</span><span class="p">(</span><span class="s2">"overview.pdf"</span><span class="p">)</span>
+
+<span class="c1"># selected plots, with bins and a range for each histogram</span>
+<span class="n">variables</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">rf</span><span class="o">.</span><span class="n">Variable</span><span class="p">(</span><span class="s2">"zmumu_recoil_m"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span> <span class="mi">120</span><span class="p">,</span> <span class="mi">140</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"Recoil mass"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">),</span>
+    <span class="n">rf</span><span class="o">.</span><span class="n">Variable</span><span class="p">(</span><span class="s2">"zmumu_m"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">(</span><span class="mi">50</span><span class="p">,</span> <span class="mi">86</span><span class="p">,</span> <span class="mi">96</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">"$m_{\mu\mu}$"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">),</span>
+    <span class="n">rf</span><span class="o">.</span><span class="n">Variable</span><span class="p">(</span><span class="s2">"zmumu_p"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">(</span><span class="mi">400</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">80</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">"$p_{\mu\mu}$"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">),</span>
+<span class="p">]</span>
+<span class="n">rf</span><span class="o">.</span><span class="n">PlotBook</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">variables</span><span class="p">,</span> <span class="n">variants</span><span class="o">=</span><span class="n">variants</span><span class="p">,</span> <span class="n">plot_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">"style"</span><span class="p">:</span> <span class="n">fcc</span><span class="p">})</span><span class="o">.</span><span class="n">save_pdf</span><span class="p">(</span><span class="s2">"zh.pdf"</span><span class="p">)</span>
+</code></pre></div>
+<p>The files are read once per batch of variables. The three variants of each
+variable are drawn from one preparation, so changing the drawing does not
+repeat the reads or the binning.</p>
+<p>The stored 1 MeV recoil bins become 0.1 GeV bins between 120 and 140 GeV.
+Everything outside that interval moves into the underflow or overflow bin,
+including its uncertainty. <code>rf.ALL</code> keeps each histogram's own binning, which
+suits an overview; explicit <code>Variable</code>s choose the ranges and bins to show.</p>
+<p>The same plot can be made from ntuples storing the recoil mass as a branch. Give
+the samples cross sections and generated-event counts to scale that plot to
+the same luminosity:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ww</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"ntuples/p8_ee_WW_ecm240/*.root"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"WW"</span><span class="p">,</span> <span class="n">xsec</span><span class="o">=</span><span class="s2">"16.4 pb"</span><span class="p">,</span> <span class="n">ngen</span><span class="o">=</span><span class="s2">"eventsProcessed"</span><span class="p">)</span>
+<span class="n">zz</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span><span class="s2">"ntuples/p8_ee_ZZ_ecm240/*.root"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"ZZ"</span><span class="p">,</span> <span class="n">xsec</span><span class="o">=</span><span class="s2">"1.36 pb"</span><span class="p">,</span> <span class="n">ngen</span><span class="o">=</span><span class="s2">"eventsProcessed"</span><span class="p">)</span>
+<span class="n">zh</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Sample</span><span class="p">(</span>
+    <span class="s2">"ntuples/p8_ee_ZH_ecm240/*.root"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"ZH"</span><span class="p">,</span> <span class="n">xsec</span><span class="o">=</span><span class="s2">"0.202 pb"</span><span class="p">,</span> <span class="n">ngen</span><span class="o">=</span><span class="s2">"eventsProcessed"</span>
+<span class="p">)</span>
+<span class="n">recoil</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">Variable</span><span class="p">(</span><span class="s2">"zed_leptonic_recoil_m"</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span> <span class="mi">120</span><span class="p">,</span> <span class="mi">140</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"Recoil mass"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"GeV"</span><span class="p">)</span>
+<span class="n">rf</span><span class="o">.</span><span class="n">plot</span><span class="p">([</span><span class="n">rf</span><span class="o">.</span><span class="n">Group</span><span class="p">([</span><span class="n">ww</span><span class="p">,</span> <span class="n">zz</span><span class="p">],</span> <span class="n">label</span><span class="o">=</span><span class="s2">"VV"</span><span class="p">),</span> <span class="n">zh</span><span class="p">],</span> <span class="n">recoil</span><span class="p">,</span> <span class="n">lumi</span><span class="o">=</span><span class="s2">"5 ab^-1"</span><span class="p">,</span> <span class="n">stack</span><span class="o">=</span><span class="p">[</span><span class="s2">"VV"</span><span class="p">],</span> <span class="n">style</span><span class="o">=</span><span class="n">fcc</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="what-a-book-does-not-do">What a book does not do<a class="headerlink" href="#what-a-book-does-not-do" title="Permanent link">&para;</a></h2>
+<p>A book runs its tasks one after another in the calling process and keeps the
+arrays of one batch of variables at a time. Its outputs are the individual files
+of <code>save()</code> and the compact overview of <code>save_pdf()</code>: it has no filename
+template, no parallel execution, and no report generation beyond that grid of
+plots (no captions, tables of contents, headers, HTML or slides). It drives the
+1D <code>rf.plot</code> only: for <code>plot2d</code>, <code>efficiency</code> and <code>profile</code> you write the loop
+yourself.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../composable/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Samples, variables, cuts and styles">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Samples, variables, cuts and styles
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../plotting/" class="md-footer__link md-footer__link--next" aria-label="Next: Plotting options">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Plotting options
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.indexes", "navigation.footer", "navigation.top", "content.code.copy", "content.tabs.link", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
