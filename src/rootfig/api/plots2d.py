@@ -127,7 +127,7 @@ def plot2d(
         require_dimension([histogram_], 2, "plot2d")
         if var_x is not None or var_y is not None:
             described = [var_x, var_y]
-            histogram_ = histogram_.map_hists(lambda h: describe_axes(h, described))
+            histogram_ = histogram_.map_hists(lambda h: describe_axes(h, described), linear=True)
         [histogram_] = rebin_ready_made(
             [histogram_],
             [x_bins if var_x is None else var_x.bins, y_bins if var_y is None else var_y.bins],

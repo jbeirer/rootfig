@@ -378,19 +378,21 @@ class Histogram:
             changes.setdefault("_weighted", False)
         return replace(self, **changes)
 
-    def map_hists(self, transform: Callable[[Hist], Hist]) -> Histogram:
+    def map_hists(self, transform: Callable[[Hist], Hist], *, linear: bool = False) -> Histogram:
         """Return a copy with ``transform`` applied to the nominal histogram and every variation.
 
-        ``transform`` must act on the cells linearly, as cropping, rebinning,
-        moving flow cells and scaling do: it also goes through the record of
-        counts behind a Poisson interval (:attr:`poisson`), which stays valid
-        only while every cell holds counts times factors that do not depend on
-        the contents. Give anything else (squared contents, say) to
-        :meth:`replace` as a new ``hist``, whose contents are judged afresh.
+        The result has ``sqrt(variances)`` errors (:attr:`poisson` off) unless
+        ``linear=True`` says that ``transform`` acts on the cells linearly, as
+        cropping, rebinning, moving flow cells and scaling do. The record of
+        counts behind a Poisson interval then goes through it too, which holds
+        only while every cell stays counts times factors that do not depend on
+        the contents.
         """
         variations = {
             name: (transform(up), transform(down)) for name, (up, down) in self.variations.items()
         }
+        if not linear:
+            return replace(self, hist=transform(self.hist), variations=variations, poisson=False)
         unit = None if self._unit is None else transform(self._unit)
         return replace(self, hist=transform(self.hist), variations=variations, _unit=unit)
 
@@ -408,7 +410,7 @@ class Histogram:
                 sum_weights=stats.sum_weights * factor,
                 _sum_w2=stats._sum_w2 * factor**2,
             )
-        scaled = self.map_hists(lambda h: h * factor)
+        scaled = self.map_hists(lambda h: h * factor, linear=True)
         return replace(scaled, stats=stats, _weighted=self._weighted or factor != 1.0)
 
     def rebinned(self, factor: int | Sequence[int]) -> Histogram:
@@ -461,7 +463,7 @@ class Histogram:
             # slicing with rebin keeps every axis, so the result is a Hist, never a float
             return cast("Hist", h[selection])
 
-        return self.map_hists(merge)
+        return self.map_hists(merge, linear=True)
 
     def rebinned_to(
         self,
@@ -548,7 +550,7 @@ class Histogram:
             cropped = cast("Hist", h[tuple(crops)])
             return cast("Hist", cropped[tuple(merges)])
 
-        return self.map_hists(transform)
+        return self.map_hists(transform, linear=True)
 
 
 def _is_positive_integer(value: object) -> bool:

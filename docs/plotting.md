@@ -135,7 +135,10 @@ Rules:
   `down − nominal`. The larger positive shift enters the upper uncertainty,
   the larger negative one the lower (so two variations moving the same way
   widen one side only). Different sources are independent and added in
-  quadrature; the total is statistical ⊕ systematic, per side.
+  quadrature; the total is statistical ⊕ systematic, per side. That is the
+  usual convention for an uncertainty band, not a confidence interval: a
+  Poisson interval is no Gaussian standard deviation, so its sum in quadrature
+  with the systematics has no exact coverage.
 - A source's name is its identity (its nuisance parameter). Sources with the
   same name are one source, fully correlated across samples: the stack total
   adds their variations linearly (a sample without the source contributes its
@@ -640,24 +643,26 @@ that of two independent yields.
 
 | `interval=` | Interval |
 | --- | --- |
-| `"auto"` (default) | what ROOT's `TEfficiency` and `TGraphAsymmErrors::Divide` give: `"clopper-pearson"` for unweighted entries, `"normal"` for weighted ones |
+| `"auto"` (default) | what ROOT's `TEfficiency` gives, and `TGraphAsymmErrors::Divide` by default: `"clopper-pearson"` for unweighted entries, `"normal"` for weighted ones |
 | `"clopper-pearson"` | the exact binomial interval of the counts, never covering less than 68 %; unweighted entries only |
 | `"normal"` | `ε ± z·σ` clipped to `[0, 1]`, with `σ² = (Σw²_pass (1 − 2ε) + Σw²_all ε²) / (Σw_all)²` (`ε(1 − ε) / n` for counts); no width at 0 and 1 |
 | `"wilson"` | the Wilson score interval of the counts; unweighted entries only. It keeps a width at 0 and 1 |
-| `"wilson-effective"` | rootfig's extension of `"wilson"` to weighted entries: the Wilson interval of the effective entries `n_eff = (Σw)² / Σw²` of the denominator. Entries passing with probability `ε` give a weighted fraction of variance `ε(1 − ε) / n_eff`, and the interval inverts that. The same as `"wilson"` for counts |
+| `"wilson-effective"` | rootfig's extension of `"wilson"` to weighted entries: the Wilson interval of the effective entries `n_eff = (Σw)² / Σw²` of the denominator. Entries passing with probability `ε` give a weighted fraction of variance `ε(1 − ε) / n_eff`, and the interval inverts that. An approximation for non-negative weights: convenient, but with no guaranteed coverage for arbitrary weights. The same as `"wilson"` for counts |
 
-Entries count as unweighted as ROOT decides: when the sum of weights equals the
-sum of squared weights (to 10⁻¹², `TEfficiency`'s tolerance for `TH1D`), so
-every weight is 1 (or 0 and 1). The sample's `scale` and luminosity factor cancel in an
-efficiency and are left out, so they neither make a sample weighted nor, when
-zero or negative, change its efficiency; a `weight=`, even one constant for
-every entry, makes it weighted.
+Entries count as unweighted by ROOT's aggregate test: when the sum of weights
+equals the sum of squared weights (to 10⁻¹², `TEfficiency`'s tolerance for
+`TH1D`). Weights of 1, or of 0 and 1, pass it, and a weight other than 1
+normally fails it; the test cannot prove unit weights (`2` and eight `0.5`s sum
+to 6 either way), and rootfig follows ROOT there too. The sample's `scale` and
+luminosity factor cancel in an efficiency and are left out, so they neither make
+a sample weighted nor, when zero or negative, change its efficiency.
 The normal approximation shrinks to nothing at 0 % and 100 %, which is why the
 two Z + jets bins at 100 % in the [gallery](gallery/efficiency.md) have no error bar;
 `"wilson-effective"` is the alternative that keeps one for weighted samples.
 ROOT has no Clopper–Pearson or Wilson interval for weighted entries: asked for
-one, it warns and uses the normal approximation. rootfig raises instead, so an
-explicit method never silently changes. The Clopper–Pearson bounds are beta
+one, `TEfficiency` warns and uses the normal approximation, and so does
+`TGraphAsymmErrors::Divide` (ROOT 6.40). rootfig raises instead, so an explicit
+method never silently changes. The Clopper–Pearson bounds are beta
 quantiles from SciPy, as ROOT's, and agree with ROOT's to 10⁻¹¹.
 Options are
 the usual axis, legend, label and style ones (`xlabel`, `ylabel`, `unit`,

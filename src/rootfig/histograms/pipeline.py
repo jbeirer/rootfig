@@ -739,6 +739,11 @@ def build_histograms_2d(
     name_y = var_y.safe_name if var_y.safe_name != var_x.safe_name else f"{var_y.safe_name}_y"
     axis_y = resolve_axis(var_y, [c.arrays[1] for c in columns], name=name_y, weights=weights)
     return [
-        from_sample(sample, fill([axis_x, axis_y], cols), stats=summarize(cols))
+        from_sample(
+            sample,
+            fill([axis_x, axis_y], cols),
+            stats=summarize(cols),
+            weighted=cols.weights is not None,
+        )
         for sample, cols in zip(samples, columns, strict=True)
     ]

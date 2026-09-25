@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import warnings
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
@@ -19,6 +18,7 @@ from rootfig.histograms.binomial import (
     resolve_interval,
 )
 from rootfig.histograms.build import compatible_binning
+from rootfig.histograms.intervals import check_z
 
 __all__ = ["Efficiency", "Profile", "ProfileStatistic", "efficiency", "profile"]
 
@@ -108,17 +108,15 @@ def efficiency(
     Raises
     ------
     BinningError
-        If the binnings differ or ``z`` is not a positive finite number.
+        If the binnings differ.
     ValueError
-        For an unknown ``interval``, or ``"clopper-pearson"`` or ``"wilson"``
-        for weighted histograms.
+        If ``z`` is not a positive finite number, for an unknown ``interval``,
+        or ``"clopper-pearson"`` or ``"wilson"`` for weighted histograms.
     """
     if not compatible_binning(passed, total):
         msg = "efficiency requires two one-dimensional histograms with identical bin edges"
         raise BinningError(msg)
-    if not (math.isfinite(z) and z > 0):
-        msg = f"z must be a positive finite number of standard deviations, got {z!r}"
-        raise BinningError(msg)
+    check_z(z)
     k = np.asarray(passed.values(), dtype=float)
     n = np.asarray(total.values(), dtype=float)
     vk = np.asarray(passed.variances(), dtype=float)

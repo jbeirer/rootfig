@@ -179,7 +179,7 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
             setattr(view, field, np.r_[low, cells[visible], high])
         return new
 
-    return [h.map_hists(expand) for h in histograms], (under, over)
+    return [h.map_hists(expand, linear=True) for h in histograms], (under, over)
 
 
 def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
@@ -209,7 +209,8 @@ def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
         return new
 
     return [
-        h.map_hists(fold) if _flow_content(h, 0) or _flow_content(h, -1) else h for h in histograms
+        h.map_hists(fold, linear=True) if _flow_content(h, 0) or _flow_content(h, -1) else h
+        for h in histograms
     ]
 
 

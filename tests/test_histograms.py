@@ -665,6 +665,9 @@ class TestPipeline:
 
     def test_build_histograms_2d_same_variable(self, signal_arrays: dict[str, ak.Array]) -> None:
         [h] = build_histograms_2d([Sample(signal_arrays)], "MET", "MET")
+        assert not h._weighted  # filled without weights
+        [weighted] = build_histograms_2d([Sample(signal_arrays, scale=2.0)], "MET", "MET")
+        assert weighted._weighted
         assert h.hist.axes[1].name == "MET_y"
 
     def test_prepare_then_fill_roundtrip(self, signal_arrays: dict[str, ak.Array]) -> None:
@@ -868,6 +871,12 @@ ROOT_TEFFICIENCY = {
         (0.3333333333333333, 0.0, 0.8544906399802885),
     ),
     "all pass": ([(1.0, True), (2.0, True), (3.0, True)], (1.0, 1.0, 1.0)),
+    # TGraphAsymmErrors::Divide gives the same with "", "cp", "wilson" and "n": its
+    # frequentist options fall back to the normal approximation for weighted histograms
+    "divide": (
+        [(2.0, True), (2.0, True), (2.0, True), (1.0, False), (3.0, True)],
+        (0.9, 0.7990049506163972, 1.0),
+    ),
 }
 
 
@@ -1053,6 +1062,20 @@ class TestPoissonHistograms:
         assert normalize(counts, "width")._weighted
         assert not scaled.replace(hist=empty.copy())._weighted  # new contents, judged afresh
 
+    def test_only_a_linear_map_keeps_the_interval(self) -> None:
+        data = self._data([1.0, 4.0])
+        assert data.map_hists(lambda h: h * 2.0, linear=True).poisson
+
+        def square(h: hist.Hist) -> hist.Hist:
+            new = h.copy()
+            view: Any = new.view(flow=True)
+            view.value = view.value**2
+            return new
+
+        squared = data.map_hists(square)  # no count relation left: sqrt(variances)
+        assert not squared.poisson
+        np.testing.assert_allclose(squared.errors()[1], np.sqrt(squared.variances()))
+
     def _data(self, counts: list[float], **kwargs: Any) -> Histogram:
         return Histogram(_poisson(counts), label="Data", is_data=True, poisson=True, **kwargs)
 
@@ -1122,13 +1145,32 @@ class TestPoissonHistograms:
         assert not sum_histograms([a, plain]).poisson
         assert not sum_histograms([a, b.scaled(2.0)]).poisson
 
-    def test_sums_compare_the_whole_record_of_counts(self) -> None:
+    def test_sums_of_counts_rebinned_differently_are_counts(self) -> None:
+        # four bins merged in pairs record (2, 2) per bin, two bins filled directly (1, 1):
+        # both hold counts of factor 1, which add up to counts
+        h = hist.Hist(hist.axis.Regular(4, 0, 4), storage=hist.storage.Weight())
+        h.fill([0.5, 1.5, 1.5, 3.5])
+        merged = Histogram(h, label="A", is_data=True, poisson=True).rebinned(2)
+        direct = Histogram(
+            hist.Hist(hist.axis.Regular(2, 0, 4), storage=hist.storage.Weight()).fill([1.0, 3.0]),
+            label="B",
+            is_data=True,
+            poisson=True,
+        )
+        assert not np.allclose(merged._unit.values(), direct._unit.values())  # type: ignore[union-attr]
+        total = sum_histograms([merged, direct])
+        assert total.poisson
+        low, high = poisson_interval([4.0, 2.0])
+        np.testing.assert_allclose(total.errors()[0], [4.0, 2.0] - low)
+        np.testing.assert_allclose(total.errors()[1], high - [4.0, 2.0])
+
+    def test_sums_compare_the_factor_of_a_count(self) -> None:
         # merged pairs of factors (1, 0.5) and (0.75, 0.75) record one count per bin as
-        # 1.5 alike, but 1.25 and 1.125 as its square: not the same scale
+        # 1.5 alike, but 1.25 and 1.125 as its square: factors of 5/6 and 3/4 per count
         h = hist.Hist(hist.axis.Variable([0.0, 1.0, 3.0, 4.0, 6.0]), storage=hist.storage.Weight())
         h.fill([0.5, 2.0, 2.0, 5.0])
         data = Histogram(h, label="Data", is_data=True, poisson=True)
-        wide = data.map_hists(lambda h: normalize_hist(h, "width")[:: hist.rebin(2)])
+        wide = data.map_hists(lambda h: normalize_hist(h, "width")[:: hist.rebin(2)], linear=True)
         flat = data.scaled(0.75).rebinned(2)
         np.testing.assert_allclose(wide._unit.values(), flat._unit.values())  # type: ignore[union-attr]
         assert not sum_histograms([wide, flat]).poisson
@@ -1972,8 +2014,16 @@ class TestEfficiencyDomain:
     def test_z_is_validated(self, z: float) -> None:
         from rootfig.histograms import efficiency
 
-        with pytest.raises(BinningError, match="z must be"):
+        with pytest.raises(ValueError, match="z must be"):
             efficiency(*self._hists(1, 2), z=z)
+        # the interval functions check it themselves
+        for interval in (
+            lambda: clopper_pearson([1.0], [2.0], z),
+            lambda: normal_interval([1.0], [2.0], [1.0], [2.0], z),
+            lambda: wilson_interval([1.0], [2.0], [2.0], z),
+        ):
+            with pytest.raises(ValueError, match="z must be"):
+                interval()
 
 
 class TestProfileNumerics:

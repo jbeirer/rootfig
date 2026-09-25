@@ -1,7 +1,8 @@
 """Confidence intervals of efficiencies: Clopper-Pearson, the normal approximation and Wilson.
 
-``"auto"`` is what ROOT's ``TEfficiency`` (and ``TGraphAsymmErrors::Divide``)
-gives by default: Clopper-Pearson for unweighted counts, the normal
+``"auto"`` is what ROOT's ``TEfficiency`` gives (and ``TGraphAsymmErrors::Divide``
+by default, whose frequentist options also fall back to the normal approximation
+for weighted histograms in ROOT 6.40): Clopper-Pearson for unweighted counts, the normal
 approximation for weighted entries. Every other name is the method ROOT means by
 it, for the entries ROOT allows it for; ``"wilson-effective"`` is rootfig's own.
 """
@@ -15,6 +16,7 @@ import numpy as np
 import numpy.typing as npt
 
 from rootfig._typing import FloatArray
+from rootfig.histograms.intervals import check_z
 
 __all__ = [
     "EfficiencyInterval",
@@ -39,7 +41,9 @@ EfficiencyInterval: TypeAlias = Literal[
 * ``"wilson"`` - the Wilson score interval of counts; unweighted entries only.
 * ``"wilson-effective"`` - the Wilson score interval of the effective entries
   ``(sum w)^2 / sum w^2``: rootfig's extension to weighted entries, for which
-  ROOT has only the normal approximation. The same as ``"wilson"`` for counts.
+  ROOT's frequentist intervals fall back to the normal approximation. An
+  approximation for non-negative weights, convenient but without guaranteed
+  coverage for arbitrary weights. The same as ``"wilson"`` for counts.
 * ``"auto"`` - ROOT's default: ``"clopper-pearson"`` for unweighted entries,
   ``"normal"`` otherwise.
 """
@@ -132,7 +136,8 @@ def efficiency_bounds(
 
 
 def _tail(z: float) -> float:
-    """Probability beyond ``z`` standard deviations on one side."""
+    """Probability beyond ``z`` standard deviations on one side (``z`` checked)."""
+    check_z(z)
     return 0.5 * math.erfc(z / math.sqrt(2.0))
 
 
@@ -186,6 +191,7 @@ def normal_interval(
     (a passed variance above the total's) and gives ``nan``, as ROOT's square
     root of it does, rather than an interval of no width.
     """
+    check_z(z)
     k = np.asarray(passed, dtype=float)
     n = np.asarray(total, dtype=float)
     vk = np.asarray(passed_variance, dtype=float)
@@ -219,6 +225,7 @@ def wilson_interval(
     not positive (no weights sum to a positive total with no variance) or the
     efficiency lies outside ``[0, 1]``.
     """
+    check_z(z)
     k = np.asarray(passed, dtype=float)
     n = np.asarray(total, dtype=float)
     vn = np.asarray(total_variance, dtype=float)

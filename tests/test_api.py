@@ -2428,6 +2428,25 @@ class TestSystematics:
         ].syst_errors:  # its own lumi against the nominal reference
             np.testing.assert_allclose(side, 0.1 * explicit.comparisons[0].values)
 
+    def test_efficiency_numerators_remember_their_weights(self) -> None:
+        # nothing passes: the numerator's (0, 0) looks like counts, but weights filled it
+        sample = rf.Sample(
+            {"x": np.array([0.5, 1.5]), "w": np.array([0.5, 2.0]), "ok": np.zeros(2)},
+            label="Data",
+            is_data=True,
+            weight="w",
+        )
+        p = rf.efficiency(sample, "x", passed="ok == 1", bins=(2, 0, 2))
+        numerator = p.histograms[0]
+        np.testing.assert_array_equal(numerator.values(), 0.0)
+        with pytest.raises(ValueError, match="filled with weights or scaled"):
+            numerator.replace(poisson=True)
+        again = rf.plot(
+            [numerator.replace(is_data=False)], observed=[numerator], data_errors="auto"
+        )
+        assert not again.histograms[-1].poisson
+        plt.close("all")
+
     def test_efficiency_intervals_need_non_negative_weights(self) -> None:
         # bin 0: {1, 1, -0.1} pass and {1} fails, a ratio in [0, 1] whose sums hide the sign
         x = np.array([0.5, 0.5, 0.5, 0.5, 1.5, 1.5, 1.5])

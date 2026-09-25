@@ -12,6 +12,7 @@ from rootfig._typing import FloatArray
 
 __all__ = [
     "DataErrors",
+    "check_z",
     "count_problem",
     "count_scale",
     "poisson_errors",
@@ -50,6 +51,13 @@ def _whole(numbers: FloatArray) -> npt.NDArray[np.bool_]:
         return np.asarray(np.abs(numbers - np.rint(numbers)) <= _WHOLE_ULPS * step, dtype=bool)
 
 
+def check_z(z: float) -> None:
+    """Raise ``ValueError`` unless ``z`` (standard deviations) is positive and finite."""
+    if not (math.isfinite(z) and z > 0):
+        msg = f"z must be a positive finite number of standard deviations, got {z!r}"
+        raise ValueError(msg)
+
+
 def poisson_interval(counts: npt.ArrayLike, z: float = 1.0) -> tuple[FloatArray, FloatArray]:
     """Garwood's central interval of a Poisson mean for whole ``counts``: ``(lower, upper)``.
 
@@ -66,9 +74,7 @@ def poisson_interval(counts: npt.ArrayLike, z: float = 1.0) -> tuple[FloatArray,
         If a count is not a non-negative whole number or ``z`` is not a
         positive finite number.
     """
-    if not (math.isfinite(z) and z > 0):
-        msg = f"z must be a positive finite number of standard deviations, got {z!r}"
-        raise ValueError(msg)
+    check_z(z)
     n = np.asarray(counts, dtype=float)
     whole = np.rint(n)
     with np.errstate(invalid="ignore"):

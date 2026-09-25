@@ -22,6 +22,7 @@ from rootfig._storage import add_hists
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
+from rootfig.histograms.intervals import count_scale
 
 __all__ = ["Uncertainty", "sum_histograms", "uncertainty"]
 
@@ -66,12 +67,17 @@ class Uncertainty:
 
     @property
     def total_up(self) -> FloatArray:
-        """Statistical and systematic uncertainty above the nominal, in quadrature."""
+        """Statistical and systematic uncertainty above the nominal, in quadrature.
+
+        The usual convention for an uncertainty band: with a Poisson
+        interval, which is no Gaussian standard deviation, the sum has no
+        exact coverage.
+        """
         return np.asarray(np.hypot(self.stat_up, self.syst_up), dtype=float)
 
     @property
     def total_down(self) -> FloatArray:
-        """Statistical and systematic uncertainty below the nominal, in quadrature."""
+        """Statistical and systematic uncertainty below the nominal (see :attr:`total_up`)."""
         return np.asarray(np.hypot(self.stat_down, self.syst_down), dtype=float)
 
     @property
@@ -126,8 +132,8 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     objects (``per_object``) if any input does, and is observed data
     (``is_data``) if every input is. It keeps the Poisson interval
     (:attr:`~rootfig.histograms.Histogram.poisson`) when every input has it
-    with the same record of counts in every bin (one count per bin, transformed
-    like the contents), since such counts add up to counts,
+    with the same factor per count in every bin, however the inputs reached
+    their binning, since counts of one factor add up to counts of it,
     as ``TH1::Add`` keeps ``kPoisson`` for unweighted histograms; otherwise it
     has ``sqrt(sum w^2)``.
 
@@ -170,13 +176,7 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     unit = first._unit  # one count per bin, set exactly for Poisson histograms
     shared = unit is not None and all(
         h._unit is not None
-        and all(
-            np.allclose(np.asarray(mine), np.asarray(first_), rtol=1e-12, atol=0)
-            for mine, first_ in (
-                (h._unit.values(flow=True), unit.values(flow=True)),
-                (h._unit.variances(flow=True), unit.variances(flow=True)),
-            )
-        )
+        and np.allclose(_count_scale(h._unit), _count_scale(unit), rtol=1e-12, atol=0)
         for h in histograms[1:]
     )
     return Histogram(
@@ -192,3 +192,8 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
         _unit=unit.copy() if shared and unit is not None else None,
         _weighted=any(h._weighted for h in histograms),
     )
+
+
+def _count_scale(unit: Hist) -> FloatArray:
+    """Return the factor of a count in every cell of a Poisson histogram's record of counts."""
+    return count_scale(unit.values(flow=True), np.asarray(unit.variances(flow=True)))
