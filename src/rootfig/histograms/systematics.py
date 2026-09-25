@@ -125,7 +125,8 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     otherwise, so it never claims a scaling one of its parts lacks; it counts
     objects (``per_object``) if any input does. It keeps the Poisson interval
     (:attr:`~rootfig.histograms.Histogram.poisson`) when every input has it
-    with the same count scale in every bin, since such counts add up to counts,
+    with the same record of counts in every bin (one count per bin, transformed
+    like the contents), since such counts add up to counts,
     as ``TH1::Add`` keeps ``kPoisson`` for unweighted histograms; otherwise it
     has ``sqrt(sum w^2)``.
 
@@ -168,7 +169,13 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     unit = first._unit  # one count per bin, set exactly for Poisson histograms
     shared = unit is not None and all(
         h._unit is not None
-        and np.allclose(h._unit.values(flow=True), unit.values(flow=True), rtol=1e-12, atol=0)
+        and all(
+            np.allclose(np.asarray(mine), np.asarray(first_), rtol=1e-12, atol=0)
+            for mine, first_ in (
+                (h._unit.values(flow=True), unit.values(flow=True)),
+                (h._unit.variances(flow=True), unit.variances(flow=True)),
+            )
+        )
         for h in histograms[1:]
     )
     return Histogram(

@@ -21,7 +21,6 @@ from rootfig.histograms.efficiency import Efficiency, Profile, ProfileStatistic,
 from rootfig.histograms.intervals import (
     DataErrors,
     count_problem,
-    is_unit_counts,
     poisson_interval,
 )
 from rootfig.histograms.normalize import (
@@ -73,7 +72,6 @@ __all__ = [
     "efficiency",
     "fill",
     "from_sample",
-    "is_unit_counts",
     "load_columns",
     "load_columns_each",
     "negative_bins",

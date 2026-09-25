@@ -14,22 +14,25 @@ __all__ = [
     "DataErrors",
     "count_problem",
     "count_scale",
-    "is_unit_counts",
     "poisson_errors",
     "poisson_interval",
 ]
 
-DataErrors: TypeAlias = Literal["auto", "poisson", "sumw2"]
+DataErrors: TypeAlias = Literal["poisson", "auto"]
 """How the error bars of observed data are computed (``plot(data_errors=...)``).
 
-* ``"poisson"`` - the Garwood interval of the counts (:func:`poisson_interval`).
-* ``"sumw2"`` - ``sqrt(sum of squared weights)`` on both sides.
-* ``"auto"`` - ``"poisson"`` for unit-weight counts (:func:`is_unit_counts`),
-  ``"sumw2"`` otherwise.
+``None`` keeps each histogram's own model: ``sqrt(sum of squared weights)``, ROOT's
+``TH1`` default, unless it carries the Poisson interval
+(:attr:`~rootfig.histograms.Histogram.poisson`).
+
+* ``"poisson"`` - the Garwood interval of the counts (:func:`poisson_interval`),
+  ROOT's ``TH1::kPoisson``; unit-weight counts only (:func:`count_problem`).
+* ``"auto"`` - ``"poisson"`` for unit-weight counts, ``sqrt(sum of squared
+  weights)`` otherwise: the usual convention for data points (mplhep's).
 """
 
 _WHOLE = 1e-9
-"""Relative tolerance within which an effective count is a whole number."""
+"""Relative tolerance within which a count is a whole number, and equal to its variance."""
 
 
 def poisson_interval(counts: npt.ArrayLike, z: float = 1.0) -> tuple[FloatArray, FloatArray]:
@@ -68,81 +71,59 @@ def poisson_interval(counts: npt.ArrayLike, z: float = 1.0) -> tuple[FloatArray,
     return np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)
 
 
-def count_scale(values: npt.ArrayLike, variances: npt.ArrayLike) -> FloatArray:
-    """Return the factor ``c`` scaling the count of every cell: ``values = c * n``.
+def count_scale(ones: npt.ArrayLike, squares: npt.ArrayLike) -> FloatArray:
+    """Return the factor ``c`` of a count in every cell from a record of one count per cell.
 
-    A filled cell has ``c = variances / values`` (``variances = c**2 * n``); an
-    empty one takes the factor of the nearest filled cell, or 1 when none is
-    filled. The contents must be scaled counts (see :func:`count_problem`).
+    The record starts as one unit count per cell and goes through every
+    transformation of the contents, so a cell holds ``m c`` and ``m c**2`` for
+    ``m`` merged cells: ``c = squares / ones``. A cell the record never had
+    (added by a transformation) takes the factor of the nearest cell it has;
+    none left means the contents were scaled by zero.
     """
-    values = np.asarray(values, dtype=float)
-    flat_values = values.ravel()
-    flat_variances = np.asarray(variances, dtype=float).ravel()
-    filled = np.flatnonzero(flat_values > 0)
-    if not filled.size:
-        return np.ones_like(values)
-    positions = np.arange(flat_values.size)
-    after = np.clip(np.searchsorted(filled, positions), 0, filled.size - 1)
-    before = np.clip(after - 1, 0, filled.size - 1)
-    left, right = filled[before], filled[after]
-    nearest = np.where(np.abs(positions - left) <= np.abs(right - positions), left, right)
-    return np.asarray(flat_variances[nearest] / flat_values[nearest], dtype=float).reshape(
-        values.shape
+    ones = np.asarray(ones, dtype=float)
+    flat_ones = ones.ravel()
+    known = np.flatnonzero(flat_ones != 0)
+    if not known.size:
+        return np.zeros_like(ones)
+    factors = np.asarray(squares, dtype=float).ravel()[known] / flat_ones[known]
+    positions = np.arange(flat_ones.size)
+    after = np.clip(np.searchsorted(known, positions), 0, known.size - 1)
+    before = np.clip(after - 1, 0, known.size - 1)
+    nearest = np.where(
+        np.abs(positions - known[before]) <= np.abs(known[after] - positions), before, after
     )
+    return np.asarray(factors[nearest], dtype=float).reshape(ones.shape)
 
 
 def poisson_errors(
-    values: npt.ArrayLike,
-    variances: npt.ArrayLike,
-    z: float = 1.0,
-    *,
-    scale: npt.ArrayLike | None = None,
+    values: npt.ArrayLike, scale: npt.ArrayLike, z: float = 1.0
 ) -> tuple[FloatArray, FloatArray]:
     """Return the Garwood interval of scaled counts as ``(down, up)`` errors of ``values``.
 
-    Each cell holds a count ``n`` scaled by a factor ``c`` (unit-weight counts:
-    ``c = 1``; normalising them changes ``c`` but not ``n``), and takes the
-    interval of ``n`` times ``c``, like its contents. A filled cell knows its
-    factor, ``variances / values``; ``scale`` gives that of every cell, which
-    an empty cell needs, else :func:`count_scale` infers it.
+    Each cell holds a count ``n`` times the factor ``scale`` (1 for unit-weight
+    counts; normalising them changes the factor, not ``n``) and takes the
+    interval of ``n`` times that factor, like its contents.
     """
     values = np.asarray(values, dtype=float)
-    variances = np.asarray(variances, dtype=float)
-    filled = values > 0
-    guess = count_scale(values, variances) if scale is None else np.asarray(scale, dtype=float)
+    factor = np.asarray(scale, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
-        factor = np.where(filled, variances / values, guess)
-        counts = np.rint(np.where(filled, values / factor, 0.0))
+        counts = np.rint(np.where(factor > 0, values / factor, 0.0))
     lower, upper = poisson_interval(counts, z)
     down = np.maximum(values - factor * lower, 0.0)
     up = np.maximum(factor * upper - values, 0.0)
     return np.asarray(down, dtype=float), np.asarray(up, dtype=float)
 
 
-def is_unit_counts(values: npt.ArrayLike, variances: npt.ArrayLike) -> bool:
-    """Return True if every cell holds a whole number of unit-weight entries.
-
-    That is, a non-negative whole number equal to its variance: what filling
-    without weights gives, and what a stored ``TH1`` without ``Sumw2`` holding
-    whole numbers reports (ROOT itself treats those as unweighted counts).
-    """
-    values = np.asarray(values, dtype=float)
-    variances = np.asarray(variances, dtype=float)
-    tolerance = _WHOLE * np.maximum(values, 1.0)
-    return bool(
-        np.all(np.isfinite(values))
-        and np.all(values >= 0)
-        and np.all(np.abs(values - np.rint(values)) <= tolerance)
-        and np.all(np.abs(variances - values) <= tolerance)
-    )
-
-
 def count_problem(values: npt.ArrayLike, variances: npt.ArrayLike) -> str | None:
-    """Say why ``values`` and ``variances`` are not scaled counts, or return ``None``.
+    """Say why ``values`` and ``variances`` are not unit-weight counts, or return ``None``.
 
-    Scaled counts (see :func:`poisson_errors`) are non-negative, and a filled
-    cell has a positive variance whose effective count ``values**2 /
-    variances`` is a whole number; an empty cell has no variance.
+    Unit-weight counts are non-negative whole numbers equal to their variances:
+    what filling without weights gives, and what a stored ``TH1`` without
+    ``Sumw2`` holding whole numbers reports (ROOT itself treats those as
+    unweighted counts). Only they are known to be counts: the sums ``(sum w,
+    sum w**2)`` of weighted or scaled entries cannot tell counts scaled by one
+    factor from unequal weights (``[1, 1, 4]`` sums like two entries of weight
+    3), so their Poisson interval is not the counts'.
     """
     values = np.asarray(values, dtype=float).ravel()
     variances = np.asarray(variances, dtype=float).ravel()
@@ -150,12 +131,9 @@ def count_problem(values: npt.ArrayLike, variances: npt.ArrayLike) -> str | None
         return "has non-finite contents"
     if np.any(values < 0):
         return "has negative contents (signed weights)"
-    filled = values > 0
-    if np.any(variances[~filled] != 0):
-        return "has empty bins with a variance (positive and negative weights that cancel)"
-    if np.any(variances[filled] <= 0):
-        return "has filled bins without a variance"
-    counts = values[filled] ** 2 / variances[filled]
-    if np.any(np.abs(counts - np.rint(counts)) > _WHOLE * np.maximum(counts, 1.0)):
-        return "is weighted (its effective counts are not whole numbers)"
+    tolerance = _WHOLE * np.maximum(values, 1.0)
+    if np.any(np.abs(variances - values) > tolerance):
+        return "is weighted or scaled (its variances differ from its contents)"
+    if np.any(np.abs(values - np.rint(values)) > tolerance):
+        return "has contents that are not whole numbers"
     return None

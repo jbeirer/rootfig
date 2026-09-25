@@ -81,20 +81,16 @@ def negative_bins(axis: Axis, columns: Columns) -> np.ndarray:
 
 
 def _one_count(histogram: Hist) -> Hist:
-    """Return one count in every cell of ``histogram``, scaled like its counts.
+    """Return one unit count in every cell of ``histogram``, unit-weight counts.
 
     Transformed along with the contents (scaled, normalised, merged, moved),
     its ``variance / value`` stays the factor of a count in every cell, also
     where the contents are empty (see :func:`~rootfig.histograms.intervals.count_scale`).
     """
-    scale = count_scale(
-        np.asarray(histogram.values(flow=True), dtype=float),
-        np.asarray(histogram.variances(flow=True), dtype=float),
-    )
     unit = histogram.copy()
     view: Any = unit.view(flow=True)
-    view.value = scale
-    view.variance = scale**2
+    view.value = 1.0
+    view.variance = 1.0
     return unit
 
 
@@ -138,13 +134,14 @@ class Histogram:
         ``stats`` unless given.
     poisson
         Whether the statistical uncertainty is the Poisson (Garwood) interval
-        of the counts rather than ``sqrt(variances)`` (see :meth:`errors`).
-        Needs counts, possibly scaled (normalised): non-negative contents whose
-        effective counts ``values**2 / variances`` are whole numbers; anything
-        else raises ``ValueError``. ``plot(data_errors=...)`` sets it for
-        observed data. For unit counts this is ROOT's ``TH1::kPoisson``; scaled
-        counts keep the interval, scaled like the contents, where ROOT falls
-        back to ``sqrt(variances)`` for any histogram with ``Sumw2``.
+        of the counts rather than ``sqrt(variances)`` (see :meth:`errors`):
+        ROOT's ``TH1::kPoisson``. Needs unit-weight counts (whole numbers equal
+        to their variances); anything else raises ``ValueError``, since sums of
+        weights cannot say whether they are counts. Scaling, normalising or
+        rebinning such a histogram keeps the interval, scaled like the contents
+        (ROOT falls back to ``sqrt(variances)`` once a histogram is scaled), so
+        counts scaled by ``c`` are ``Histogram(counts, poisson=True).scaled(c)``.
+        ``plot(data_errors=...)`` sets it for observed data.
     """
 
     hist: Hist
@@ -199,18 +196,26 @@ class Histogram:
         checked = self._checked_variations(self.variations)
         object.__setattr__(self, "variations", FrozenMapping(checked))
         if self.poisson:
-            problem = count_problem(self.values(flow=True), self.variances(flow=True))
-            if problem is not None:
-                msg = (
-                    f"histogram {self.label!r} {problem}, so its uncertainty is not the Poisson "
-                    "interval of counts; keep poisson=False for sqrt(sum of squared weights)"
-                )
-                raise ValueError(msg)
-            if self._unit is None:
+            if self._unit is None:  # new contents: only unit-weight counts are known counts
+                problem = count_problem(self.values(flow=True), self.variances(flow=True))
+                if problem is not None:
+                    msg = (
+                        f"histogram {self.label!r} {problem}, so it is not known to hold counts "
+                        "and gets no Poisson interval; keep poisson=False for sqrt(sum of "
+                        "squared weights), or pass the counts with poisson=True and scale them "
+                        "with .scaled()"
+                    )
+                    raise ValueError(msg)
                 object.__setattr__(self, "_unit", _one_count(self.hist))
             elif not same_binning(self._unit, self.hist):
                 msg = f"histogram {self.label!r}: its count scale does not have its binning"
                 raise BinningError(msg)
+            elif np.any(self.values(flow=True) < 0):
+                msg = (
+                    f"histogram {self.label!r} has negative contents, so its uncertainty is "
+                    "not the Poisson interval of counts"
+                )
+                raise ValueError(msg)
         else:
             object.__setattr__(self, "_unit", None)
 
@@ -283,25 +288,18 @@ class Histogram:
         Both are ``sqrt(variances)``, the uncertainty of a sum of weights, or,
         with :attr:`poisson`, the distances to the Garwood 68 % interval of the
         counts, scaled like the contents (see
-        :func:`~rootfig.histograms.intervals.poisson_errors`). An empty bin is
-        scaled as its counts would be: a record of one count per bin goes through
-        every scaling, normalisation and rebinning with the contents, so an empty
-        histogram scaled by 3 gets ``0 +5.52`` and an empty bin divided by its
-        width its own share. The pair is matplotlib's ``yerr`` order; drawing,
-        comparisons and :func:`~rootfig.histograms.uncertainty` take it from here.
+        :func:`~rootfig.histograms.intervals.poisson_errors`). The factor of
+        each bin comes from a record of one count per bin that goes through
+        every scaling, normalisation and rebinning with the contents, never from
+        the contents themselves, so an empty histogram scaled by 3 gets
+        ``0 +5.52`` and an empty bin divided by its width its own share. The
+        pair is matplotlib's ``yerr`` order; drawing, comparisons and
+        :func:`~rootfig.histograms.uncertainty` take it from here.
         """
         if self.poisson and self._unit is not None:
-            ones = np.asarray(self._unit.values(flow=flow), dtype=float)
-            squares = np.asarray(self._unit.variances(flow=flow), dtype=float)
-            known = ones != 0
-            if known.any():
-                # cells a transformation added (the new flow cells of flow="show") hold no
-                # count; they take the factor of the nearest cell that does
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    scale = count_scale(known.astype(float), np.where(known, squares / ones, 0.0))
-            else:  # a count in every cell, and none left: the contents were scaled by zero
-                scale = np.zeros_like(ones)
-            return poisson_errors(self.values(flow=flow), self.variances(flow=flow), scale=scale)
+            unit = self._unit
+            scale = count_scale(unit.values(flow=flow), np.asarray(unit.variances(flow=flow)))
+            return poisson_errors(self.values(flow=flow), scale)
         sigma = np.asarray(np.sqrt(self.variances(flow=flow)), dtype=float)
         return sigma, sigma.copy()
 
@@ -358,7 +356,7 @@ class Histogram:
         """Return a copy with the given fields changed, e.g. ``h.replace(label="B")``.
 
         A new ``hist`` brings its own counts: the record of one count per bin
-        that the Poisson interval of empty bins uses is rebuilt from it (use
+        that the Poisson interval uses is rebuilt from it (use
         :meth:`map_hists` to transform the contents and keep that record).
         """
         if "hist" in changes and "_unit" not in changes:

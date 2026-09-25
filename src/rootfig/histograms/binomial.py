@@ -2,7 +2,8 @@
 
 ``"auto"`` is what ROOT's ``TEfficiency`` (and ``TGraphAsymmErrors::Divide``)
 gives by default: Clopper-Pearson for unweighted counts, the normal
-approximation for weighted entries.
+approximation for weighted entries. Every other name is the method ROOT means by
+it, for the entries ROOT allows it for; ``"wilson-effective"`` is rootfig's own.
 """
 
 from __future__ import annotations
@@ -26,18 +27,26 @@ __all__ = [
     "wilson_interval",
 ]
 
-EfficiencyInterval: TypeAlias = Literal["auto", "clopper-pearson", "normal", "wilson"]
+EfficiencyInterval: TypeAlias = Literal[
+    "auto", "clopper-pearson", "normal", "wilson", "wilson-effective"
+]
 """How the confidence interval of an efficiency is computed.
 
 * ``"clopper-pearson"`` - the exact binomial interval of counts, never covering
   less than the requested probability; unweighted entries only.
 * ``"normal"`` - the efficiency plus or minus ``z`` standard deviations of the
   weighted pass fraction, clipped to ``[0, 1]``: no width at 0 and 1.
-* ``"wilson"`` - the Wilson score interval, with the effective entries
-  ``(sum w)^2 / sum w^2`` for weighted entries.
+* ``"wilson"`` - the Wilson score interval of counts; unweighted entries only.
+* ``"wilson-effective"`` - the Wilson score interval of the effective entries
+  ``(sum w)^2 / sum w^2``: rootfig's extension to weighted entries, for which
+  ROOT has only the normal approximation. The same as ``"wilson"`` for counts.
 * ``"auto"`` - ROOT's default: ``"clopper-pearson"`` for unweighted entries,
   ``"normal"`` otherwise.
 """
+
+_METHODS = ("auto", "clopper-pearson", "normal", "wilson", "wilson-effective")
+_COUNTS_ONLY = ("clopper-pearson", "wilson")
+"""Methods of counts: ROOT refuses them for weighted entries and falls back to "normal"."""
 
 _UNWEIGHTED_TOLERANCE = 1e-12
 """Relative tolerance of ``TEfficiency``'s test for unweighted entries, ``sum w == sum w^2``.
@@ -60,27 +69,32 @@ def is_unweighted(sum_weights: float, sum_squares: float) -> bool:
 
 def check_interval(interval: str) -> None:
     """Raise ``ValueError`` unless ``interval`` names an :data:`EfficiencyInterval`."""
-    if interval not in ("auto", "clopper-pearson", "normal", "wilson"):
-        msg = f"interval must be 'auto', 'clopper-pearson', 'normal' or 'wilson', got {interval!r}"
+    if interval not in _METHODS:
+        msg = f"interval must be one of {', '.join(map(repr, _METHODS))}, got {interval!r}"
         raise ValueError(msg)
 
 
 def resolve_interval(interval: str, unweighted: bool, context: str = "") -> EfficiencyInterval:
     """Return the method ``interval`` stands for: ``"auto"`` resolved like ``TEfficiency``.
 
+    ROOT falls back to the normal approximation, with a warning, when a method
+    of counts is asked for weighted entries; rootfig raises instead, so an
+    explicit method never silently changes.
+
     Raises
     ------
     ValueError
-        For an unknown ``interval``, or ``"clopper-pearson"`` for weighted entries.
+        For an unknown ``interval``, or ``"clopper-pearson"`` or ``"wilson"``
+        for weighted entries.
     """
     check_interval(interval)
     if interval == "auto":
         return "clopper-pearson" if unweighted else "normal"
-    if interval == "clopper-pearson" and not unweighted:
+    if interval in _COUNTS_ONLY and not unweighted:
         msg = (
-            f"{context + ': ' if context else ''}interval='clopper-pearson' needs unweighted "
+            f"{context + ': ' if context else ''}interval={interval!r} needs unweighted "
             "entries; use 'normal' (ROOT's choice for weighted entries, also what 'auto' "
-            "picks) or 'wilson'"
+            "picks) or 'wilson-effective' (Wilson with the effective entries)"
         )
         raise ValueError(msg)
     return interval  # type: ignore[return-value]
@@ -107,6 +121,8 @@ def efficiency_bounds(
     if interval == "normal":
         return normal_interval(passed, total, passed_variance, total_variance, z)
     if interval == "wilson":
+        return wilson_interval(passed, total, total, z)  # counts: the variance is the count
+    if interval == "wilson-effective":
         return wilson_interval(passed, total, total_variance, z)
     msg = f"efficiency_bounds needs a resolved interval, got {interval!r}"
     raise ValueError(msg)
@@ -179,13 +195,14 @@ def wilson_interval(
     """Return the Wilson score interval of the efficiency ``passed / total``: ``(lower, upper)``.
 
     ``passed`` sums the weights of a subset of the entries ``total`` sums, so the
-    interval is binomial. For counts it is ROOT's ``TEfficiency::Wilson``. With
-    weights, the effective entries of the total, ``total**2 / total_variance``,
-    take the place of its count: the weighted pass fraction of entries passing
-    with probability ``e`` has the variance ``e (1 - e) / n_eff``, and the score
-    interval inverts it. Unlike the normal approximation it keeps a width at 0
-    and 1. The interval covers ``z`` standard deviations, is clipped to
-    ``[0, 1]`` and always contains the efficiency. It is ``nan`` where the
+    interval is binomial. For counts (``total_variance = total``) it is ROOT's
+    ``TEfficiency::Wilson``. With weights, the effective entries of the total,
+    ``total**2 / total_variance``, take the place of its count: the weighted
+    pass fraction of entries passing with probability ``e`` has the variance
+    ``e (1 - e) / n_eff``, and the score interval inverts it. Unlike the normal
+    approximation it keeps a width at 0 and 1. The interval covers ``z``
+    standard deviations, is clipped to ``[0, 1]`` and always contains the
+    efficiency. It is ``nan`` where the
     total is not positive or the efficiency lies outside ``[0, 1]``.
     """
     k = np.asarray(passed, dtype=float)

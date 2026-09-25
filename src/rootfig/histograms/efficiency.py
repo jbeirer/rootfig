@@ -90,7 +90,7 @@ def efficiency(
     ROOT decides), else the normal approximation of a weighted pass fraction.
     The interval is clipped to ``[0, 1]`` and always contains the efficiency.
 
-    ``"clopper-pearson"`` and ``"wilson"`` are binomial, so they need
+    The intervals other than ``"normal"`` are binomial, so they need
     non-negative weights. A bin gets ``nan`` bounds from them and a
     :class:`~rootfig.errors.RootfigWarning` where negative weights enter it, as
     far as can be told: where the total is negative, the efficiency outside
@@ -108,8 +108,8 @@ def efficiency(
     BinningError
         If the binnings differ or ``z`` is not a positive finite number.
     ValueError
-        For an unknown ``interval``, or ``"clopper-pearson"`` for weighted
-        histograms.
+        For an unknown ``interval``, or ``"clopper-pearson"`` or ``"wilson"``
+        for weighted histograms.
     """
     if not compatible_binning(passed, total):
         msg = "efficiency requires two one-dimensional histograms with identical bin edges"

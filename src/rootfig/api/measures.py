@@ -104,11 +104,13 @@ def efficiency(
     entries, the normal approximation for weighted ones. The sample's
     ``scale`` and luminosity factor cancel in an efficiency and are left out,
     so an unweighted sample stays unweighted. ``"clopper-pearson"``,
-    ``"normal"`` and ``"wilson"`` (the score interval, with the effective
-    entries for weighted samples) choose one (see
+    ``"normal"`` and ``"wilson"`` choose one, as in ROOT (Clopper-Pearson and
+    Wilson for unweighted entries only), and ``"wilson-effective"`` is the Wilson
+    interval of the effective entries for weighted samples (see
     :data:`~rootfig.histograms.binomial.EfficiencyInterval`). A binomial
-    interval (Clopper-Pearson, Wilson) is not drawn, with a warning, for a bin
-    that an entry with a negative weight falls into, which keeps its efficiency.
+    interval (any but the normal approximation) is not drawn, with a warning, for
+    a bin that an entry with a negative weight falls into, which keeps its
+    efficiency.
     The :class:`~rootfig.histograms.Efficiency`
     objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a
     ``range`` infers one robustly, shared by numerator and denominator (see

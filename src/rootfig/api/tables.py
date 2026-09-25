@@ -124,9 +124,10 @@ def cutflow(
     steps with a warning, or raise for ``nonfinite="error"``. Yields carry
     ``sqrt(sum w^2)``; efficiencies carry the confidence interval ``interval``
     names (:attr:`~rootfig.Cutflow.efficiency_errors`): ``"auto"`` is ROOT's
-    ``TEfficiency`` default, Clopper-Pearson of the event counts when every
-    event weight is 1 (before the sample's scale and luminosity factor) and
-    the normal approximation otherwise. Systematics are not propagated.
+    ``TEfficiency`` default, Clopper-Pearson when the event weights (before the
+    sample's scale and luminosity factor) are unweighted as ROOT decides (their
+    sum equals the sum of their squares: weights of 1, or 0 and 1) and the
+    normal approximation otherwise. Systematics are not propagated.
 
     Examples
     --------

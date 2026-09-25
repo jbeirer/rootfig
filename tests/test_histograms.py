@@ -41,7 +41,6 @@ from rootfig.histograms import (
     count_problem,
     describe_table,
     fill,
-    is_unit_counts,
     load_columns,
     normalize,
     poisson_interval,
@@ -52,7 +51,7 @@ from rootfig.histograms import (
 from rootfig.histograms.binomial import clopper_pearson, normal_interval, wilson_interval
 from rootfig.histograms.build import from_sample
 from rootfig.histograms.groups import group_histogram, regroup_histograms
-from rootfig.histograms.intervals import poisson_errors
+from rootfig.histograms.intervals import count_scale, poisson_errors
 from rootfig.histograms.normalize import normalization_label, normalize_hist
 from rootfig.histograms.pipeline import combined_weight
 from rootfig.model import Cut, Group, Sample, Systematic, Variable
@@ -996,30 +995,33 @@ class TestPoissonIntervals:
 
     def test_scaled_counts(self) -> None:
         counts = np.array([0.0, 3.0, 0.0, 0.0, 5.0, 0.0])
-        raw_down, raw_up = poisson_errors(counts, counts)
+        raw_down, raw_up = poisson_errors(counts, np.ones_like(counts))
         low, high = poisson_interval(counts)
         np.testing.assert_allclose(raw_down, counts - low)
         np.testing.assert_allclose(raw_up, high - counts)
-        # normalised to unity: one factor for every bin, empty ones included
-        down, up = poisson_errors(counts / 8, counts / 64)
-        np.testing.assert_allclose(down, raw_down / 8, rtol=1e-12)
-        np.testing.assert_allclose(up, raw_up / 8, rtol=1e-12)
-        # per-bin factors: an empty bin borrows the nearest filled bin's (ties: the lower one)
-        factor = np.array([1.0, 2.0, 1.0, 1.0, 4.0, 1.0])
-        _, borrowed = poisson_errors(counts / factor, counts / factor**2)
-        np.testing.assert_allclose(borrowed, raw_up / [2.0, 2.0, 2.0, 4.0, 4.0, 4.0])
-        np.testing.assert_allclose(poisson_errors(np.zeros(2), np.zeros(2))[1], 1.8410216450, 1e-9)
+        # a factor per bin, empty bins included: the interval of the count times it
+        factor = np.array([0.125, 2.0, 1.0, 0.5, 4.0, 1.0])
+        down, up = poisson_errors(counts * factor, factor)
+        np.testing.assert_allclose(down, raw_down * factor, rtol=1e-12)
+        np.testing.assert_allclose(up, raw_up * factor, rtol=1e-12)
+        np.testing.assert_array_equal(poisson_errors(np.zeros(2), np.zeros(2)), 0.0)
 
-    def test_unit_counts_and_count_problems(self) -> None:
-        assert is_unit_counts([0.0, 3.0, 7.0], [0.0, 3.0, 7.0])
-        assert not is_unit_counts([0.0, 1.5], [0.0, 1.5])  # not whole
-        assert not is_unit_counts([2.0, 4.0], [4.0, 8.0])  # weight 2
-        assert count_problem([0.0, 2.0, 4.0], [0.0, 4.0, 8.0]) is None  # counts scaled by 2
-        assert count_problem([0.25, 0.75], [0.0625, 0.1875]) is None  # normalised counts
+    def test_count_scale_comes_from_the_record_of_one_count(self) -> None:
+        # a cell of m merged counts of factor c holds (m c, m c**2); a cell the record
+        # lacks borrows the nearest factor (ties: the lower cell's)
+        ones, squares = [0.0, 2.0, 0.0, 0.0, 1.0, 0.0], [0.0, 4.0, 0.0, 0.0, 0.25, 0.0]
+        np.testing.assert_allclose(count_scale(ones, squares), [2, 2, 2, 0.25, 0.25, 0.25])
+        np.testing.assert_array_equal(count_scale([0.0, 0.0], [0.0, 0.0]), 0.0)  # scaled by 0
+
+    def test_only_unit_weight_counts_are_counts(self) -> None:
+        assert count_problem([0.0, 3.0, 7.0], [0.0, 3.0, 7.0]) is None
+        assert "whole" in str(count_problem([0.0, 1.5], [0.0, 1.5]))
+        # counts scaled by 2 sum like weights of 2, and weights [1, 1, 4] like two entries of
+        # weight 3 (6 and 18): whole effective counts do not make the contents counts
+        assert "scaled" in str(count_problem([2.0, 4.0], [4.0, 8.0]))
+        assert "weighted" in str(count_problem([6.0], [18.0]))
+        assert "weighted" in str(count_problem([0.0, 2.0], [2.0, 2.0]))  # weights that cancel
         assert "negative" in str(count_problem([-1.0, 2.0], [1.0, 2.0]))
-        assert "cancel" in str(count_problem([0.0, 2.0], [2.0, 2.0]))
-        assert "weighted" in str(count_problem([1.5, 2.0], [1.25, 2.0]))
-        assert "without a variance" in str(count_problem([1.0], [0.0]))
         assert "non-finite" in str(count_problem([np.nan], [1.0]))
 
 
@@ -1091,6 +1093,18 @@ class TestPoissonHistograms:
         assert not sum_histograms([a, plain]).poisson
         assert not sum_histograms([a, b.scaled(2.0)]).poisson
 
+    def test_sums_compare_the_whole_record_of_counts(self) -> None:
+        # merged pairs of factors (1, 0.5) and (0.75, 0.75) record one count per bin as
+        # 1.5 alike, but 1.25 and 1.125 as its square: not the same scale
+        h = hist.Hist(hist.axis.Variable([0.0, 1.0, 3.0, 4.0, 6.0]), storage=hist.storage.Weight())
+        h.fill([0.5, 2.0, 2.0, 5.0])
+        data = Histogram(h, label="Data", is_data=True, poisson=True)
+        wide = data.map_hists(lambda h: normalize_hist(h, "width")[:: hist.rebin(2)])
+        flat = data.scaled(0.75).rebinned(2)
+        np.testing.assert_allclose(wide._unit.values(), flat._unit.values())  # type: ignore[union-attr]
+        assert not sum_histograms([wide, flat]).poisson
+        assert sum_histograms([flat, flat]).poisson
+
     def test_zero_scaled_poisson_has_zero_errors(self) -> None:
         data = self._data([0.0, 1.0, 4.0])
         zero = data.scaled(0.0)
@@ -1105,12 +1119,14 @@ class TestPoissonHistograms:
         assert not sum_histograms([zero, data]).poisson  # different count scales
 
     def test_a_new_hist_brings_its_own_count_scale(self) -> None:
-        # counts [0, 1, 2] scaled by 10, then replaced by counts scaled by 2 with the same
-        # binning: the empty bin takes 2 x 1.84, not the old 10 x 1.84
-        old = Histogram(_contents([0.0, 10.0, 20.0], [0.0, 100.0, 200.0]), "D", poisson=True)
-        new = old.replace(hist=_contents([0.0, 2.0, 4.0], [0.0, 4.0, 8.0]))
-        assert new.errors()[1][0] == pytest.approx(2 * 1.8410216450)
+        # counts [0, 1, 2] scaled by 10, then replaced by the counts with the same binning:
+        # the empty bin takes 1.84, not the old 10 x 1.84
+        old = Histogram(_contents([0.0, 1.0, 2.0], [0.0, 1.0, 2.0]), "D", poisson=True).scaled(10)
+        new = old.replace(hist=_contents([0.0, 1.0, 2.0], [0.0, 1.0, 2.0]))
+        assert new.errors()[1][0] == pytest.approx(1.8410216450)
         assert old.errors()[1][0] == pytest.approx(10 * 1.8410216450)
+        with pytest.raises(ValueError, match="not known to hold counts"):
+            old.replace(hist=old.hist)  # its own contents again, but no longer known as counts
 
     def test_shown_flow_bins_keep_the_width_they_were_divided_by(self) -> None:
         edges = [0.0, 10.0, 20.0, 100.0]
@@ -1140,7 +1156,10 @@ class TestPoissonHistograms:
         [
             ([2.0, 3.0], [2.5, 3.5], "weighted"),
             ([-1.0, 3.0], [1.0, 3.0], "negative"),
-            ([0.0, 3.0], [2.0, 3.0], "cancel"),
+            ([0.0, 3.0], [2.0, 3.0], "weighted"),  # weights that cancel
+            ([6.0], [18.0], "weighted"),  # weights [1, 1, 4]: 2 effective entries, not counts
+            ([0.0, 2.0, 4.0], [0.0, 4.0, 8.0], "scaled"),  # build counts and scale them
+            ([0.5, 3.0], [0.5, 3.0], "whole"),
         ],
     )
     def test_contents_that_are_not_counts_are_refused(
@@ -1351,7 +1370,9 @@ class TestEfficiency:
 
         unweighted = efficiency(_hist([0.5] * 5), _hist([0.5] * 10), interval="wilson")
         weighted = efficiency(
-            _hist([0.5] * 5, [2.0] * 5), _hist([0.5] * 10, [2.0] * 10), interval="wilson"
+            _hist([0.5] * 5, [2.0] * 5),
+            _hist([0.5] * 10, [2.0] * 10),
+            interval="wilson-effective",
         )
         assert weighted.values[0] == pytest.approx(unweighted.values[0])
         assert weighted.lower[0] == pytest.approx(unweighted.lower[0])  # same n_eff = 10
@@ -1359,8 +1380,10 @@ class TestEfficiency:
         # where ROOT's weighted normal approximation (the default) gives [1, 1]
         all_pass = _hist([0.5] * 3, [1.0, 2.0, 3.0])
         n_eff = 36 / 14
-        wilson = efficiency(all_pass, all_pass, interval="wilson")
+        wilson = efficiency(all_pass, all_pass, interval="wilson-effective")
         assert wilson.lower[0] == pytest.approx(n_eff / (n_eff + 1))
+        counts = efficiency(_hist([0.5] * 5), _hist([0.5] * 10), interval="wilson-effective")
+        np.testing.assert_array_equal(counts.lower, unweighted.lower)  # the same for counts
         assert efficiency(all_pass, all_pass).lower[0] == 1.0
         with pytest.raises(BinningError):
             efficiency(
@@ -1378,18 +1401,21 @@ class TestEfficiencyIntervals:
         assert not is_unweighted(6.0, 12.0)
         assert resolve_interval("auto", True) == "clopper-pearson"
         assert resolve_interval("auto", False) == "normal"
-        assert resolve_interval("wilson", False) == "wilson"
-        with pytest.raises(ValueError, match="needs unweighted"):
-            efficiency(
-                _hist([0.5], [2.0]), _hist([0.5, 0.5], [2.0, 2.0]), interval="clopper-pearson"
-            )
+        assert resolve_interval("wilson", True) == "wilson"
+        assert resolve_interval("wilson-effective", False) == "wilson-effective"
+        # ROOT falls back to the normal approximation for methods of counts with weights
+        # (with a warning); an explicit choice here never silently changes
+        for method in ("clopper-pearson", "wilson"):
+            with pytest.raises(ValueError, match=f"'{method}' needs unweighted"):
+                efficiency(_hist([0.5], [2.0]), _hist([0.5, 0.5], [2.0, 2.0]), interval=method)
         with pytest.raises(ValueError, match="interval must be"):
             efficiency(_hist([0.5]), _hist([0.5]), interval="jeffreys")  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="interval must be"):
             Cutflow("s", (), interval="exact")  # type: ignore[arg-type]
         weighted = CutflowStep(label="", expression="", events=2, yield_=3.0, error=np.sqrt(5.0))
-        with pytest.raises(ValueError, match="needs unweighted"):
-            Cutflow("w", (weighted,), interval="clopper-pearson")
+        for method in ("clopper-pearson", "wilson"):
+            with pytest.raises(ValueError, match="needs unweighted"):
+                Cutflow("w", (weighted,), interval=method)  # type: ignore[arg-type]
 
     def test_undefined_inputs(self) -> None:
         lower, upper = clopper_pearson([0.0, 3.0, -1.0, 2.0], [0.0, 2.0, 2.0, -1.0])
@@ -1559,6 +1585,20 @@ class TestCutflow:
         # 60 of 100: 0.6 -0.0497 +0.0478, not the independent-yield sqrt(1/60 + 1/100)
         assert (down[1], up[1]) == pytest.approx((0.04975, 0.04777), abs=1e-5)
 
+    def test_weights_of_zero_and_one_are_unweighted_as_for_tefficiency(self) -> None:
+        from rootfig.histograms import cutflow
+
+        # ROOT 6.40: TH1D totals filled with weights 1, 0, 1, 0, ... for n = 0..19 and the
+        # passing n >= 8; TEfficiency counts them as unweighted and takes Clopper-Pearson of
+        # the contents, 6 of 10 (not of the 12 events of which 6 have weight 0)
+        sample = Sample({"n": np.arange(20.0), "w": np.tile([1.0, 0.0], 10)}, weight="w")
+        flow = cutflow(sample, ["n >= 8"])
+        assert flow.interval == "clopper-pearson"
+        assert [step.events for step in flow.steps] == [20, 12]
+        down, up = flow.efficiency_errors
+        root = (0.39540314576424296, 0.7800092538943881)
+        np.testing.assert_allclose([0.6 - down[1], 0.6 + up[1]], root, rtol=1e-11)
+
     def test_scale_keeps_events_unweighted_and_weights_do_not(self) -> None:
         from rootfig.histograms import cutflow
 
@@ -1574,8 +1614,9 @@ class TestCutflow:
         down, up = weighted.efficiency_errors
         lower, upper = normal_interval([60.0], [100.0], [60.0], [100.0])
         np.testing.assert_allclose([down[1], up[1]], [0.6 - lower[0], upper[0] - 0.6])
-        with pytest.raises(ValueError, match="needs unweighted"):
-            cutflow(Sample({"n": np.arange(100.0)}, weight="2.5"), cuts, interval="clopper-pearson")
+        for method in ("clopper-pearson", "wilson"):
+            with pytest.raises(ValueError, match="needs unweighted"):
+                cutflow(Sample({"n": np.arange(100.0)}, weight="2.5"), cuts, interval=method)  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="interval must be"):
             cutflow(Sample({"n": np.arange(100.0)}), cuts, interval="bayes")  # type: ignore[arg-type]
 
@@ -1584,7 +1625,7 @@ class TestCutflow:
 
         weights = np.where(np.arange(100) % 2, 3.0, 1.0)  # 50 of weight 1, 50 of weight 3
         sample = Sample({"n": np.arange(100.0), "w": weights}, weight="w")
-        flow = cutflow(sample, ["n >= 40"], interval="wilson")
+        flow = cutflow(sample, ["n >= 40"], interval="wilson-effective")
         n, vn = 200.0, 50 * 1.0 + 50 * 9.0
         k, vk = float(weights[40:].sum()), float(np.sum(weights[40:] ** 2))
         down, up = flow.efficiency_errors
@@ -1612,7 +1653,7 @@ class TestCutflow:
         # one negative weight among ten, cut away by the first cut
         weights = np.r_[-1.0, np.ones(9)]
         sample = Sample({"n": np.arange(10.0), "w": weights}, weight="w")
-        flow = cutflow(sample, ["n >= 1", "n >= 5"], interval="wilson")
+        flow = cutflow(sample, ["n >= 1", "n >= 5"], interval="wilson-effective")
         assert [step.negative_weights for step in flow.steps] == [True, False, False]
         np.testing.assert_allclose(flow.efficiencies, [1.0, 9 / 8, 5 / 9])  # still reported
         down, up = flow.efficiency_errors
@@ -1739,12 +1780,12 @@ class TestEfficiencyDomain:
 
         # total = 1 - 2 = -1: the ratio is defined, an interval is not
         with pytest.warns(RootfigWarning, match="negative weights"):
-            eff = efficiency(*self._weighted([-0.5], [1.0, -2.0]), interval="wilson")
+            eff = efficiency(*self._weighted([-0.5], [1.0, -2.0]), interval="wilson-effective")
         assert eff.values[0] == pytest.approx(0.5)
         assert np.isnan(eff.lower[0])
         assert np.isnan(eff.upper[0])
         with pytest.warns(RootfigWarning, match="negative weights"):
-            eff = efficiency(*self._weighted([-2.0], [1.0, -2.0]), interval="wilson")
+            eff = efficiency(*self._weighted([-2.0], [1.0, -2.0]), interval="wilson-effective")
         assert eff.values[0] == pytest.approx(2.0)
         assert np.isnan(eff.lower[0])
         with pytest.warns(RootfigWarning, match="negative total"):  # the normal approximation
@@ -1767,7 +1808,7 @@ class TestEfficiencyDomain:
         # p = 1 / 1.5 lies in [0, 1], but the failing entries {1, -0.5} sum to 0.5 with
         # squares summing to 1.25 > 0.25, which non-negative weights never give
         with pytest.warns(RootfigWarning, match="negative weights"):
-            eff = efficiency(*self._weighted([1.0], [1.0, 1.0, -0.5]), interval="wilson")
+            eff = efficiency(*self._weighted([1.0], [1.0, 1.0, -0.5]), interval="wilson-effective")
         assert eff.values[0] == pytest.approx(2 / 3)
         assert np.isnan(eff.lower[0])
         assert np.isnan(eff.upper[0])
@@ -1790,12 +1831,12 @@ class TestEfficiencyDomain:
         hists = self._weighted([1.0, 1.0, -0.1], [1.0, 1.0, -0.1, 1.0])
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            unknown = efficiency(*hists, interval="wilson")
+            unknown = efficiency(*hists, interval="wilson-effective")
             normal = efficiency(*hists, negative_weights=[True])  # needs no flag
         assert np.isfinite(unknown.lower[0])  # nothing in the sums says so
         assert np.isfinite(normal.lower[0])
         with pytest.warns(RootfigWarning, match="negative weights"):
-            flagged = efficiency(*hists, negative_weights=[True], interval="wilson")
+            flagged = efficiency(*hists, negative_weights=[True], interval="wilson-effective")
         assert flagged.values[0] == pytest.approx(1.9 / 2.9)
         assert np.isnan(flagged.lower[0])
         assert np.isnan(flagged.upper[0])
@@ -1806,9 +1847,10 @@ class TestEfficiencyDomain:
         # positive weights of different sizes, all passing or all failing included
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            eff = efficiency(*self._weighted([0.5, 3.0], [0.5, 3.0, 1.0, 0.2]), interval="wilson")
+            hists = self._weighted([0.5, 3.0], [0.5, 3.0, 1.0, 0.2])
+            eff = efficiency(*hists, interval="wilson-effective")
             ends = [
-                efficiency(*self._weighted(w, [0.5, 3.0]), interval="wilson")
+                efficiency(*self._weighted(w, [0.5, 3.0]), interval="wilson-effective")
                 for w in ([], [0.5, 3.0])
             ]
         assert np.isfinite(eff.lower[0])

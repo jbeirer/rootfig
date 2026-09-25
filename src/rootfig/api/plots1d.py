@@ -139,7 +139,7 @@ def plot(
     flow: FlowSpec = "hint",
     histtype: HistType | None = None,
     errorbars: bool | None = None,
-    data_errors: DataErrors = "auto",
+    data_errors: DataErrors | None = None,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float | None, float | None] | None = None,
     xbreak: tuple[float, float] | None = None,
@@ -282,12 +282,14 @@ def plot(
         histograms. ``None`` draws them only for ``"errorbar"`` histtypes.
     data_errors
         The statistical uncertainty of observed data, in the main and the lower
-        panel alike: ``"poisson"``, the Garwood 68 % interval of the counts,
-        asymmetric and with an upper error for an empty bin; ``"sumw2"``,
-        ``sqrt(sum of squared weights)``; or ``"auto"``, Poisson for unit-weight
-        counts (every bin a whole number equal to its variance, before any
-        normalisation) and ``"sumw2"`` otherwise. ``"poisson"`` refuses weighted
-        or signed contents.
+        panel alike. ``None`` (default) is ROOT's ``TH1`` default, ``sqrt(sum of
+        squared weights)`` (``sqrt(N)`` for counts), unless a histogram object
+        carries ``poisson=True``. ``"poisson"`` is ROOT's ``TH1::kPoisson``, the
+        Garwood 68 % interval of the counts, asymmetric and with an upper error
+        for an empty bin; it refuses anything but unit-weight counts (every bin
+        a whole number equal to its variance, before any normalisation).
+        ``"auto"`` is Poisson for unit-weight counts and ``sqrt(sum of squared
+        weights)`` otherwise.
     xlim, ylim
         Axis limits; ``ylim`` entries may be ``None`` to keep the automatic value.
     xbreak
@@ -532,7 +534,7 @@ def draw_plot(
     flow: FlowSpec = "hint",
     histtype: HistType | None = None,
     errorbars: bool | None = None,
-    data_errors: DataErrors = "auto",
+    data_errors: DataErrors | None = None,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float | None, float | None] | None = None,
     xbreak: tuple[float, float] | None = None,

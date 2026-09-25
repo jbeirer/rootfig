@@ -710,7 +710,6 @@ class TestPanelRoles:
                 self._hists(data=True),
                 stack=["A", "B"],
                 panel=kind,  # type: ignore[arg-type]
-                data_errors="sumw2",
             )
             (comparison,) = p.comparisons
             np.testing.assert_allclose(comparison.values, expected)
@@ -736,7 +735,7 @@ class TestPanelRoles:
             plot.close()
 
     def test_uncertainty_modes(self) -> None:
-        p = rf.plot(self._hists(data=True), panel="difference", reference="A", data_errors="sumw2")
+        p = rf.plot(self._hists(data=True), panel="difference", reference="A")
         by_label = {c.label: c for c in p.comparisons}
         # data over simulation: the reference is the band; simulation: both propagated
         np.testing.assert_allclose(by_label["Data"].errors, np.sqrt(20.0))
@@ -748,7 +747,6 @@ class TestPanelRoles:
             panel="difference",
             reference="A",
             panel_uncertainty="propagate",
-            data_errors="sumw2",
         )
         np.testing.assert_allclose(both.comparisons[-1].errors, np.sqrt(30.0))
         assert both.panel_ax is not None
@@ -2437,7 +2435,9 @@ class TestSystematics:
         passes = np.array([1, 1, 1, 0, 1, 0, 1])
         sample = rf.Sample({"x": x, "w": w, "ok": passes}, label="nlo", weight="w")
         with pytest.warns(RootfigWarning, match="nlo: 1 bin"):
-            p = rf.efficiency(sample, "x", passed="ok == 1", bins=(2, 0, 2), interval="wilson")
+            p = rf.efficiency(
+                sample, "x", passed="ok == 1", bins=(2, 0, 2), interval="wilson-effective"
+            )
         (eff,) = p.efficiencies
         np.testing.assert_allclose(eff.values, [1.9 / 2.9, 2.0 / 4.0])
         assert np.isnan([eff.lower[0], eff.upper[0]]).all()
@@ -3273,8 +3273,20 @@ class TestDataErrors:
             options["weight"] = "w"
         return rf.Sample(columns, label="Data", is_data=True, **options)
 
-    def test_auto_draws_the_interval_of_counts_in_both_panels(self) -> None:
+    def test_the_default_is_roots_square_root_of_the_counts(self) -> None:
         p = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=self._data(), panel="ratio")
+        assert not p.histograms[-1].poisson  # TH1's kNormal: sqrt(N), 0 +- 0 when empty
+        (ratio,) = p.comparisons
+        for side in ratio.errors:
+            np.testing.assert_allclose(side, np.sqrt(self.COUNTS) / p.histograms[0].values())
+        assert ratio.errors[1][2] == 0.0
+        p.close()
+
+    @pytest.mark.parametrize("mode", ["poisson", "auto"])
+    def test_poisson_draws_the_interval_of_counts_in_both_panels(self, mode: Any) -> None:
+        p = rf.plot(
+            self._mc(), "x", bins=(4, 0, 4), observed=self._data(), panel="ratio", data_errors=mode
+        )
         data = p.histograms[-1]
         assert data.poisson
         low, high = poisson_interval(self.COUNTS)
@@ -3293,41 +3305,18 @@ class TestDataErrors:
         np.testing.assert_allclose(u.stat_up, high - self.COUNTS)
         p.close()
 
-    def test_sumw2_keeps_the_square_root_of_the_counts(self) -> None:
-        p = rf.plot(
-            self._mc(),
-            "x",
-            bins=(4, 0, 4),
-            observed=self._data(),
-            panel="ratio",
-            data_errors="sumw2",
-        )
-        assert not p.histograms[-1].poisson
-        (ratio,) = p.comparisons
-        for side in ratio.errors:
-            np.testing.assert_allclose(side, np.sqrt(self.COUNTS) / p.histograms[0].values())
-        assert ratio.errors[1][2] == 0.0
-        p.close()
-
-    def test_weighted_data(self) -> None:
-        # one weight for every event: counts scaled by it, Poisson only when asked
-        scaled = self._data(weights=0.5)
-        auto = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=scaled)
+    @pytest.mark.parametrize("weights", [0.5, "varying"])
+    def test_weighted_data_is_not_counts(self, weights: Any) -> None:
+        # one weight for every event sums like unequal weights with the same totals: only
+        # unit-weight counts are known to be counts
+        if weights == "varying":
+            weights = np.linspace(0.6, 1.4, int(self.COUNTS.sum()))
+        weighted = self._data(weights=weights)
+        auto = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=weighted, data_errors="auto")
         assert not auto.histograms[-1].poisson
-        forced = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=scaled, data_errors="poisson")
-        _, high = poisson_interval(self.COUNTS)
-        np.testing.assert_allclose(forced.histograms[-1].errors()[1], 0.5 * (high - self.COUNTS))
-        weights = np.linspace(0.6, 1.4, int(self.COUNTS.sum()))
-        with pytest.raises(ValueError, match=r"'Data' is weighted.*data_errors='sumw2'"):
-            rf.plot(
-                self._mc(),
-                "x",
-                bins=(4, 0, 4),
-                observed=self._data(weights=weights),
-                data_errors="poisson",
-            )
-        for plot in (auto, forced):
-            plot.close()
+        auto.close()
+        with pytest.raises(ValueError, match=r"'Data' is weighted or scaled.*data_errors unset"):
+            rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=weighted, data_errors="poisson")
 
     def test_signed_weights_are_refused(self) -> None:
         signed = self._data(weights=np.where(np.arange(int(self.COUNTS.sum())) < 1, -1.0, 1.0))
@@ -3335,12 +3324,19 @@ class TestDataErrors:
         with pytest.raises(ValueError, match="negative contents"):
             rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=signed, data_errors="poisson")
         assert plt.get_fignums() == figures  # refused before a figure exists
-        auto = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=signed)
+        auto = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=signed, data_errors="auto")
         assert not auto.histograms[-1].poisson
         auto.close()
 
     def test_the_model_is_decided_before_normalising(self) -> None:
-        p = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=self._data(), normalize=True)
+        p = rf.plot(
+            self._mc(),
+            "x",
+            bins=(4, 0, 4),
+            observed=self._data(),
+            normalize=True,
+            data_errors="poisson",
+        )
         data = p.histograms[-1]
         assert data.poisson
         _, high = poisson_interval(self.COUNTS)
@@ -3350,35 +3346,35 @@ class TestDataErrors:
 
     def test_stored_histograms(self, stored_dir: Path, tmp_path: Path) -> None:
         mc = stored_dir / "ZZ_sel0_histo.root"
+        observed = stored_dir / "ZH_sel0_histo.root"
         # whole numbers without Sumw2: unweighted counts, as ROOT itself reads them
-        raw = rf.plot(mc, "mz_raw", observed=stored_dir / "ZH_sel0_histo.root")
+        raw = rf.plot(mc, "mz_raw", observed=observed, data_errors="auto")
         assert raw.histograms[-1].poisson
+        assert not rf.plot(mc, "mz_raw", observed=observed).histograms[-1].poisson
         # Sumw2 with weights of 0.5: not unit-weight counts
-        weighted = rf.plot(mc, "mz", observed=stored_dir / "ZH_sel0_histo.root")
+        weighted = rf.plot(mc, "mz", observed=observed, data_errors="auto")
         assert not weighted.histograms[-1].poisson
         # contents that are not whole numbers, without Sumw2: sqrt(content), as ROOT draws them
         path = tmp_path / "fractional.root"
         with uproot.recreate(path) as file:
             file["h"] = (np.array([0.5, 2.5, 3.0]), np.array([0.0, 1.0, 2.0, 3.0]))
-        fractional = rf.plot(path, "h", observed=path)
+        fractional = rf.plot(path, "h", observed=path, data_errors="auto")
         assert not fractional.histograms[-1].poisson
-        with pytest.raises(ValueError, match="weighted"):
+        with pytest.raises(ValueError, match="not whole numbers"):
             rf.plot(path, "h", observed=path, data_errors="poisson")
-        for plot in (raw, weighted, fractional):
-            plot.close()
+        plt.close("all")
 
     def test_histogram_objects(self) -> None:
         counts = hist.Hist(hist.axis.Regular(4, 0, 4))  # a plain count storage
         counts.fill(np.repeat([0.5, 1.5, 3.5], [1, 4, 9]))
         expected = rf.Histogram(counts.copy(), label="MC")
-        p = rf.plot([expected], observed=[counts])
-        assert p.histograms[-1].poisson
-        flagged = rf.Histogram(counts, label="Data", is_data=True, poisson=True)
-        forced = rf.plot([expected], observed=[flagged], data_errors="sumw2")
-        assert not forced.histograms[-1].poisson  # the keyword wins
-        kept = rf.plot([expected], observed=[flagged])
-        assert kept.histograms[-1].poisson
+        assert not rf.plot([expected], observed=[counts]).histograms[-1].poisson
+        assert rf.plot([expected], observed=[counts], data_errors="auto").histograms[-1].poisson
+        # a histogram carrying the model keeps it, scaled counts included
+        flagged = rf.Histogram(counts, label="Data", is_data=True, poisson=True).scaled(2.0)
+        for mode in (None, "auto", "poisson"):
+            kept = rf.plot([expected.scaled(2.0)], observed=[flagged], data_errors=mode)
+            assert kept.histograms[-1].poisson
         with pytest.raises(ValueError, match="data_errors must be"):
-            rf.plot([expected], observed=[counts], data_errors="garwood")  # type: ignore[arg-type]
-        for plot in (p, forced, kept):
-            plot.close()
+            rf.plot([expected], observed=[counts], data_errors="sumw2")  # type: ignore[arg-type]
+        plt.close("all")

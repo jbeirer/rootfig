@@ -245,12 +245,13 @@ def pull(mc: list[rf.Sample], data: rf.Sample, met: rf.Variable, style: rf.Style
     section=SIMULATION_AND_DATA,
 )
 def poisson_data(mc: list[rf.Sample], data: rf.Sample) -> rf.Plot:
-    """Unweighted data is drawn with the Garwood (Poisson) 68 % interval of its counts:
-    asymmetric where few events fall into a bin, and with an upper error for an empty one,
-    in the ratio panel as in the main one. ``data_errors="sumw2"`` draws ``sqrt(N)`` instead,
-    and weighted data keeps its ``sqrt(sum of squared weights)``."""
+    """``data_errors="poisson"`` draws data with the Garwood (Poisson) 68 % interval of its
+    counts, ROOT's ``TH1::kPoisson``: asymmetric where few events fall into a bin, and with
+    an upper error for an empty one, in the ratio panel as in the main one. By default data
+    gets ``sqrt(N)``, as a ``TH1`` does; ``data_errors="auto"`` takes Poisson intervals
+    wherever data holds unit-weight counts."""
     met = rf.Variable("MET", bins=(20, 150, 450), label=r"$E_T^{miss}$", unit="GeV")
-    return rf.plot(mc, met, observed=data, stack=True, panel="ratio")
+    return rf.plot(mc, met, observed=data, stack=True, panel="ratio", data_errors="poisson")
 
 
 @example(
@@ -567,7 +568,7 @@ def efficiency(signal: rf.Sample, zjets: rf.Sample, pt: rf.Variable, style: rf.S
     passing ``passed`` with one binning, and draws their ratio with the interval ROOT's
     TEfficiency gives: Clopper-Pearson for unweighted entries, the normal approximation for
     weighted ones like these, which has no width at 100 % (two Z + jets bins);
-    ``interval="wilson"`` keeps one. The muon identification efficiency versus transverse
+    ``interval="wilson-effective"`` keeps one. The muon identification efficiency versus transverse
     momentum, for two samples; ``panel="ratio"`` draws the efficiency ratio of the second to
     the first below, with the intervals propagated asymmetrically (a scale factor when data
     is compared with simulation)."""
