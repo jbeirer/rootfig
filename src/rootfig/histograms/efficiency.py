@@ -100,8 +100,10 @@ def efficiency(
     per bin, marks the bins in which an entry of ``total`` has one;
     :func:`rootfig.efficiency` knows them from filling. ``"normal"``
     propagates the sums to first order, which holds for signed weights too: it
-    is ``nan`` (with the warning) only where the total is not positive or the
-    efficiency lies outside ``[0, 1]``.
+    is ``nan`` (with the warning) only where the total is not positive, the
+    efficiency lies outside ``[0, 1]`` or the variances cannot belong to a
+    subset of the total (see
+    :func:`~rootfig.histograms.binomial.normal_interval`).
 
     Raises
     ------
@@ -128,7 +130,10 @@ def efficiency(
         p = np.where(ok, k / n, np.nan)
     lower, upper = efficiency_bounds(method, k, n, vk, vn, z=z)
     if method == "normal":
-        problem = "a negative total or an efficiency outside [0, 1]"
+        problem = (
+            "a negative total, an efficiency outside [0, 1] or a passed variance too large "
+            "for a subset of the total"
+        )
     else:  # binomial intervals need non-negative weights
         problem = (
             "negative weights (a negative total, an efficiency outside [0, 1] or a signed entry)"

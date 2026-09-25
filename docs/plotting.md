@@ -42,7 +42,8 @@ panel and in the lower panel alike, and in `p.uncertainty("Data")`:
 
 | `data_errors=` | Error bars |
 | --- | --- |
-| `None` (default) | ROOT's `TH1` default: `√(Σw²)` on both sides, `√N` for counts, so an empty bin is 0 ± 0 |
+| `None` (default) | ROOT's `TH1` default: `√(Σw²)` on both sides, `√N` for counts, so an empty bin is 0 ± 0; a histogram object carrying `poisson=True` keeps its interval |
+| `"sumw2"` | `√(Σw²)` for every data histogram, also one carrying `poisson=True` |
 | `"poisson"` | ROOT's `TH1::kPoisson`: the Garwood 68 % interval of the counts, asymmetric, and 0 +1.84 for an empty bin |
 | `"auto"` | `"poisson"` where a data histogram holds unit-weight counts, `√(Σw²)` otherwise: the usual convention for data points |
 
@@ -78,10 +79,11 @@ panel and in the lower panel alike, and in `p.uncertainty("Data")`:
   counts.
 - `rf.Histogram(h, label="Data", is_data=True, poisson=True)` carries the model
   on a histogram of counts you pass yourself, so `rf.compare` uses it too and
-  every `data_errors=` keeps it; counts scaled by `c` are
+  every `data_errors=` but `"sumw2"` keeps it; counts scaled by `c` are
   `rf.Histogram(counts, ..., poisson=True).scaled(c)`. `sum_histograms` keeps it
   when every input carries the same record of counts (two data periods), as
-  `TH1::Add` keeps `kPoisson` for unweighted histograms.
+  `TH1::Add` keeps `kPoisson` for unweighted histograms, and the sum of data
+  histograms is data.
 
 ## Systematic uncertainties
 
@@ -702,7 +704,11 @@ lies in `[0, 1]`: `rf.efficiency` knows them from filling. The lower-level
 `rootfig.histograms.efficiency` sees only the sums of
 the two histograms, which reveal a negative weight when a part of the bin has
 a sum of squared weights above the square of its sum; its `negative_weights=`
-flags the bins the sums do not reveal.
+flags the bins the sums do not reveal. Histograms whose passed variance exceeds
+the total's cannot be a pass/total pair (the failing entries add their squared
+weights to the total's), so the normal approximation gives such a bin no
+interval, with a warning, where ROOT's square root of the negative variance
+gives `nan`.
 
 ## Cut flows
 
@@ -725,10 +731,13 @@ that of a pass fraction, not that of two independent yields:
 `efficiency_errors` and `absolute_efficiency_errors` are the `(down, up)`
 distances to the confidence interval at one standard deviation that
 `interval=` names, as for [efficiencies](#efficiencies), of the summed event
-weights. The default is what `TEfficiency` gives for histograms of the steps:
-Clopper–Pearson when every step's sum of weights equals its sum of squared
-weights (every weight 1, or 0 and 1: an event of weight 0 is no trial), the
-normal approximation otherwise; `Cutflow.interval` says which.
+weights. The default is what `TEfficiency` gives for the histograms of the two
+steps of each efficiency: Clopper–Pearson when both steps' sums of weights
+equal their sums of squared weights (every weight 1, or 0 and 1: an event of
+weight 0 is no trial), the normal approximation otherwise. It is decided per
+efficiency, so after a cut that removes every weighted event the later relative
+efficiencies get Clopper–Pearson, while those measured against the first step
+keep the normal approximation.
 Efficiencies and their errors come from the event weights alone
 (`CutflowStep.sum_w`, `sum_w2`): the sample's `scale` and luminosity factor
 cancel, whatever their sign, and enter only the yields. With

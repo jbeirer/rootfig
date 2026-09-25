@@ -3273,8 +3273,11 @@ class TestDataErrors:
             options["weight"] = "w"
         return rf.Sample(columns, label="Data", is_data=True, **options)
 
-    def test_the_default_is_roots_square_root_of_the_counts(self) -> None:
-        p = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=self._data(), panel="ratio")
+    @pytest.mark.parametrize("mode", [None, "sumw2"])
+    def test_the_default_is_roots_square_root_of_the_counts(self, mode: Any) -> None:
+        p = rf.plot(
+            self._mc(), "x", bins=(4, 0, 4), observed=self._data(), panel="ratio", data_errors=mode
+        )
         assert not p.histograms[-1].poisson  # TH1's kNormal: sqrt(N), 0 +- 0 when empty
         (ratio,) = p.comparisons
         for side in ratio.errors:
@@ -3315,7 +3318,7 @@ class TestDataErrors:
         auto = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=weighted, data_errors="auto")
         assert not auto.histograms[-1].poisson
         auto.close()
-        with pytest.raises(ValueError, match=r"'Data' is weighted or scaled.*data_errors unset"):
+        with pytest.raises(ValueError, match=r"'Data' is weighted or scaled.*data_errors='sumw2'"):
             rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=weighted, data_errors="poisson")
 
     def test_signed_weights_are_refused(self) -> None:
@@ -3370,11 +3373,16 @@ class TestDataErrors:
         expected = rf.Histogram(counts.copy(), label="MC")
         assert not rf.plot([expected], observed=[counts]).histograms[-1].poisson
         assert rf.plot([expected], observed=[counts], data_errors="auto").histograms[-1].poisson
-        # a histogram carrying the model keeps it, scaled counts included
+        # a histogram carrying the model keeps it, scaled counts included, unless "sumw2"
         flagged = rf.Histogram(counts, label="Data", is_data=True, poisson=True).scaled(2.0)
         for mode in (None, "auto", "poisson"):
             kept = rf.plot([expected.scaled(2.0)], observed=[flagged], data_errors=mode)
             assert kept.histograms[-1].poisson
+        forced = rf.plot([expected.scaled(2.0)], observed=[flagged], data_errors="sumw2")
+        assert not forced.histograms[-1].poisson
+        np.testing.assert_allclose(
+            forced.histograms[-1].errors()[1], 2.0 * np.sqrt([1.0, 4.0, 0.0, 9.0])
+        )
         with pytest.raises(ValueError, match="data_errors must be"):
-            rf.plot([expected], observed=[counts], data_errors="sumw2")  # type: ignore[arg-type]
+            rf.plot([expected], observed=[counts], data_errors="garwood")  # type: ignore[arg-type]
         plt.close("all")

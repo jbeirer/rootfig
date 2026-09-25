@@ -123,7 +123,8 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     histogram without a source contributes its nominal contents to it. The sum
     keeps the inputs' ``normalization`` when they all share it and has none
     otherwise, so it never claims a scaling one of its parts lacks; it counts
-    objects (``per_object``) if any input does. It keeps the Poisson interval
+    objects (``per_object``) if any input does, and is observed data
+    (``is_data``) if every input is. It keeps the Poisson interval
     (:attr:`~rootfig.histograms.Histogram.poisson`) when every input has it
     with the same record of counts in every bin (one count per bin, transformed
     like the contents), since such counts add up to counts,
@@ -186,6 +187,7 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
         else None,
         variations=variations,
         per_object=any(h.per_object for h in histograms),
+        is_data=all(h.is_data for h in histograms),
         poisson=shared,
         _unit=unit.copy() if shared and unit is not None else None,
     )

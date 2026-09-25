@@ -986,7 +986,17 @@ class TestPoissonIntervals:
             poisson_interval([2.0], z)
 
     def test_round_off_is_a_whole_count(self) -> None:
-        np.testing.assert_array_equal(poisson_interval([2.0 + 1e-12]), poisson_interval([2.0]))
+        np.testing.assert_array_equal(
+            poisson_interval([2.0 + np.spacing(2.0)]), poisson_interval([2.0])
+        )
+
+    @pytest.mark.parametrize("count", [2.0 + 1e-12, 5e8 + 0.4, 5e8 + 0.25])
+    def test_fractions_are_no_counts_at_any_magnitude(self, count: float) -> None:
+        # a relative tolerance would let a fraction pass once counts are large enough
+        with pytest.raises(ValueError, match="whole numbers"):
+            poisson_interval([count])
+        assert "not whole" in str(count_problem([count], [count]))
+        assert count_problem([5e8], [5e8]) is None
 
     def test_equal_counts_agree(self) -> None:
         low, high = poisson_interval([3.0, 0.0, 3.0, 7.0, 0.0])
@@ -1083,6 +1093,8 @@ class TestPoissonHistograms:
         a, b = self._data([0.0, 1.0, 4.0]), self._data([0.0, 2.0, 0.0])
         total = sum_histograms([a, b])
         assert total.poisson
+        assert total.is_data  # two data periods add up to data
+        assert not sum_histograms([a, Histogram(_poisson([0.0, 2.0, 0.0]), label="MC")]).is_data
         low, high = poisson_interval([0.0, 3.0, 4.0])
         np.testing.assert_allclose(total.errors()[0], [0.0, 3.0, 4.0] - low)
         np.testing.assert_allclose(total.errors()[1], high - [0.0, 3.0, 4.0])
@@ -1427,6 +1439,28 @@ class TestEfficiencyIntervals:
         empty = clopper_pearson(np.zeros(0), np.zeros(0))
         assert empty[0].size == empty[1].size == 0
 
+    def test_the_normal_approximation_refuses_variances_no_subset_has(self) -> None:
+        # ROOT 6.40, TEfficiency: 8 (variance 100) of 10 (variance 10) gives a variance of
+        # -0.536 and nan bounds; 2 (variance 4) of 10 (variance 3) is no subset either, but its
+        # variance is positive and ROOT's interval is 0.2 +- 0.158745
+        lower, upper = normal_interval([8.0, 2.0], [10.0, 10.0], [100.0, 4.0], [10.0, 3.0])
+        assert np.isnan([lower[0], upper[0]]).all()  # not 0.8 +- 0
+        np.testing.assert_allclose([0.2 - lower[1], upper[1] - 0.2], 0.15874507866384727)
+        # every entry passes, the passed variance above the total's by round-off: the
+        # variance is -1e-16, no width rather than nan
+        vk, vn = 0.1 + 0.2 + 0.3, 0.3 + 0.2 + 0.1
+        assert vk > vn
+        lower, upper = normal_interval([6.0], [6.0], [vk], [vn])
+        assert (lower[0], upper[0]) == (1.0, 1.0)
+        from rootfig.histograms import efficiency
+
+        passed = _hist([0.5] * 2, [5.0, 5.0])  # 10 of variance 50, from a total of variance 20
+        total = _hist([0.5] * 5, [2.0] * 5)
+        with pytest.warns(RootfigWarning, match="passed variance too large"):
+            eff = efficiency(passed, total)
+        assert eff.values[0] == 1.0
+        assert np.isnan([eff.lower[0], eff.upper[0]]).all()
+
     @pytest.mark.parametrize("scale", [2.5, -2.5, 0.0])
     def test_a_cutflow_leaves_the_sample_scale_out(self, scale: float) -> None:
         from rootfig.histograms import cutflow
@@ -1566,7 +1600,7 @@ class TestCutflow:
 
         sample = Sample({"n": np.arange(100.0)}, label="counts")
         flow = cutflow(sample, ["n >= 40", "n >= 70"])  # 100 -> 60 -> 30
-        assert flow.interval == "clopper-pearson"  # unweighted events, as TEfficiency
+        assert flow.interval == "auto"  # Clopper-Pearson: unweighted events, as TEfficiency
         down, up = flow.efficiency_errors
         assert (down[0], up[0]) == (0.0, 0.0)  # the first step is the reference itself
 
@@ -1593,11 +1627,39 @@ class TestCutflow:
         # the contents, 6 of 10 (not of the 12 events of which 6 have weight 0)
         sample = Sample({"n": np.arange(20.0), "w": np.tile([1.0, 0.0], 10)}, weight="w")
         flow = cutflow(sample, ["n >= 8"])
-        assert flow.interval == "clopper-pearson"
         assert [step.events for step in flow.steps] == [20, 12]
         down, up = flow.efficiency_errors
         root = (0.39540314576424296, 0.7800092538943881)
         np.testing.assert_allclose([0.6 - down[1], 0.6 + up[1]], root, rtol=1e-11)
+
+    def test_auto_is_decided_per_pair_of_steps_as_for_tefficiency(self) -> None:
+        from rootfig.histograms import cutflow
+
+        # ROOT 6.40, TEfficiency of TH1D steps filled with weights 2, 2, 1, 1, 1, 1: the first
+        # cut removes both weights of 2, so 2/1 is unweighted (Clopper-Pearson) while 1/0 and
+        # 2/0 are weighted (normal): (value, lower, upper)
+        root = {
+            (1, 0): (0.5, 0.2834936490539288, 0.7165063509460712),
+            (2, 1): (0.5, 0.18530110612748396, 0.814698893872516),
+            (2, 0): (0.25, 0.08464054305849245, 0.41535945694150755),
+        }
+        weights = np.array([2.0, 2.0, 1.0, 1.0, 1.0, 1.0])
+        sample = Sample({"n": np.arange(6.0), "w": weights}, weight="w")
+        flow = cutflow(sample, ["n >= 2", "n >= 4"])
+        assert flow.interval == "auto"
+        down, up = flow.efficiency_errors
+        absolute_down, absolute_up = flow.absolute_efficiency_errors
+        errors = {
+            (1, 0): (down[1], up[1]),
+            (2, 1): (down[2], up[2]),
+            (2, 0): (absolute_down[2], absolute_up[2]),
+        }
+        for pair, (d, u) in errors.items():
+            value, lower, upper = root[pair]
+            np.testing.assert_allclose([value - d, value + u], [lower, upper], rtol=1e-11)
+        # an explicit method of counts still needs every step unweighted
+        with pytest.raises(ValueError, match="needs unweighted"):
+            cutflow(sample, ["n >= 2", "n >= 4"], interval="clopper-pearson")
 
     def test_scale_keeps_events_unweighted_and_weights_do_not(self) -> None:
         from rootfig.histograms import cutflow
@@ -1605,12 +1667,14 @@ class TestCutflow:
         cuts = ["n >= 40", "n >= 70"]
         plain = cutflow(Sample({"n": np.arange(100.0)}), cuts)
         scaled = cutflow(Sample({"n": np.arange(100.0)}, scale=2.5), cuts)
-        assert scaled.interval == "clopper-pearson"  # a factor the efficiency cancels
+        # a factor the efficiency cancels: still Clopper-Pearson
         for got, want in zip(scaled.efficiency_errors, plain.efficiency_errors, strict=True):
             np.testing.assert_allclose(got, want)
+        lower, upper = clopper_pearson([60.0], [100.0])
+        down, up = scaled.efficiency_errors
+        np.testing.assert_allclose([down[1], up[1]], [0.6 - lower[0], upper[0] - 0.6])
         # an event weight makes the events weighted for ROOT, even one shared by all
         weighted = cutflow(Sample({"n": np.arange(100.0)}, weight="2.5"), cuts)
-        assert weighted.interval == "normal"
         down, up = weighted.efficiency_errors
         lower, upper = normal_interval([60.0], [100.0], [60.0], [100.0])
         np.testing.assert_allclose([down[1], up[1]], [0.6 - lower[0], upper[0] - 0.6])
@@ -1662,12 +1726,19 @@ class TestCutflow:
         absolute_down, _ = flow.absolute_efficiency_errors
         assert np.isnan(absolute_down[1:]).all()  # every step measured against the first
         assert absolute_down[0] == 0.0
-        # the normal approximation (ROOT's for weighted events) holds for signed weights
-        # too; only an efficiency outside [0, 1] has none
-        down, up = cutflow(sample, ["n >= 1", "n >= 5"]).efficiency_errors
+        # the default: the normal approximation (ROOT's for weighted events) holds for signed
+        # weights too, so only 9 / 8, outside [0, 1], has none; step 2 against step 1, both
+        # of weight-1 events only, is Clopper-Pearson, as TEfficiency of those two histograms
+        default = cutflow(sample, ["n >= 1", "n >= 5"])
+        down, up = default.efficiency_errors
         assert np.isnan([down[1], up[1]]).all()  # 9 / 8
-        lower, upper = normal_interval([5.0], [9.0], [5.0], [9.0])
+        lower, upper = clopper_pearson([5.0], [9.0])
         np.testing.assert_allclose([down[2], up[2]], [5 / 9 - lower[0], upper[0] - 5 / 9])
+        absolute_down, absolute_up = default.absolute_efficiency_errors
+        lower, upper = normal_interval([5.0], [8.0], [5.0], [10.0])  # against the signed step
+        np.testing.assert_allclose(
+            [absolute_down[2], absolute_up[2]], [5 / 8 - lower[0], upper[0] - 5 / 8]
+        )
 
     def test_table(self) -> None:
         from rootfig.histograms import CutflowTable, cutflow

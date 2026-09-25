@@ -18,21 +18,33 @@ __all__ = [
     "poisson_interval",
 ]
 
-DataErrors: TypeAlias = Literal["poisson", "auto"]
+DataErrors: TypeAlias = Literal["sumw2", "poisson", "auto"]
 """How the error bars of observed data are computed (``plot(data_errors=...)``).
 
 ``None`` keeps each histogram's own model: ``sqrt(sum of squared weights)``, ROOT's
 ``TH1`` default, unless it carries the Poisson interval
 (:attr:`~rootfig.histograms.Histogram.poisson`).
 
+* ``"sumw2"`` - ``sqrt(sum of squared weights)`` on both sides, also for a
+  histogram that carries the Poisson interval.
 * ``"poisson"`` - the Garwood interval of the counts (:func:`poisson_interval`),
   ROOT's ``TH1::kPoisson``; unit-weight counts only (:func:`count_problem`).
 * ``"auto"`` - ``"poisson"`` for unit-weight counts, ``sqrt(sum of squared
   weights)`` otherwise: the usual convention for data points (mplhep's).
 """
 
-_WHOLE = 1e-9
-"""Relative tolerance within which a count is a whole number, and equal to its variance."""
+_WHOLE_ULPS = 4
+"""Floating-point steps within which a count is a whole number, at any magnitude."""
+
+_UNIT_WEIGHT = 1e-12
+"""Relative tolerance within which a count equals its variance (ROOT's for unweighted ``TH1D``)."""
+
+
+def _whole(numbers: FloatArray) -> npt.NDArray[np.bool_]:
+    """Return where ``numbers`` are whole, to a few floating-point steps (``nan`` is not)."""
+    with np.errstate(invalid="ignore"):
+        step = np.spacing(np.maximum(np.abs(numbers), 1.0))
+        return np.asarray(np.abs(numbers - np.rint(numbers)) <= _WHOLE_ULPS * step, dtype=bool)
 
 
 def poisson_interval(counts: npt.ArrayLike, z: float = 1.0) -> tuple[FloatArray, FloatArray]:
@@ -57,7 +69,7 @@ def poisson_interval(counts: npt.ArrayLike, z: float = 1.0) -> tuple[FloatArray,
     n = np.asarray(counts, dtype=float)
     whole = np.rint(n)
     with np.errstate(invalid="ignore"):
-        bad = ~(np.isfinite(n) & (n >= 0) & (np.abs(n - whole) <= _WHOLE * np.maximum(n, 1.0)))
+        bad = ~(np.isfinite(n) & (n >= 0) & _whole(n))
     if bad.any():
         msg = f"counts must be non-negative whole numbers, got {float(n[bad].flat[0])!r}"
         raise ValueError(msg)
@@ -131,9 +143,8 @@ def count_problem(values: npt.ArrayLike, variances: npt.ArrayLike) -> str | None
         return "has non-finite contents"
     if np.any(values < 0):
         return "has negative contents (signed weights)"
-    tolerance = _WHOLE * np.maximum(values, 1.0)
-    if np.any(np.abs(variances - values) > tolerance):
+    if np.any(np.abs(variances - values) > _UNIT_WEIGHT * np.maximum(values, 1.0)):
         return "is weighted or scaled (its variances differ from its contents)"
-    if np.any(np.abs(values - np.rint(values)) > tolerance):
+    if not np.all(_whole(values)):
         return "has contents that are not whole numbers"
     return None

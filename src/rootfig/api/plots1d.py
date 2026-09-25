@@ -284,12 +284,13 @@ def plot(
         The statistical uncertainty of observed data, in the main and the lower
         panel alike. ``None`` (default) is ROOT's ``TH1`` default, ``sqrt(sum of
         squared weights)`` (``sqrt(N)`` for counts), unless a histogram object
-        carries ``poisson=True``. ``"poisson"`` is ROOT's ``TH1::kPoisson``, the
-        Garwood 68 % interval of the counts, asymmetric and with an upper error
-        for an empty bin; it refuses anything but unit-weight counts (every bin
-        a whole number equal to its variance, before any normalisation).
-        ``"auto"`` is Poisson for unit-weight counts and ``sqrt(sum of squared
-        weights)`` otherwise.
+        carries ``poisson=True``; ``"sumw2"`` forces it for every data
+        histogram. ``"poisson"`` is ROOT's ``TH1::kPoisson``, the Garwood 68 %
+        interval of the counts, asymmetric and with an upper error for an empty
+        bin; it refuses anything but unit-weight counts (every bin a whole
+        number equal to its variance, before any normalisation). ``"auto"`` is
+        Poisson for unit-weight counts and ``sqrt(sum of squared weights)``
+        otherwise.
     xlim, ylim
         Axis limits; ``ylim`` entries may be ``None`` to keep the automatic value.
     xbreak

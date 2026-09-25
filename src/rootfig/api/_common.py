@@ -83,11 +83,12 @@ def with_data_errors(histograms: Sequence[Histogram], mode: DataErrors | None) -
 
     Decided on the histograms as filled or read, before normalisation or flow
     bins change their contents, so the model does not depend on how they are
-    drawn. ``None`` keeps every histogram's own model, ``"poisson"`` gives the
-    Poisson interval to every observed histogram and ``"auto"`` to those holding
-    unit-weight counts; a histogram that already has
-    :attr:`~rootfig.histograms.Histogram.poisson` keeps it. Non-data histograms
-    are returned as they are.
+    drawn. ``None`` keeps every histogram's own model and ``"sumw2"`` takes the
+    Poisson interval off every observed histogram; ``"poisson"`` gives it to
+    every observed histogram and ``"auto"`` to those holding unit-weight counts,
+    and a histogram that already has
+    :attr:`~rootfig.histograms.Histogram.poisson` keeps it with either. Non-data
+    histograms are returned as they are.
 
     Raises
     ------
@@ -95,12 +96,15 @@ def with_data_errors(histograms: Sequence[Histogram], mode: DataErrors | None) -
         For an unknown ``mode``, or ``"poisson"`` for a histogram that does not
         hold unit-weight counts.
     """
-    if mode not in (None, "poisson", "auto"):
-        msg = f"data_errors must be None, 'poisson' or 'auto', got {mode!r}"
+    if mode not in (None, "sumw2", "poisson", "auto"):
+        msg = f"data_errors must be None, 'sumw2', 'poisson' or 'auto', got {mode!r}"
         raise ValueError(msg)
     result = []
     for histogram_ in histograms:
-        if mode is None or not histogram_.is_data or histogram_.poisson:
+        if mode == "sumw2" and histogram_.is_data and histogram_.poisson:
+            result.append(histogram_.replace(poisson=False))
+            continue
+        if mode in (None, "sumw2") or not histogram_.is_data or histogram_.poisson:
             result.append(histogram_)
             continue
         problem = count_problem(histogram_.values(flow=True), histogram_.variances(flow=True))
@@ -110,8 +114,8 @@ def with_data_errors(histograms: Sequence[Histogram], mode: DataErrors | None) -
         if mode == "poisson":
             msg = (
                 f"data_errors='poisson' draws the Poisson interval of counts, but "
-                f"{histogram_.label!r} {problem}; leave data_errors unset for sqrt(sum of "
-                "squared weights), or use 'auto' to keep that where data is not counts"
+                f"{histogram_.label!r} {problem}; use data_errors='sumw2' (or leave it unset) "
+                "for sqrt(sum of squared weights), or 'auto' to keep that where data is not counts"
             )
             raise ValueError(msg)
         result.append(histogram_)

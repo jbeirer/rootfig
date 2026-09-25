@@ -48,6 +48,9 @@ _METHODS = ("auto", "clopper-pearson", "normal", "wilson", "wilson-effective")
 _COUNTS_ONLY = ("clopper-pearson", "wilson")
 """Methods of counts: ROOT refuses them for weighted entries and falls back to "normal"."""
 
+_ROUND_OFF = 1e-9
+"""Relative size below which a negative variance of the normal approximation is round-off."""
+
 _UNWEIGHTED_TOLERANCE = 1e-12
 """Relative tolerance of ``TEfficiency``'s test for unweighted entries, ``sum w == sum w^2``.
 
@@ -175,6 +178,13 @@ def normal_interval(
     variance is that of the ratio of the two sums to first order, so it also
     holds for signed weights. ``nan`` where the total is not positive or the
     efficiency lies outside ``[0, 1]``.
+
+    The variance is ``passed_variance (1 - p)^2 + (total_variance -
+    passed_variance) p^2``, never negative when the passing entries are a
+    subset of all of them, whatever the signs of their weights. A variance
+    below zero by more than round-off comes from sums that cannot be a subset
+    (a passed variance above the total's) and gives ``nan``, as ROOT's square
+    root of it does, rather than an interval of no width.
     """
     k = np.asarray(passed, dtype=float)
     n = np.asarray(total, dtype=float)
@@ -182,8 +192,11 @@ def normal_interval(
     vn = np.asarray(total_variance, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         p = np.where(n != 0, k / n, np.nan)
-        sigma = np.sqrt(np.maximum(vk * (1.0 - 2.0 * p) + vn * p * p, 0.0)) / n
-        valid = (n > 0) & (p >= 0.0) & (p <= 1.0)
+        first, second = vk * (1.0 - 2.0 * p), vn * p * p
+        variance = first + second
+        subset = variance >= -_ROUND_OFF * (np.abs(first) + np.abs(second))
+        sigma = np.sqrt(np.maximum(variance, 0.0)) / n
+        valid = (n > 0) & (p >= 0.0) & (p <= 1.0) & subset
         lower = np.where(valid, np.maximum(p - z * sigma, 0.0), np.nan)
         upper = np.where(valid, np.minimum(p + z * sigma, 1.0), np.nan)
     return np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)

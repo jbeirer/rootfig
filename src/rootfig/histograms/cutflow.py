@@ -67,10 +67,12 @@ class Cutflow:
 
     ``interval`` is the confidence interval of the efficiency errors (see
     :data:`~rootfig.histograms.binomial.EfficiencyInterval`). ``"auto"`` is
-    Clopper-Pearson if every step's sum of weights equals its sum of squared
-    weights (unweighted events, as ROOT decides: weights of 0 and 1 are
-    unweighted), else the normal approximation; :func:`cutflow` stores the
-    method it resolves to.
+    decided for each efficiency apart, as ``TEfficiency`` decides for the two
+    histograms of one: Clopper-Pearson when both steps' sums of weights equal
+    their sums of squared weights (unweighted events; weights of 0 and 1 are
+    unweighted), else the normal approximation. A cut that removes every
+    weighted event therefore makes the later relative efficiencies
+    Clopper-Pearson, while those measured against the first step stay normal.
     """
 
     sample: str
@@ -79,8 +81,8 @@ class Cutflow:
 
     def __post_init__(self) -> None:
         check_interval(self.interval)
-        if self.interval != "auto":  # methods of counts need unweighted events
-            resolve_interval(self.interval, self._unweighted(), self.sample)
+        if self.interval != "auto":  # methods of counts need unweighted events in every step
+            resolve_interval(self.interval, bool(self._unweighted().all()), self.sample)
 
     @property
     def labels(self) -> list[str]:
@@ -103,9 +105,9 @@ class Cutflow:
         w2 = [step.error**2 if step.sum_w2 is None else step.sum_w2 for step in self.steps]
         return np.array(w, dtype=float), np.array(w2, dtype=float)
 
-    def _unweighted(self) -> bool:
-        """Whether every step counts as unweighted, as ``TEfficiency`` decides for a histogram."""
-        return all(map(is_unweighted, *self._sums()))
+    def _unweighted(self) -> np.ndarray:
+        """Whether each step counts as unweighted, as ``TEfficiency`` decides for a histogram."""
+        return np.array(list(map(is_unweighted, *self._sums())), dtype=bool)
 
     @property
     def efficiencies(self) -> np.ndarray:
@@ -155,10 +157,18 @@ class Cutflow:
     def _errors(self, index: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Errors of ``values``, each step measured against the step ``index`` names."""
         w, w2 = self._sums()
-        method = resolve_interval(self.interval, self._unweighted())
-        lower, upper = efficiency_bounds(method, w, w[index], w2, w2[index])
+        if self.interval == "auto":  # per pair of steps, as TEfficiency decides per two histograms
+            unweighted = self._unweighted()
+            counts = unweighted & unweighted[index]
+            clopper = efficiency_bounds("clopper-pearson", w, w[index], w2, w2[index])
+            normal = efficiency_bounds("normal", w, w[index], w2, w2[index])
+            lower, upper = (np.where(counts, *pair) for pair in zip(clopper, normal, strict=True))
+            binomial = counts
+        else:
+            lower, upper = efficiency_bounds(self.interval, w, w[index], w2, w2[index])
+            binomial = np.full(len(self.steps), self.interval != "normal")
         negative = np.array([step.negative_weights for step in self.steps])[index]
-        signed = negative & (method != "normal")  # binomial intervals need non-negative weights
+        signed = negative & binomial  # binomial intervals need non-negative weights
         down = np.where(signed, np.nan, values - lower)
         up = np.where(signed, np.nan, upper - values)
         # the first step is the reference itself: its efficiency is exact where defined
@@ -246,10 +256,10 @@ def cutflow(
     :class:`~rootfig.errors.RootfigWarning`, or a
     :class:`~rootfig.errors.SelectionError` for ``"error"``). ``interval`` sets
     the confidence interval of the efficiencies (:attr:`Cutflow.interval`);
-    ``"auto"`` is Clopper-Pearson when every step's sum of event weights equals
-    its sum of squared weights (weights of 1, or 0 and 1), before the sample's
-    scale and luminosity factor, which cancel in an efficiency, and the normal
-    approximation otherwise.
+    ``"auto"`` is Clopper-Pearson for an efficiency between two steps whose sums
+    of event weights equal their sums of squared weights (weights of 1, or 0 and
+    1), before the sample's scale and luminosity factor, which cancel in an
+    efficiency, and the normal approximation otherwise.
     """
     check_interval(interval)
     steps: list[Cut] = []
@@ -293,6 +303,4 @@ def cutflow(
     for cut in steps:
         passing &= event_mask(cut.expression, arrays, length=n_events)
         result.append(step(cut.label or cut.expression, cut.expression))
-    unweighted = Cutflow(sample=sample.label, steps=tuple(result))._unweighted()
-    method = resolve_interval(interval, unweighted, sample.label)
-    return Cutflow(sample=sample.label, steps=tuple(result), interval=method)
+    return Cutflow(sample=sample.label, steps=tuple(result), interval=interval)
