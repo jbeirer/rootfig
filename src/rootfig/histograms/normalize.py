@@ -165,7 +165,9 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
         return histogram
     result, applied, factor = _normalize_hist(histogram.hist, spec)
     if not applied:
-        return histogram.replace(hist=result, normalization=None, _unit=histogram._unit)
+        return histogram.replace(
+            hist=result, normalization=None, _unit=histogram._unit, _weighted=histogram._weighted
+        )
     label = normalization_label(spec)
     variations = {}
     for name, pair in histogram.variations.items():
@@ -183,7 +185,9 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
     unit = histogram._unit  # one count per cell, normalised by the nominal's factor
     if unit is not None:
         unit = _normalize_hist(unit, spec, factor=factor)[0]
-    return histogram.replace(hist=result, normalization=label, variations=variations, _unit=unit)
+    return histogram.replace(
+        hist=result, normalization=label, variations=variations, _unit=unit, _weighted=True
+    )
 
 
 def normalization_label(spec: NormalizeSpec) -> str | None:

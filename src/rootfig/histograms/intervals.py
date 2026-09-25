@@ -37,7 +37,10 @@ _WHOLE_ULPS = 4
 """Floating-point steps within which a count is a whole number, at any magnitude."""
 
 _UNIT_WEIGHT = 1e-12
-"""Relative tolerance within which a count equals its variance (ROOT's for unweighted ``TH1D``)."""
+"""Relative tolerance within which a count equals its variance, compared as ``TMath::AreEqualRel``.
+
+The tolerance of ``TEfficiency``'s test for unweighted ``TH1D`` contents, applied per bin.
+"""
 
 
 def _whole(numbers: FloatArray) -> npt.NDArray[np.bool_]:
@@ -135,7 +138,9 @@ def count_problem(values: npt.ArrayLike, variances: npt.ArrayLike) -> str | None
     unweighted counts). Only they are known to be counts: the sums ``(sum w,
     sum w**2)`` of weighted or scaled entries cannot tell counts scaled by one
     factor from unequal weights (``[1, 1, 4]`` sums like two entries of weight
-    3), so their Poisson interval is not the counts'.
+    3), so their Poisson interval is not the counts'. Nor can the contents tell
+    counts from weighted entries that are all empty; a
+    :class:`~rootfig.histograms.Histogram` filled with weights knows that it was.
     """
     values = np.asarray(values, dtype=float).ravel()
     variances = np.asarray(variances, dtype=float).ravel()
@@ -143,7 +148,7 @@ def count_problem(values: npt.ArrayLike, variances: npt.ArrayLike) -> str | None
         return "has non-finite contents"
     if np.any(values < 0):
         return "has negative contents (signed weights)"
-    if np.any(np.abs(variances - values) > _UNIT_WEIGHT * np.maximum(values, 1.0)):
+    if np.any(np.abs(variances - values) > 0.5 * _UNIT_WEIGHT * (values + np.abs(variances))):
         return "is weighted or scaled (its variances differ from its contents)"
     if not np.all(_whole(values)):
         return "has contents that are not whole numbers"

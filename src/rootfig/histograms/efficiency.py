@@ -136,7 +136,8 @@ def efficiency(
         )
     else:  # binomial intervals need non-negative weights
         problem = (
-            "negative weights (a negative total, an efficiency outside [0, 1] or a signed entry)"
+            "negative weights (a negative total, an efficiency outside [0, 1] or a signed entry) "
+            "or a positive total without a variance"
         )
         signed = _signed(k, vk, n, vn) | _signed(n - k, vn - vk, n, vn) | _signed(n, vn, n, vn)
         if negative_weights is not None:

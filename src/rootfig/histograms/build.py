@@ -136,8 +136,10 @@ class Histogram:
         Whether the statistical uncertainty is the Poisson (Garwood) interval
         of the counts rather than ``sqrt(variances)`` (see :meth:`errors`):
         ROOT's ``TH1::kPoisson``. Needs unit-weight counts (whole numbers equal
-        to their variances); anything else raises ``ValueError``, since sums of
-        weights cannot say whether they are counts. Scaling, normalising or
+        to their variances, and not filled with weights or scaled: an empty
+        histogram looks like counts whatever filled it); anything else raises
+        ``ValueError``, since sums of weights cannot say whether they are
+        counts. Scaling, normalising or
         rebinning such a histogram keeps the interval, scaled like the contents
         (ROOT falls back to ``sqrt(variances)`` once a histogram is scaled), so
         counts scaled by ``c`` are ``Histogram(counts, poisson=True).scaled(c)``.
@@ -157,6 +159,8 @@ class Histogram:
     poisson: bool = False
     # one count per cell, transformed with the contents: the Poisson factor of empty cells
     _unit: Hist | None = field(default=None, compare=False, repr=False)
+    # filled with weights or scaled: never unit counts, even where the contents look like them
+    _weighted: bool = field(default=False, compare=False, repr=False)
 
     def __init__(  # noqa: PLR0917 - preserve the positional dataclass constructor API
         self,
@@ -172,6 +176,7 @@ class Histogram:
         per_object: bool | None = None,
         poisson: bool = False,
         _unit: Hist | None = None,
+        _weighted: bool = False,
     ) -> None:
         if per_object is None:  # not given: follow the statistics
             per_object = stats is not None and stats.per_object
@@ -187,6 +192,7 @@ class Histogram:
         object.__setattr__(self, "per_object", per_object)
         object.__setattr__(self, "poisson", poisson)
         object.__setattr__(self, "_unit", _unit)
+        object.__setattr__(self, "_weighted", _weighted)
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -197,7 +203,7 @@ class Histogram:
         object.__setattr__(self, "variations", FrozenMapping(checked))
         if self.poisson:
             if self._unit is None:  # new contents: only unit-weight counts are known counts
-                problem = count_problem(self.values(flow=True), self.variances(flow=True))
+                problem = self._count_problem()
                 if problem is not None:
                     msg = (
                         f"histogram {self.label!r} {problem}, so it is not known to hold counts "
@@ -218,6 +224,13 @@ class Histogram:
                 raise ValueError(msg)
         else:
             object.__setattr__(self, "_unit", None)
+
+    def _count_problem(self) -> str | None:
+        """Say why the contents are not known unit-weight counts, or return ``None``."""
+        problem = count_problem(self.values(flow=True), self.variances(flow=True))
+        if problem is None and self._weighted:  # sums of no entries look like counts
+            return "was filled with weights or scaled"
+        return problem
 
     def _checked_variations(
         self, variations: Mapping[str, tuple[Hist, Hist | None]]
@@ -355,16 +368,26 @@ class Histogram:
     def replace(self, **changes: Any) -> Histogram:
         """Return a copy with the given fields changed, e.g. ``h.replace(label="B")``.
 
-        A new ``hist`` brings its own counts: the record of one count per bin
-        that the Poisson interval uses is rebuilt from it (use
-        :meth:`map_hists` to transform the contents and keep that record).
+        A new ``hist`` brings its own counts: whether they are unit-weight
+        counts, and the record of one count per bin that the Poisson interval
+        uses, are judged from it afresh (use :meth:`map_hists` to transform the
+        contents and keep that record).
         """
-        if "hist" in changes and "_unit" not in changes:
-            changes["_unit"] = None
+        if "hist" in changes:
+            changes.setdefault("_unit", None)
+            changes.setdefault("_weighted", False)
         return replace(self, **changes)
 
     def map_hists(self, transform: Callable[[Hist], Hist]) -> Histogram:
-        """Return a copy with ``transform`` applied to the nominal histogram and every variation."""
+        """Return a copy with ``transform`` applied to the nominal histogram and every variation.
+
+        ``transform`` must act on the cells linearly, as cropping, rebinning,
+        moving flow cells and scaling do: it also goes through the record of
+        counts behind a Poisson interval (:attr:`poisson`), which stays valid
+        only while every cell holds counts times factors that do not depend on
+        the contents. Give anything else (squared contents, say) to
+        :meth:`replace` as a new ``hist``, whose contents are judged afresh.
+        """
         variations = {
             name: (transform(up), transform(down)) for name, (up, down) in self.variations.items()
         }
@@ -385,7 +408,8 @@ class Histogram:
                 sum_weights=stats.sum_weights * factor,
                 _sum_w2=stats._sum_w2 * factor**2,
             )
-        return replace(self.map_hists(lambda h: h * factor), stats=stats)
+        scaled = self.map_hists(lambda h: h * factor)
+        return replace(scaled, stats=stats, _weighted=self._weighted or factor != 1.0)
 
     def rebinned(self, factor: int | Sequence[int]) -> Histogram:
         """Return a copy with every ``factor`` adjacent bins merged (per axis for a sequence).
@@ -633,8 +657,13 @@ def from_sample(
     stats: Summary | None = None,
     variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
     per_object: bool | None = None,
+    weighted: bool = False,
 ) -> Histogram:
-    """Wrap ``hist_`` as the :class:`Histogram` of ``sample`` (label, data flag, drawing hints)."""
+    """Wrap ``hist_`` as the :class:`Histogram` of ``sample`` (label, data flag, drawing hints).
+
+    ``weighted`` says that ``hist_`` was filled with weights or scaled, so its
+    contents are not unit-weight counts even where they look like them.
+    """
     return Histogram(
         hist=hist_,
         label=sample.label,
@@ -645,6 +674,7 @@ def from_sample(
         histtype=sample.histtype,
         variations=variations,
         per_object=per_object,
+        _weighted=weighted,
     )
 
 

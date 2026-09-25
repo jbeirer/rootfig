@@ -20,7 +20,6 @@ from rootfig.histograms.cutflow import Cutflow, CutflowStep, CutflowTable, cutfl
 from rootfig.histograms.efficiency import Efficiency, Profile, ProfileStatistic, efficiency, profile
 from rootfig.histograms.intervals import (
     DataErrors,
-    count_problem,
     poisson_interval,
 )
 from rootfig.histograms.normalize import (
@@ -65,7 +64,6 @@ __all__ = [
     "compare",
     "compatible_binning",
     "correlation_matrix",
-    "count_problem",
     "cutflow",
     "describe_axes",
     "describe_table",

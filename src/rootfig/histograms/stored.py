@@ -269,7 +269,8 @@ def read_stored(
             )
             for syst_name, syst in sources.items()
         }
-        histogram = from_sample(sample, nominal, variations=variations)
+        scaled = sample.scale * sample.lumi_scale(lumi) != 1.0  # counts only if read as stored
+        histogram = from_sample(sample, nominal, variations=variations, weighted=scaled)
         result.append(
             histogram.rebinned_to([v.bins for v in variables], range=[v.range for v in variables])
         )

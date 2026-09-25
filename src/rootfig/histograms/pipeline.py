@@ -441,6 +441,7 @@ def build_histograms(
                 nominal,
                 stats=summarize(item.nominal) if keep else None,
                 per_object=item.nominal.per_object,
+                weighted=item.nominal.weights is not None,
                 variations={
                     name: _fill_variation(axis, nominal, up, down)
                     for name, (up, down) in item.variations.items()

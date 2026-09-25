@@ -38,7 +38,6 @@ from rootfig.histograms import (
     compare,
     compatible_binning,
     correlation_matrix,
-    count_problem,
     describe_table,
     fill,
     load_columns,
@@ -51,7 +50,7 @@ from rootfig.histograms import (
 from rootfig.histograms.binomial import clopper_pearson, normal_interval, wilson_interval
 from rootfig.histograms.build import from_sample
 from rootfig.histograms.groups import group_histogram, regroup_histograms
-from rootfig.histograms.intervals import count_scale, poisson_errors
+from rootfig.histograms.intervals import count_problem, count_scale, poisson_errors
 from rootfig.histograms.normalize import normalization_label, normalize_hist
 from rootfig.histograms.pipeline import combined_weight
 from rootfig.model import Cut, Group, Sample, Systematic, Variable
@@ -1033,9 +1032,27 @@ class TestPoissonIntervals:
         assert "weighted" in str(count_problem([0.0, 2.0], [2.0, 2.0]))  # weights that cancel
         assert "negative" in str(count_problem([-1.0, 2.0], [1.0, 2.0]))
         assert "non-finite" in str(count_problem([np.nan], [1.0]))
+        # equal relative to both, as TMath::AreEqualRel: a variance of 1e-13 is no empty count
+        assert "weighted" in str(count_problem([0.0], [1e-13]))
+        assert count_problem([1e6], [1e6 * (1 + 1e-13)]) is None
 
 
 class TestPoissonHistograms:
+    def test_what_was_filled_with_weights_is_never_counts(self) -> None:
+        empty = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+        assert Histogram(empty, label="Data", poisson=True).poisson  # looks like counts
+        with pytest.raises(ValueError, match="filled with weights or scaled"):
+            Histogram(empty, label="Data", poisson=True, _weighted=True)
+        counts = Histogram(empty, label="Data")
+        assert not counts.scaled(1.0)._weighted
+        scaled = counts.scaled(2.0)
+        with pytest.raises(ValueError, match="filled with weights or scaled"):
+            scaled.replace(poisson=True)
+        assert scaled.rebinned(2)._weighted  # rebinning keeps what filled it
+        assert sum_histograms([counts, scaled])._weighted
+        assert normalize(counts, "width")._weighted
+        assert not scaled.replace(hist=empty.copy())._weighted  # new contents, judged afresh
+
     def _data(self, counts: list[float], **kwargs: Any) -> Histogram:
         return Histogram(_poisson(counts), label="Data", is_data=True, poisson=True, **kwargs)
 
@@ -1376,6 +1393,22 @@ class TestEfficiency:
         assert up_err[0] == pytest.approx(half)
         np.testing.assert_allclose(eff.centers, [0.5, 1.5, 2.5])
         np.testing.assert_allclose(eff.half_widths, [0.5, 0.5, 0.5])
+
+    def test_effective_entries_need_a_variance(self) -> None:
+        from rootfig.histograms import efficiency
+
+        # a positive total without a variance comes from no weights: no n_eff to invent
+        lower, upper = wilson_interval([5.0, 5.0], [10.0, 10.0], [0.0, 10.0])
+        assert np.isnan([lower[0], upper[0]]).all()
+        np.testing.assert_allclose(
+            [lower[1], upper[1]], np.ravel(wilson_interval([5.0], [10.0], [10.0]))
+        )
+        with pytest.warns(RootfigWarning, match="without a variance"):
+            eff = efficiency(
+                _contents([5.0], [0.0]), _contents([10.0], [0.0]), interval="wilson-effective"
+            )
+        assert eff.values[0] == 0.5
+        assert np.isnan([eff.lower[0], eff.upper[0]]).all()
 
     def test_weights_use_effective_entries(self) -> None:
         from rootfig.histograms import efficiency

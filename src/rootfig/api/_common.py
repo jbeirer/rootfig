@@ -11,7 +11,6 @@ from rootfig.histograms import (
     DataErrors,
     Histogram,
     NormalizeSpec,
-    count_problem,
 )
 from rootfig.histograms import normalize as normalize_histogram
 from rootfig.model import (
@@ -107,7 +106,7 @@ def with_data_errors(histograms: Sequence[Histogram], mode: DataErrors | None) -
         if mode in (None, "sumw2") or not histogram_.is_data or histogram_.poisson:
             result.append(histogram_)
             continue
-        problem = count_problem(histogram_.values(flow=True), histogram_.variances(flow=True))
+        problem = histogram_._count_problem()
         if problem is None:
             result.append(histogram_.replace(poisson=True))
             continue

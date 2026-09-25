@@ -3308,6 +3308,36 @@ class TestDataErrors:
         np.testing.assert_allclose(u.stat_up, high - self.COUNTS)
         p.close()
 
+    @pytest.mark.parametrize("options", [{"weight": "w"}, {"scale": 2.0}])
+    def test_an_empty_selection_of_weighted_data_is_not_counts(self, options: Any) -> None:
+        # nothing passes: the contents (0, 0) look like counts, but the weights filled them
+        columns = {"x": np.arange(0.5, 4.0), "w": np.full(4, 0.5)}
+        empty = rf.Sample(columns, label="Data", is_data=True, selection="x > 10", **options)
+        auto = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=empty, data_errors="auto")
+        assert not auto.histograms[-1].poisson
+        np.testing.assert_array_equal(auto.histograms[-1].errors()[1], 0.0)  # not 0 +1.84
+        auto.close()
+        with pytest.raises(ValueError, match="'Data' was filled with weights or scaled"):
+            rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=empty, data_errors="poisson")
+        # the same selection without weights holds no counts: 0 +1.84
+        unweighted = rf.Sample(columns, label="Data", is_data=True, selection="x > 10")
+        counts = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=unweighted, data_errors="auto")
+        assert counts.histograms[-1].poisson
+        np.testing.assert_allclose(counts.histograms[-1].errors()[1], 1.8410216450)
+        counts.close()
+
+    def test_an_empty_stored_histogram_is_judged_like_root(self, tmp_path: Path) -> None:
+        path = tmp_path / "empty.root"
+        with uproot.recreate(path) as file:
+            file["h"] = (np.zeros(3), np.array([0.0, 1.0, 2.0, 3.0]))
+        # as ROOT, whose sums of weights and of their squares agree (both zero)
+        stored = rf.plot(path, "h", observed=path, data_errors="auto")
+        assert stored.histograms[-1].poisson
+        scaled = rf.Sample(path, label="Data", is_data=True, scale=2.0)
+        known = rf.plot(path, "h", observed=scaled, data_errors="auto")
+        assert not known.histograms[-1].poisson  # read with a scale: not counts
+        plt.close("all")
+
     @pytest.mark.parametrize("weights", [0.5, "varying"])
     def test_weighted_data_is_not_counts(self, weights: Any) -> None:
         # one weight for every event sums like unequal weights with the same totals: only

@@ -57,6 +57,12 @@ panel and in the lower panel alike, and in `p.uncertainty("Data")`:
   scaled by one factor from unequal weights (`[1, 1, 4]` sums like two entries
   of weight 3), so no interval of counts describes them. `"auto"` keeps
   `√(Σw²)` for them instead.
+- Data filled from a tree with a `weight=` or a `scale` (or read from a file
+  with a `scale`) is weighted even where no entry falls, so an empty selection
+  of weighted data keeps `0 ± 0` under `"auto"` and is refused by
+  `"poisson"`. Histograms from elsewhere (stored `TH1`s, histogram objects) are
+  judged by their contents, as ROOT judges a `TH1` by its sums: an empty one
+  holds counts.
 - The interval of `n` counts runs from `L` to `U` with
   `P(N ≥ n | L) = P(N ≤ n | U) = 15.87 %` (`L = 0` for `n = 0`), as in ROOT.
 - Normalising, rescaling and rebinning keep the interval, scaled like the
@@ -704,11 +710,12 @@ lies in `[0, 1]`: `rf.efficiency` knows them from filling. The lower-level
 `rootfig.histograms.efficiency` sees only the sums of
 the two histograms, which reveal a negative weight when a part of the bin has
 a sum of squared weights above the square of its sum; its `negative_weights=`
-flags the bins the sums do not reveal. Histograms whose passed variance exceeds
-the total's cannot be a pass/total pair (the failing entries add their squared
-weights to the total's), so the normal approximation gives such a bin no
-interval, with a warning, where ROOT's square root of the negative variance
-gives `nan`.
+flags the bins the sums do not reveal. The variance of the normal approximation
+is never negative for a real pass/total pair (the failing entries only add
+squared weights to the total's). Where variances that belong to no such pair
+make it negative beyond round-off, the bin gets no interval, with a warning;
+ROOT's square root of it is `nan` there too. `"wilson-effective"` has no
+interval where a positive total has no variance, since no weights give that.
 
 ## Cut flows
 

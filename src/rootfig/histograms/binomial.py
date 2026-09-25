@@ -215,15 +215,16 @@ def wilson_interval(
     ``e (1 - e) / n_eff``, and the score interval inverts it. Unlike the normal
     approximation it keeps a width at 0 and 1. The interval covers ``z``
     standard deviations, is clipped to ``[0, 1]`` and always contains the
-    efficiency. It is ``nan`` where the
-    total is not positive or the efficiency lies outside ``[0, 1]``.
+    efficiency. It is ``nan`` where the total is not positive, its variance
+    not positive (no weights sum to a positive total with no variance) or the
+    efficiency lies outside ``[0, 1]``.
     """
     k = np.asarray(passed, dtype=float)
     n = np.asarray(total, dtype=float)
     vn = np.asarray(total_variance, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         p = np.where(n != 0, k / n, np.nan)
-        n_eff = np.where(vn > 0, n**2 / vn, n)
+        n_eff = np.where(vn > 0, n**2 / vn, np.nan)
         z2 = z * z
         denominator = 1.0 + z2 / n_eff
         centre = (p + z2 / (2.0 * n_eff)) / denominator

@@ -190,4 +190,5 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
         is_data=all(h.is_data for h in histograms),
         poisson=shared,
         _unit=unit.copy() if shared and unit is not None else None,
+        _weighted=any(h._weighted for h in histograms),
     )
