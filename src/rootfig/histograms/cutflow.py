@@ -41,9 +41,14 @@ class CutflowStep:
     error
         Statistical uncertainty on ``yield_``, ``sqrt(sum w^2)``.
     negative_weights
-        Whether an event passing all cuts so far has a negative weight; the
+        Whether an event passing all cuts so far has a negative event weight; the
         efficiencies measured against this step then have no binomial interval
         (``"clopper-pearson"``, ``"wilson"``).
+    sum_w, sum_w2
+        Sum of the event weights and of their squares, without the sample's
+        scale and luminosity factor: efficiencies use them, since that factor
+        cancels (even when it is zero or negative). ``None`` takes ``yield_``
+        and ``error**2``.
     """
 
     label: str
@@ -52,6 +57,8 @@ class CutflowStep:
     yield_: float
     error: float
     negative_weights: bool = False
+    sum_w: float | None = None
+    sum_w2: float | None = None
 
 
 @dataclass(frozen=True)
@@ -61,8 +68,8 @@ class Cutflow:
     ``interval`` is the confidence interval of the efficiency errors (see
     :data:`~rootfig.histograms.binomial.EfficiencyInterval`). :func:`cutflow`
     resolves ``"auto"`` from the event weights; left ``"auto"``, it is
-    Clopper-Pearson if every step's yield equals its sum of squared weights
-    (unweighted events, as ROOT decides), else the normal approximation.
+    Clopper-Pearson if every step's sum of weights equals its sum of squared
+    weights (unweighted events, as ROOT decides), else the normal approximation.
     """
 
     sample: str
@@ -87,25 +94,32 @@ class Cutflow:
         """Raw event count per step."""
         return np.array([step.events for step in self.steps], dtype=int)
 
+    def _sums(self) -> tuple[np.ndarray, np.ndarray]:
+        """Sum of the event weights and of their squares per step (see :class:`CutflowStep`)."""
+        w = [step.yield_ if step.sum_w is None else step.sum_w for step in self.steps]
+        w2 = [step.error**2 if step.sum_w2 is None else step.sum_w2 for step in self.steps]
+        return np.array(w, dtype=float), np.array(w2, dtype=float)
+
     @property
     def efficiencies(self) -> np.ndarray:
         """Weighted efficiency of each step relative to the previous one (1 for the first).
 
-        The plain ratio of yields: ``nan`` where the previous yield is zero. With
-        signed (NLO) weights a yield can be negative, and the ratio may then lie
-        outside ``[0, 1]``; it is still reported.
+        The plain ratio of the summed event weights, the yields without the
+        sample's scale and luminosity factor, which cancel: ``nan`` where the
+        previous sum is zero. With signed (NLO) weights a sum can be negative,
+        and the ratio may then lie outside ``[0, 1]``; it is still reported.
         """
-        y = self.yields
+        w, _ = self._sums()
         with np.errstate(divide="ignore", invalid="ignore"):
-            rel = np.where(y[:-1] != 0, y[1:] / y[:-1], np.nan)
+            rel = np.where(w[:-1] != 0, w[1:] / w[:-1], np.nan)
         return np.concatenate([[1.0], rel])
 
     @property
     def absolute_efficiencies(self) -> np.ndarray:
         """Weighted efficiency of each step relative to the first (see :attr:`efficiencies`)."""
-        y = self.yields
+        w, _ = self._sums()
         with np.errstate(divide="ignore", invalid="ignore"):
-            return np.where(y[0] != 0, y / y[0], np.nan)
+            return np.where(w[0] != 0, w / w[0], np.nan)
 
     @property
     def efficiency_errors(self) -> tuple[np.ndarray, np.ndarray]:
@@ -115,12 +129,12 @@ class Cutflow:
         is that of a pass fraction, never a ratio of two independent yields:
         the :attr:`interval` at one standard deviation, as ``TEfficiency``
         computes it (Clopper-Pearson of the event counts for unweighted events,
-        the normal approximation of the yields otherwise). ``nan`` where the
+        the normal approximation of the summed weights otherwise). ``nan`` where the
         efficiency is undefined or lies outside ``[0, 1]``, and for a binomial
         interval after a step holding a negative weight
         (:attr:`CutflowStep.negative_weights`).
         """
-        return self._errors([self.steps[0], *self.steps[:-1]], self.efficiencies)
+        return self._errors(np.r_[0, np.arange(len(self.steps) - 1)], self.efficiencies)
 
     @property
     def absolute_efficiency_errors(self) -> tuple[np.ndarray, np.ndarray]:
@@ -128,26 +142,21 @@ class Cutflow:
 
         Every step keeps a subset of the first step's events, the denominator.
         """
-        return self._errors([self.steps[0]] * len(self.steps), self.absolute_efficiencies)
+        return self._errors(np.zeros(len(self.steps), dtype=int), self.absolute_efficiencies)
 
-    def _errors(
-        self, before: Sequence[CutflowStep], values: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Errors of ``values``, each step measured against the one ``before`` it."""
+    def _errors(self, index: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Errors of ``values``, each step measured against the step ``index`` names."""
+        w, w2 = self._sums()
         method = self.interval
         if method == "auto":
-            unweighted = all(is_unweighted(s.yield_, s.error**2) for s in self.steps)
-            method = resolve_interval(method, unweighted)
-        if method == "clopper-pearson":  # the counts, which scale and luminosity leave alone
-            passed, total = self.events, np.array([b.events for b in before], dtype=float)
+            method = resolve_interval(method, all(map(is_unweighted, w, w2)))
+        if method == "clopper-pearson":
+            passed, total = self.events.astype(float), self.events[index].astype(float)
         else:
-            passed, total = self.yields, np.array([b.yield_ for b in before])
-        errors = np.array([s.error for s in self.steps])
-        lower, upper = efficiency_bounds(
-            method, passed, total, errors**2, np.array([b.error for b in before]) ** 2
-        )
-        binomial = method != "normal"
-        signed = np.array([b.negative_weights and binomial for b in before])
+            passed, total = w, w[index]
+        lower, upper = efficiency_bounds(method, passed, total, w2, w2[index])
+        negative = np.array([step.negative_weights for step in self.steps])[index]
+        signed = negative & (method != "normal")  # binomial intervals need non-negative weights
         down = np.where(signed, np.nan, values - lower)
         up = np.where(signed, np.nan, upper - values)
         # the first step is the reference itself: its efficiency is exact where defined
@@ -256,21 +265,24 @@ def cutflow(
         weight_expr, arrays, n_events, nonfinite=nonfinite, context=sample.label
     )
     passing = np.isfinite(weights)
-    weights = np.where(passing, weights, 0.0)
+    weights = np.where(passing, weights, 0.0)  # the event weights, without the common factor
     if sample.selection is not None:
         passing &= event_mask(sample.selection.expression, arrays, length=n_events)
     method = resolve_interval(interval, bool(np.all(weights[passing] == 1.0)), sample.label)
-    weights = weights * sample.scale * sample.lumi_scale(lumi)
+    factor = sample.scale * sample.lumi_scale(lumi)
 
     def step(label: str, expression: str) -> CutflowStep:
         selected = weights[passing]
+        sum_w, sum_w2 = float(selected.sum()), float(np.sum(selected**2))
         return CutflowStep(
             label=label,
             expression=expression,
             events=int(np.count_nonzero(passing)),
-            yield_=float(selected.sum()),
-            error=float(np.sqrt(np.sum(selected**2))),
+            yield_=factor * sum_w,
+            error=abs(factor) * float(np.sqrt(sum_w2)),
             negative_weights=bool(np.any(selected < 0)),
+            sum_w=sum_w,
+            sum_w2=sum_w2,
         )
 
     base = sample.selection

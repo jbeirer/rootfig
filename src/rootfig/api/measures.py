@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any
@@ -57,7 +56,7 @@ from rootfig.plotting import (
     raise_ylim_above,
     style_context,
 )
-from rootfig.selection import Columns, NonFinitePolicy
+from rootfig.selection import NonFinitePolicy
 
 __all__ = ["efficiency", "profile"]
 
@@ -139,34 +138,33 @@ def efficiency(
         raise ValueError(msg)
     base = as_cut(selection)
     numerator_cut = pass_cut if base is None else base & pass_cut
-    options: dict[str, Any] = {"weight": weight, "lumi": lumi, "nonfinite": nonfinite}
-    factors = [s.scale * s.lumi_scale(lumi) for s in samples]
-    totals = [
-        _unscaled(load_columns(s, [var], selection=selection, **options), factor)
-        for s, factor in zip(samples, factors, strict=True)
-    ]
+    # the sample's scale and luminosity factor cancel in a ratio: left out, unweighted entries
+    # stay unweighted, and a zero or negative factor changes nothing
+    options: dict[str, Any] = {"weight": weight, "nonfinite": nonfinite, "scaled": False}
+    totals = [load_columns(s, [var], selection=selection, **options) for s in samples]
     axis = resolve_axis(
         var, [c.values for c in totals], name=var.safe_name, weights=[c.weights for c in totals]
     )
     fixed = var.replace(bins=axis)  # the same binning for the numerators
-    passing = [
-        _unscaled(load_columns(s, [fixed], selection=numerator_cut, **options), factor)
-        for s, factor in zip(samples, factors, strict=True)
-    ]
-    passes = [
-        from_sample(s, fill([axis], c), stats=summarize(c), per_object=c.per_object)
-        for s, c in zip(samples, passing, strict=True)
-    ]
+    passing = [load_columns(s, [fixed], selection=numerator_cut, **options) for s in samples]
+    pass_hists = [fill([axis], c) for c in passing]
     efficiencies = [
         efficiency_of(
-            p.hist,
+            h,
             fill([axis], t),
             z=z,
             label=sample.label,
             negative_weights=negative_bins(axis, t),  # which the sums cannot always tell
             interval=interval,
         )
-        for p, t, sample in zip(passes, totals, samples, strict=True)
+        for h, t, sample in zip(pass_hists, totals, samples, strict=True)
+    ]
+    # the numerators returned in Plot.histograms are yields, with the factor like any histogram
+    passes = [
+        from_sample(s, h, stats=summarize(c), per_object=c.per_object).scaled(
+            s.scale * s.lumi_scale(lumi)
+        )
+        for s, h, c in zip(samples, pass_hists, passing, strict=True)
     ]
     plan = resolve_points(
         efficiencies,
@@ -429,10 +427,3 @@ def _finish(layout: Layout, headroom: Callable[[], None] | None) -> Finish:
     return Finish(
         layout.main, panels=layout.panel_axes, xlabel=layout.xlabel_axes, headroom=headroom
     )
-
-
-def _unscaled(columns: Columns, factor: float) -> Columns:
-    """``columns`` without a ``factor`` common to every weight, which an efficiency cancels."""
-    if columns.weights is None or factor == 1.0:
-        return columns
-    return dataclasses.replace(columns, weights=columns.weights / factor)

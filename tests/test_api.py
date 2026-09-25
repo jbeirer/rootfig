@@ -34,6 +34,7 @@ from rootfig.errors import (
     SourceError,
 )
 from rootfig.histograms import poisson_interval
+from rootfig.histograms.binomial import normal_interval
 from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
     add_experiment_label,
@@ -1731,19 +1732,32 @@ class TestEfficiencyProfileSignificance:
         assert p.ax.get_ylabel() == "Std. dev. of E [GeV]"
         assert p.ax.get_xlim() == (0.0, 2.0)
 
-    def test_efficiency_leaves_the_sample_scale_out(self) -> None:
-        # a sample scale (or cross section and luminosity) cancels in an efficiency: the
-        # counts keep Clopper-Pearson, as TEfficiency filled without that factor
-        x = np.array([0.5, 0.5, 0.5, 0.5])
-        ok = np.array([1, 1, 1, 0])
-        for scale in (1.0, 0.03):
-            sample = rf.Sample({"x": x, "ok": ok}, scale=scale)
-            p = rf.efficiency(sample, "x", passed="ok == 1", bins=(1, 0, 1))
-            eff = p.efficiencies[0]
-            np.testing.assert_allclose(
-                [eff.lower[0], eff.upper[0]], [0.38159757449607973, 0.9577308936963108]
-            )
-            p.close()
+    @pytest.mark.parametrize("scale", [1.0, 0.03, 2.5, -2.5, 0.0])
+    def test_efficiency_leaves_the_sample_scale_out(self, scale: float) -> None:
+        # a sample scale (or cross section and luminosity) cancels in an efficiency, also
+        # when it is zero or negative: the counts keep Clopper-Pearson, as TEfficiency
+        # filled without that factor, and weighted entries their normal interval
+        x = np.array([0.5, 0.5, 0.5, 0.5, 1.5, 1.5, 1.5])
+        ok = np.array([1, 1, 1, 0, 1, 0, 1])
+        w = np.array([1.0, 2.0, 1.0, 0.5, 1.0, 3.0, 2.0])
+        counts = rf.Sample({"x": x, "ok": ok}, scale=scale)
+        weighted = rf.Sample({"x": x, "ok": ok, "w": w}, scale=scale, weight="w")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RootfigWarning)
+            p = rf.efficiency([counts, weighted], "x", passed="ok == 1", bins=(2, 0, 2))
+        plain, heavy = p.efficiencies
+        np.testing.assert_allclose(
+            [plain.lower[0], plain.upper[0]], [0.38159757449607973, 0.9577308936963108]
+        )
+        np.testing.assert_allclose(plain.values, [0.75, 2 / 3])
+        np.testing.assert_allclose(heavy.values, [4.0 / 4.5, 3.0 / 6.0])
+        lower, upper = normal_interval([4.0, 3.0], [4.5, 6.0], [6.0, 5.0], [6.25, 14.0])
+        np.testing.assert_allclose(heavy.lower, lower)
+        np.testing.assert_allclose(heavy.upper, upper)
+        # the numerators in Plot.histograms are yields: they keep the factor
+        np.testing.assert_allclose(p.histograms[0].values(), scale * np.array([3.0, 2.0]))
+        np.testing.assert_allclose(p.histograms[1].values(), scale * np.array([4.0, 3.0]))
+        p.close()
 
     def test_efficiency_panel(self, signal_file: Path, background_file: Path) -> None:
         mc = rf.Sample(signal_file, tree="events", label="MC")

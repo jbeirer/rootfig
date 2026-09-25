@@ -41,16 +41,20 @@ EfficiencyInterval: TypeAlias = Literal["auto", "clopper-pearson", "normal", "wi
   ``"normal"`` otherwise.
 """
 
-_UNWEIGHTED_TOLERANCE = 1e-5
-"""Relative tolerance of ROOT's test for unweighted entries, ``sum w == sum w^2``."""
+_UNWEIGHTED_TOLERANCE = 1e-12
+"""Relative tolerance of ``TEfficiency``'s test for unweighted entries, ``sum w == sum w^2``.
+
+ROOT uses it for double-precision histograms (``TH1D``), like rootfig's contents;
+``TH1F`` gets ``1e-5``.
+"""
 
 
 def is_unweighted(sum_weights: float, sum_squares: float) -> bool:
     """Return True if entries summing to ``sum_weights`` count as unweighted, as ROOT decides.
 
     ``TEfficiency`` treats a histogram as unweighted when its sum of weights
-    equals its sum of squared weights (relative ``1e-5``), as it does when every
-    entry has weight 1.
+    equals its sum of squared weights (relative ``1e-12`` for ``TH1D``), as it
+    does when every entry has weight 1.
     """
     difference = abs(sum_weights - sum_squares)
     return difference <= 0.5 * _UNWEIGHTED_TOLERANCE * (abs(sum_weights) + abs(sum_squares))
@@ -93,12 +97,21 @@ def efficiency_bounds(
     *,
     z: float = 1.0,
 ) -> tuple[FloatArray, FloatArray]:
-    """Return the bounds of the resolved ``interval`` (not ``"auto"``): ``(lower, upper)``."""
+    """Return the bounds of the resolved ``interval``: ``(lower, upper)``.
+
+    Raises
+    ------
+    ValueError
+        For ``"auto"``, which :func:`resolve_interval` turns into a method first.
+    """
     if interval == "clopper-pearson":
         return clopper_pearson(passed, total, z)
     if interval == "normal":
         return normal_interval(passed, total, passed_variance, total_variance, z)
-    return wilson_interval(passed, total, total_variance, z)
+    if interval == "wilson":
+        return wilson_interval(passed, total, total_variance, z)
+    msg = f"efficiency_bounds needs a resolved interval, got {interval!r}"
+    raise ValueError(msg)
 
 
 def _tail(z: float) -> float:

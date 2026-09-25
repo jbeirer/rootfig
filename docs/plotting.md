@@ -59,13 +59,14 @@ panel and in the lower panel alike, and in `p.uncertainty("Data")`:
 - The interval of `n` counts runs from `L` to `U` with
   `P(N ≥ n | L) = P(N ≤ n | U) = 15.87 %` (`L = 0` for `n = 0`): ROOT's
   `TH1::kPoisson`. A bin of scaled counts takes the interval of its count times
-  its factor, like its contents (see [Normalisation](#normalisation)); an empty
-  bin borrows the factor of the nearest filled bin, per unit width after a
-  per-width normalisation (`"density"`, `"width"`), so it gets `0 +1.84` divided
-  by its own width. Summed flow bins (`flow="sum"`) get the interval of the
-  summed count. ROOT keeps `kPoisson` for unweighted histograms only and falls
-  back to `√(Σw²)` once a histogram is scaled; rootfig keeps the interval of
-  scaled counts.
+  its factor, like its contents (see [Normalisation](#normalisation)). An empty
+  bin is scaled as a count in it would be: the histogram carries one count per
+  bin through every scaling, normalisation and rebinning, so after
+  `normalize="width"` an empty bin gets `0 +1.84` divided by its own width, and
+  an empty histogram scaled by 3 gets `0 +5.52`. Summed flow bins
+  (`flow="sum"`) get the interval of the summed count. ROOT keeps `kPoisson`
+  for unweighted histograms only and falls back to `√(Σw²)` once a histogram
+  is scaled; rootfig keeps the interval of scaled counts.
 - The [lower panel](#lower-panel) propagates the two sides separately: a
   data/MC ratio runs from `L / d` to `U / d`, and a pull divides by the data
   error facing the prediction (the upper one where data lie below it).
@@ -368,7 +369,7 @@ significances, which count events), `reference=`, `panel_ylim` and `panel_label`
 The roles are those without a stack: data over the first simulated sample, or
 every further sample over the first. Both sides are independent points, so
 their intervals are propagated to first order, each side entering with the error
-that moves the result the same way: a ratio of Wilson intervals keeps its
+that moves the result the same way: a ratio of efficiency intervals keeps its
 asymmetry, and a pull divides by the errors facing the other side. There is no band and no `panel_uncertainty`.
 
 ## Binning and range
@@ -619,16 +620,30 @@ rf.efficiency([reco], "TrueMuon_pt", passed="TrueMuon_matched", bins=(20, 0, 100
 
 For every sample the entries satisfying `selection` form the denominator and
 those also satisfying `passed` the numerator, with the same binning. The
-efficiency is drawn as points with Wilson score intervals (`z=1` standard
-deviations by default); the interval is binomial because the passing entries
-are a subset of all of them. For counts it is ROOT's `TEfficiency::Wilson`;
-`TEfficiency` itself defaults to Clopper–Pearson, which is wider, since it
-never covers less than 68 %. Weighted samples use the effective entries
-`n_eff = (Σw)² / Σw²` of the denominator: entries passing with probability
-`ε` give a weighted fraction of variance `ε(1 − ε) / n_eff`, and the interval
-inverts that. ROOT's weighted `TEfficiency` (and `TGraphAsymmErrors::Divide`)
-use the normal approximation around the measured ratio instead, whose
-interval has no width at 0 and 1. Options are
+efficiency is drawn as points with a confidence interval of `z=1` standard
+deviations by default, chosen with `interval=`. The passing entries are a
+subset of all of them, so the uncertainty is that of a pass fraction, never
+that of two independent yields.
+
+| `interval=` | Interval |
+| --- | --- |
+| `"auto"` (default) | what ROOT's `TEfficiency` and `TGraphAsymmErrors::Divide` give: `"clopper-pearson"` for unweighted entries, `"normal"` for weighted ones |
+| `"clopper-pearson"` | the exact binomial interval of the counts, never covering less than 68 %; unweighted entries only |
+| `"normal"` | `ε ± z·σ` clipped to `[0, 1]`, with `σ² = (Σw²_pass (1 − 2ε) + Σw²_all ε²) / (Σw_all)²` (`ε(1 − ε) / n` for counts); no width at 0 and 1 |
+| `"wilson"` | the Wilson score interval, with the effective entries `n_eff = (Σw)² / Σw²` of the denominator for weighted entries: entries passing with probability `ε` give a weighted fraction of variance `ε(1 − ε) / n_eff`, and the interval inverts that. It keeps a width at 0 and 1 |
+
+Entries count as unweighted as ROOT decides: when the sum of weights equals the
+sum of squared weights (to 10⁻¹², `TEfficiency`'s tolerance for `TH1D`), so
+every weight is 1. The sample's `scale` and luminosity factor cancel in an
+efficiency and are left out, so they neither make a sample weighted nor, when
+zero or negative, change its efficiency; a `weight=`, even one constant for
+every entry, makes it weighted.
+The normal approximation shrinks to nothing at 0 % and 100 %, which is why the
+two Z + jets bins at 100 % in the [gallery](gallery/efficiency.md) have no error bar;
+`"wilson"` is the alternative that keeps one for weighted samples. rootfig
+computes the Clopper–Pearson bounds itself, without SciPy, and matches ROOT
+to 10⁻¹¹ (10⁻⁸ for extreme counts, where both are limited by round-off).
+Options are
 the usual axis, legend, label and style ones (`xlabel`, `ylabel`, `unit`,
 `title`, `logx`, `xlim`, `ylim`, `legend`, `text`, `style`, `figsize`, `ax`,
 `save`); the [`Efficiency`][rootfig.Efficiency] objects (`values`, `lower`,
@@ -670,10 +685,12 @@ deviation, the profile error or the confidence interval (with a warning for
 efficiencies) rather than a made-up uncertainty; means, yields and histogram
 contents are unaffected. Bins whose total weight is negative keep their mean
 or efficiency (the plain ratio) but get no uncertainty; bins whose weights
-cancel to exactly zero count as empty (`nan`). A binomial interval assumes
-non-negative weights, so an efficiency bin that any entry with a negative
-weight falls into has no interval even when its ratio lies in `[0, 1]`:
-`rf.efficiency` knows them from filling. The lower-level
+cancel to exactly zero count as empty (`nan`). The normal approximation, the
+default for weighted entries, propagates the sums to first order, which holds
+for signed weights too, as in ROOT. A binomial interval (`"clopper-pearson"`,
+`"wilson"`) assumes non-negative weights, so with it an efficiency bin that any
+entry with a negative weight falls into has no interval even when its ratio
+lies in `[0, 1]`: `rf.efficiency` knows them from filling. The lower-level
 `rootfig.histograms.efficiency` sees only the sums of
 the two histograms, which reveal a negative weight when a part of the bin has
 a sum of squared weights above the square of its sum; its `negative_weights=`
@@ -696,16 +713,21 @@ table.get("ZH").absolute_efficiency_errors
 
 Step efficiencies are ratios of weighted yields (`nan` after a zero yield).
 Every step keeps a subset of the events before it, so their uncertainty is
-binomial, not that of two independent yields: `efficiency_errors` and
-`absolute_efficiency_errors` are the `(down, up)` distances to the Wilson score
-interval at one standard deviation, as for [efficiencies](#efficiencies), with
-the effective entries `(Σw)² / Σw²` of the denominator for weighted events.
-With signed (NLO)
-weights a yield can be negative and a ratio can lie outside `[0, 1]`; the ratio
-is reported as is, but an efficiency measured against events that include a
-negative weight (`CutflowStep.negative_weights`) has `nan` errors: no binomial
-interval describes it. Cut flows are statistical only; systematic variations
-are not propagated through them.
+that of a pass fraction, not that of two independent yields:
+`efficiency_errors` and `absolute_efficiency_errors` are the `(down, up)`
+distances to the confidence interval at one standard deviation that
+`interval=` names, as for [efficiencies](#efficiencies). The default is what
+`TEfficiency` would give: Clopper–Pearson of the event counts when every event
+weight is 1, the normal approximation otherwise; `Cutflow.interval` says which.
+Efficiencies and their errors come from the event weights alone
+(`CutflowStep.sum_w`, `sum_w2`): the sample's `scale` and luminosity factor
+cancel, whatever their sign, and enter only the yields. With
+signed (NLO) weights a yield can be negative and a ratio can lie outside
+`[0, 1]`; the ratio is reported as is, without errors outside `[0, 1]`, and
+with `interval="wilson"` also without errors when measured against events
+that include a negative weight (`CutflowStep.negative_weights`), since no
+binomial interval describes them. Cut flows are statistical only; systematic
+variations are not propagated through them.
 
 Cuts apply cumulatively; a sample's own selection is the first row. Per-object
 cuts pass an event when any object passes. `weight`, `lumi` and `nonfinite`

@@ -284,13 +284,16 @@ def load_columns(
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
     cache: ReadCache | None = None,
+    scaled: bool = True,
 ) -> Columns:
     """Read the required branches of ``sample`` and prepare flat columns.
 
     The selection and weight given here are combined with those defined on the
     sample itself (see :func:`combined_selection` and :func:`combined_weight`).
     ``lumi`` scales samples that carry a cross section (see
-    :meth:`~rootfig.model.Sample.lumi_scale`). With a ``cache`` the sample reads
+    :meth:`~rootfig.model.Sample.lumi_scale`). ``scaled=False`` leaves the
+    sample's scale and luminosity factor out, for an efficiency, in which they
+    cancel: the weights are the event weights alone. With a ``cache`` the sample reads
     through the source instance it holds for its files
     (:func:`~rootfig.histograms.sources.shared_source`), which is then also
     where the branches and the cross-section numbers are read.
@@ -303,7 +306,7 @@ def load_columns(
         tuple(var_exprs),
         selection=None if cut is None else cut.expression,
         weight=weight_expr,
-        scale=sample.scale * sample.lumi_scale(lumi),
+        scale=sample.scale * sample.lumi_scale(lumi) if scaled else 1.0,
         nonfinite=nonfinite,
         context=sample.label,
     )

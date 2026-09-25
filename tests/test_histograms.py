@@ -911,6 +911,21 @@ class TestRootReference:
             real[1], [0.5315598555042972, 0.9938725041908549, 0.9995319983377866], rtol=1e-11
         )
 
+    @pytest.mark.parametrize(
+        ("delta", "lower"),
+        # ROOT 6.40, TH1D: TEfficiency treats weights of 1 + 1e-11 as weighted (normal
+        # approximation) and 1 + 1e-13 as unweighted (Clopper-Pearson): a tolerance of 1e-12
+        [(1e-11, 0.75 - 0.2165063509), (1e-13, 0.38159757449607973)],
+    )
+    def test_unweighted_is_decided_like_tefficiency_for_th1d(
+        self, delta: float, lower: float
+    ) -> None:
+        from rootfig.histograms import efficiency
+
+        weights = [1.0 + delta] * 4
+        eff = efficiency(_hist([0.5] * 3, weights[:3]), _hist([0.5] * 4, weights))
+        assert eff.lower[0] == pytest.approx(lower, abs=1e-9)
+
     @pytest.mark.parametrize("case", sorted(ROOT_TEFFICIENCY))
     def test_the_default_is_tefficiency(self, case: str) -> None:
         from rootfig.histograms import efficiency
@@ -1341,6 +1356,29 @@ class TestEfficiencyIntervals:
         assert np.isnan(upper).all()
         empty = clopper_pearson(np.zeros(0), np.zeros(0))
         assert empty[0].size == empty[1].size == 0
+
+    @pytest.mark.parametrize("scale", [2.5, -2.5, 0.0])
+    def test_a_cutflow_leaves_the_sample_scale_out(self, scale: float) -> None:
+        from rootfig.histograms import cutflow
+
+        n = np.arange(20.0)
+        cuts = ["n >= 5", "n >= 12"]
+        for weight in (None, "1 + n % 3"):
+            plain = cutflow(Sample({"n": n}, weight=weight), cuts)
+            scaled = cutflow(Sample({"n": n}, weight=weight, scale=scale), cuts)
+            assert scaled.interval == plain.interval
+            np.testing.assert_allclose(scaled.yields, scale * plain.yields)
+            np.testing.assert_allclose(scaled.efficiencies, plain.efficiencies)
+            np.testing.assert_allclose(scaled.absolute_efficiencies, plain.absolute_efficiencies)
+            for got, want in zip(scaled.efficiency_errors, plain.efficiency_errors, strict=True):
+                np.testing.assert_allclose(got, want)
+            assert not any(step.negative_weights for step in scaled.steps)
+
+    def test_efficiency_bounds_needs_a_resolved_interval(self) -> None:
+        from rootfig.histograms.binomial import efficiency_bounds
+
+        with pytest.raises(ValueError, match="resolved interval"):
+            efficiency_bounds("auto", [1.0], [2.0], [1.0], [2.0])
 
     def test_a_hand_made_cutflow_resolves_auto_from_its_yields(self) -> None:
         def step(events: int, yield_: float, error: float) -> CutflowStep:
