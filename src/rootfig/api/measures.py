@@ -118,7 +118,8 @@ def efficiency(
     interval (any but the normal approximation) is not drawn, with a warning, for
     a bin that an entry with a negative weight falls into, which keeps its
     efficiency. Empty bins are left out; ``show_empty=True`` draws them as
-    ROOT's ``"e0"`` does (0 in ``[0, 1]``, or the prior for a Bayesian interval).
+    ROOT's ``"e0"`` does (0 in ``[0, 1]``, or the prior for a Bayesian interval),
+    while a bin whose signed weights cancel holds entries and stays undefined.
     The :class:`~rootfig.histograms.Efficiency`
     objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a
     ``range`` infers one robustly, shared by numerator and denominator (see

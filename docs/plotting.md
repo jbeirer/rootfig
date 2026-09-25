@@ -743,7 +743,9 @@ With a posterior mode the point can lie outside a central interval, which then
 reaches one way only; the shortest interval always holds the mode. Empty bins
 have no efficiency and are left out; `show_empty=True` draws them as ROOT's
 `"e0"` option does, at 0 with the interval `[0, 1]`, or at the prior's mean with
-its interval for a Bayesian one.
+its interval for a Bayesian one. Only a bin without entries is empty: one whose
+signed weights cancel to a total of zero holds entries, and its efficiency stays
+undefined rather than drawn as 0 in `[0, 1]` or as the prior.
 Options are
 the usual axis, legend, label and style ones (`xlabel`, `ylabel`, `unit`,
 `title`, `logx`, `xlim`, `ylim`, `legend`, `text`, `style`, `figsize`, `ax`,

@@ -151,7 +151,7 @@ class Cutflow:
 
         A step keeps a subset of the previous step's events, so its efficiency
         is that of a pass fraction, never a ratio of two independent yields:
-        the :attr:`interval` at one standard deviation of the summed event
+        the :attr:`interval` at confidence level :attr:`cl` of the summed event
         weights, as ``TEfficiency`` computes it from the histograms' contents
         (for unweighted events the number of events of weight 1, so events of
         weight 0 are no trials). ``nan`` where the

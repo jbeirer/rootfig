@@ -4391,6 +4391,21 @@ class TestMoreEfficiencyIntervals:
             np.testing.assert_allclose([eff.values[0], down[0], up[0]], bins[0], rtol=1e-10)
             np.testing.assert_allclose([eff.values[1], down[1], up[1]], [*bins[1], bins[1][1]])
 
+    def test_weights_that_cancel_are_no_empty_bin(self) -> None:
+        from rootfig.histograms import efficiency
+
+        # bin 0: weights +1 and -1, a total of 0 with a variance of 2: entries whose weights
+        # cancel, so no efficiency (ROOT 6.40 has none either: TEfficiency 0 with nan errors,
+        # Divide "e0" 0 +- 0); bin 2: no entries at all, the only empty bin
+        total = _hist([0.5, 0.5, 1.5, 1.5], [1.0, -1.0, 1.0, 1.0])
+        passed = _hist([1.5], [1.0])
+        for interval in ("auto", "uniform"):
+            eff = efficiency(passed, total, interval=interval, show_empty=True)  # type: ignore[arg-type]
+            assert np.isnan([eff.values[0], eff.lower[0], eff.upper[0]]).all()
+            assert np.isfinite([eff.values[2], eff.lower[2], eff.upper[2]]).all()
+        normal = efficiency(passed, total, show_empty=True)
+        assert (normal.values[2], normal.lower[2], normal.upper[2]) == (0.0, 0.0, 1.0)
+
     def test_a_confidence_level(self) -> None:
         from rootfig.histograms import efficiency
 

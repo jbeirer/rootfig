@@ -36,8 +36,8 @@ class Efficiency:
     values
         The efficiency ``passed / total``, or the posterior's mean or mode for a
         Bayesian interval (as ROOT's ``TEfficiency``); ``nan`` where the total
-        weight is zero (an empty bin, or weights that cancel) unless empty bins
-        are shown (see :func:`efficiency`).
+        weight is zero (an empty bin, or weights that cancel), except for empty
+        bins that are shown (see :func:`efficiency`).
     lower, upper
         Bounds of the confidence interval (see :func:`efficiency` for the
         method and confidence level). It is ``nan`` where none is defined (see
@@ -102,7 +102,9 @@ def efficiency(
 
     An empty bin has no efficiency; ``show_empty=True`` shows it as ROOT's
     ``TGraphAsymmErrors::Divide`` does with ``"e0"``: 0 in ``[0, 1]``, or the
-    prior's mean and interval for a Bayesian interval.
+    prior's mean and interval for a Bayesian interval. Only a bin without
+    entries is empty (no sum of weights and no sum of squared weights): one
+    whose signed weights cancel holds entries and stays undefined.
 
     The intervals other than ``"normal"`` are binomial, so they need
     non-negative weights. A bin gets ``nan`` bounds from them and a
@@ -168,8 +170,9 @@ def efficiency(
             stacklevel=2,
         )
     p, lower, upper = (np.where(ok, a, np.nan) for a in (p, lower, upper))
-    if show_empty and not ok.all():
-        empty = ~ok
+    # no entries at all, not weights that cancel: those leave the efficiency undefined
+    empty = (n == 0) & (vn == 0)
+    if show_empty and empty.any():
         if isinstance(method, Bayesian):  # the prior: the posterior of no entries
             prior = bayesian_interval(method, np.zeros(1), np.zeros(1), cl=cl)
             fill = [float(side[0]) for side in prior]
