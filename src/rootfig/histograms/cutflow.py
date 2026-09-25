@@ -8,7 +8,13 @@ from dataclasses import dataclass
 import numpy as np
 
 from rootfig.expressions import parse
-from rootfig.histograms.intervals import wilson_interval
+from rootfig.histograms.binomial import (
+    EfficiencyInterval,
+    check_interval,
+    efficiency_bounds,
+    is_unweighted,
+    resolve_interval,
+)
 from rootfig.histograms.pipeline import combined_weight, read_arrays
 from rootfig.model.cuts import Cut, CutLike, as_cut
 from rootfig.model.samples import Sample
@@ -36,7 +42,8 @@ class CutflowStep:
         Statistical uncertainty on ``yield_``, ``sqrt(sum w^2)``.
     negative_weights
         Whether an event passing all cuts so far has a negative weight; the
-        efficiencies measured against this step then have no binomial interval.
+        efficiencies measured against this step then have no binomial interval
+        (``"clopper-pearson"``, ``"wilson"``).
     """
 
     label: str
@@ -49,10 +56,21 @@ class CutflowStep:
 
 @dataclass(frozen=True)
 class Cutflow:
-    """The cut flow of one sample: a sequence of :class:`CutflowStep`."""
+    """The cut flow of one sample: a sequence of :class:`CutflowStep`.
+
+    ``interval`` is the confidence interval of the efficiency errors (see
+    :data:`~rootfig.histograms.binomial.EfficiencyInterval`). :func:`cutflow`
+    resolves ``"auto"`` from the event weights; left ``"auto"``, it is
+    Clopper-Pearson if every step's yield equals its sum of squared weights
+    (unweighted events, as ROOT decides), else the normal approximation.
+    """
 
     sample: str
     steps: tuple[CutflowStep, ...]
+    interval: EfficiencyInterval = "auto"
+
+    def __post_init__(self) -> None:
+        check_interval(self.interval)
 
     @property
     def labels(self) -> list[str]:
@@ -94,13 +112,13 @@ class Cutflow:
         """``(down, up)`` statistical errors of :attr:`efficiencies`, 0 for the first step.
 
         A step keeps a subset of the previous step's events, so its efficiency
-        has a binomial uncertainty: the Wilson score interval (one standard
-        deviation) of the two yields, with the effective entries of the previous
-        step for weighted events (see :func:`~rootfig.histograms.intervals.wilson_interval`).
-        ``nan`` where
-        the efficiency is undefined or lies outside ``[0, 1]``, and after a step
-        holding a negative weight (:attr:`CutflowStep.negative_weights`): no
-        binomial interval describes signed weights.
+        is that of a pass fraction, never a ratio of two independent yields:
+        the :attr:`interval` at one standard deviation, as ``TEfficiency``
+        computes it (Clopper-Pearson of the event counts for unweighted events,
+        the normal approximation of the yields otherwise). ``nan`` where the
+        efficiency is undefined or lies outside ``[0, 1]``, and for a binomial
+        interval after a step holding a negative weight
+        (:attr:`CutflowStep.negative_weights`).
         """
         return self._errors([self.steps[0], *self.steps[:-1]], self.efficiencies)
 
@@ -115,11 +133,21 @@ class Cutflow:
     def _errors(
         self, before: Sequence[CutflowStep], values: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Wilson errors of ``values``, each step measured against the one ``before`` it."""
-        lower, upper = wilson_interval(
-            self.yields, [b.yield_ for b in before], [b.error**2 for b in before]
+        """Errors of ``values``, each step measured against the one ``before`` it."""
+        method = self.interval
+        if method == "auto":
+            unweighted = all(is_unweighted(s.yield_, s.error**2) for s in self.steps)
+            method = resolve_interval(method, unweighted)
+        if method == "clopper-pearson":  # the counts, which scale and luminosity leave alone
+            passed, total = self.events, np.array([b.events for b in before], dtype=float)
+        else:
+            passed, total = self.yields, np.array([b.yield_ for b in before])
+        errors = np.array([s.error for s in self.steps])
+        lower, upper = efficiency_bounds(
+            method, passed, total, errors**2, np.array([b.error for b in before]) ** 2
         )
-        signed = np.array([b.negative_weights for b in before])
+        binomial = method != "normal"
+        signed = np.array([b.negative_weights and binomial for b in before])
         down = np.where(signed, np.nan, values - lower)
         up = np.where(signed, np.nan, upper - values)
         # the first step is the reference itself: its efficiency is exact where defined
@@ -195,6 +223,7 @@ def cutflow(
     weight: str | None = None,
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
+    interval: EfficiencyInterval = "auto",
 ) -> Cutflow:
     """Apply ``cuts`` one after another to ``sample`` and count events and yields.
 
@@ -204,8 +233,13 @@ def cutflow(
     missing or non-finite weight are excluded from every step (counts and
     yields); non-finite ones are reported following ``nonfinite`` (a
     :class:`~rootfig.errors.RootfigWarning`, or a
-    :class:`~rootfig.errors.SelectionError` for ``"error"``).
+    :class:`~rootfig.errors.SelectionError` for ``"error"``). ``interval`` sets
+    the confidence interval of the efficiencies (:attr:`Cutflow.interval`);
+    ``"auto"`` is Clopper-Pearson when every event weight is 1, before the
+    sample's scale and luminosity factor, which cancel in an efficiency, and
+    the normal approximation otherwise.
     """
+    check_interval(interval)
     steps: list[Cut] = []
     for item in cuts:
         cut = as_cut(item)
@@ -222,9 +256,11 @@ def cutflow(
         weight_expr, arrays, n_events, nonfinite=nonfinite, context=sample.label
     )
     passing = np.isfinite(weights)
-    weights = np.where(passing, weights, 0.0) * sample.scale * sample.lumi_scale(lumi)
+    weights = np.where(passing, weights, 0.0)
     if sample.selection is not None:
         passing &= event_mask(sample.selection.expression, arrays, length=n_events)
+    method = resolve_interval(interval, bool(np.all(weights[passing] == 1.0)), sample.label)
+    weights = weights * sample.scale * sample.lumi_scale(lumi)
 
     def step(label: str, expression: str) -> CutflowStep:
         selected = weights[passing]
@@ -243,4 +279,4 @@ def cutflow(
     for cut in steps:
         passing &= event_mask(cut.expression, arrays, length=n_events)
         result.append(step(cut.label or cut.expression, cut.expression))
-    return Cutflow(sample=sample.label, steps=tuple(result))
+    return Cutflow(sample=sample.label, steps=tuple(result), interval=method)

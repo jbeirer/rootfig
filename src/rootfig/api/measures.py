@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any
@@ -14,6 +15,7 @@ from rootfig.histograms import (
     Comparison,
     ComparisonKind,
     Efficiency,
+    EfficiencyInterval,
     Profile,
     ProfileStatistic,
     fill,
@@ -55,7 +57,7 @@ from rootfig.plotting import (
     raise_ylim_above,
     style_context,
 )
-from rootfig.selection import NonFinitePolicy
+from rootfig.selection import Columns, NonFinitePolicy
 
 __all__ = ["efficiency", "profile"]
 
@@ -89,6 +91,7 @@ def efficiency(
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
     z: float = 1.0,
+    interval: EfficiencyInterval = "auto",
     nonfinite: NonFinitePolicy = "drop",
     save: str | None = None,
 ) -> Plot:
@@ -97,11 +100,17 @@ def efficiency(
     For every sample two histograms are filled with the same binning, all
     entries satisfying ``selection`` (the denominator) and those also
     satisfying ``passed`` (the numerator); the ratio is drawn as points with
-    Wilson score intervals (``z`` standard deviations; effective entries for
-    weighted samples, see :func:`~rootfig.histograms.intervals.wilson_interval`).
-    A bin that an entry with a negative weight falls into keeps its
-    efficiency but has no interval, with a warning: no binomial interval
-    describes signed weights. The :class:`~rootfig.histograms.Efficiency`
+    confidence intervals of ``z`` standard deviations. ``interval="auto"``
+    gives what ROOT's ``TEfficiency`` gives: Clopper-Pearson for unweighted
+    entries, the normal approximation for weighted ones. The sample's
+    ``scale`` and luminosity factor cancel in an efficiency and are left out,
+    so an unweighted sample stays unweighted. ``"clopper-pearson"``,
+    ``"normal"`` and ``"wilson"`` (the score interval, with the effective
+    entries for weighted samples) choose one (see
+    :data:`~rootfig.histograms.binomial.EfficiencyInterval`). A binomial
+    interval (Clopper-Pearson, Wilson) is not drawn, with a warning, for a bin
+    that an entry with a negative weight falls into, which keeps its efficiency.
+    The :class:`~rootfig.histograms.Efficiency`
     objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a
     ``range`` infers one robustly, shared by numerator and denominator (see
     :func:`plot`).
@@ -131,12 +140,19 @@ def efficiency(
     base = as_cut(selection)
     numerator_cut = pass_cut if base is None else base & pass_cut
     options: dict[str, Any] = {"weight": weight, "lumi": lumi, "nonfinite": nonfinite}
-    totals = [load_columns(s, [var], selection=selection, **options) for s in samples]
+    factors = [s.scale * s.lumi_scale(lumi) for s in samples]
+    totals = [
+        _unscaled(load_columns(s, [var], selection=selection, **options), factor)
+        for s, factor in zip(samples, factors, strict=True)
+    ]
     axis = resolve_axis(
         var, [c.values for c in totals], name=var.safe_name, weights=[c.weights for c in totals]
     )
     fixed = var.replace(bins=axis)  # the same binning for the numerators
-    passing = [load_columns(s, [fixed], selection=numerator_cut, **options) for s in samples]
+    passing = [
+        _unscaled(load_columns(s, [fixed], selection=numerator_cut, **options), factor)
+        for s, factor in zip(samples, factors, strict=True)
+    ]
     passes = [
         from_sample(s, fill([axis], c), stats=summarize(c), per_object=c.per_object)
         for s, c in zip(samples, passing, strict=True)
@@ -148,6 +164,7 @@ def efficiency(
             z=z,
             label=sample.label,
             negative_weights=negative_bins(axis, t),  # which the sums cannot always tell
+            interval=interval,
         )
         for p, t, sample in zip(passes, totals, samples, strict=True)
     ]
@@ -412,3 +429,10 @@ def _finish(layout: Layout, headroom: Callable[[], None] | None) -> Finish:
     return Finish(
         layout.main, panels=layout.panel_axes, xlabel=layout.xlabel_axes, headroom=headroom
     )
+
+
+def _unscaled(columns: Columns, factor: float) -> Columns:
+    """``columns`` without a ``factor`` common to every weight, which an efficiency cancels."""
+    if columns.weights is None or factor == 1.0:
+        return columns
+    return dataclasses.replace(columns, weights=columns.weights / factor)

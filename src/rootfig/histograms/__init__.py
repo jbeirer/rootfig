@@ -1,5 +1,6 @@
 """Histogram construction, normalisation, comparisons and statistics."""
 
+from rootfig.histograms.binomial import EfficiencyInterval
 from rootfig.histograms.build import (
     Histogram,
     as_weight_storage,
@@ -49,6 +50,7 @@ __all__ = [
     "CutflowTable",
     "DataErrors",
     "Efficiency",
+    "EfficiencyInterval",
     "Histogram",
     "NormalizeSpec",
     "Profile",

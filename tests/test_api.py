@@ -1731,6 +1731,20 @@ class TestEfficiencyProfileSignificance:
         assert p.ax.get_ylabel() == "Std. dev. of E [GeV]"
         assert p.ax.get_xlim() == (0.0, 2.0)
 
+    def test_efficiency_leaves_the_sample_scale_out(self) -> None:
+        # a sample scale (or cross section and luminosity) cancels in an efficiency: the
+        # counts keep Clopper-Pearson, as TEfficiency filled without that factor
+        x = np.array([0.5, 0.5, 0.5, 0.5])
+        ok = np.array([1, 1, 1, 0])
+        for scale in (1.0, 0.03):
+            sample = rf.Sample({"x": x, "ok": ok}, scale=scale)
+            p = rf.efficiency(sample, "x", passed="ok == 1", bins=(1, 0, 1))
+            eff = p.efficiencies[0]
+            np.testing.assert_allclose(
+                [eff.lower[0], eff.upper[0]], [0.38159757449607973, 0.9577308936963108]
+            )
+            p.close()
+
     def test_efficiency_panel(self, signal_file: Path, background_file: Path) -> None:
         mc = rf.Sample(signal_file, tree="events", label="MC")
         data = rf.Sample(background_file, tree="events", label="Data", is_data=True)
@@ -2409,11 +2423,17 @@ class TestSystematics:
         passes = np.array([1, 1, 1, 0, 1, 0, 1])
         sample = rf.Sample({"x": x, "w": w, "ok": passes}, label="nlo", weight="w")
         with pytest.warns(RootfigWarning, match="nlo: 1 bin"):
-            p = rf.efficiency(sample, "x", passed="ok == 1", bins=(2, 0, 2))
+            p = rf.efficiency(sample, "x", passed="ok == 1", bins=(2, 0, 2), interval="wilson")
         (eff,) = p.efficiencies
         np.testing.assert_allclose(eff.values, [1.9 / 2.9, 2.0 / 4.0])
         assert np.isnan([eff.lower[0], eff.upper[0]]).all()
         assert np.isfinite([eff.lower[1], eff.upper[1]]).all()  # positive weights only
+        p.close()
+        # the default, ROOT's normal approximation for weighted entries, holds for signed ones
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            p = rf.efficiency(sample, "x", passed="ok == 1", bins=(2, 0, 2))
+        assert np.isfinite(p.efficiencies[0].lower).all()
         p.close()
 
     def test_efficiency_ignores_systematics(self) -> None:

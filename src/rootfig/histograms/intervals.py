@@ -1,8 +1,8 @@
-"""Confidence intervals of counts: Poisson (Garwood) for data, Wilson for efficiencies.
+"""Poisson (Garwood) intervals of counts, for the error bars of data.
 
-No SciPy: the Poisson bounds are quantiles of the gamma distribution with an
-integer shape, which for counts up to :data:`EXACT_COUNTS` are solved exactly
-from Poisson sums, and beyond from the Wilson-Hilferty approximation.
+No SciPy: the bounds are quantiles of the gamma distribution with an integer
+shape, which for counts up to :data:`EXACT_COUNTS` are solved exactly from
+Poisson sums, and beyond from the Wilson-Hilferty approximation.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from rootfig._typing import FloatArray
 __all__ = [
     "DataErrors",
     "count_problem",
+    "count_scale",
     "is_unit_counts",
     "poisson_errors",
     "poisson_interval",
-    "wilson_interval",
 ]
 
 DataErrors: TypeAlias = Literal["auto", "poisson", "sumw2"]
@@ -127,41 +127,55 @@ def _log_factorials(size: int) -> FloatArray:
     return np.array([math.lgamma(k + 1.0) for k in range(size + 1)])
 
 
+def count_scale(values: npt.ArrayLike, variances: npt.ArrayLike) -> FloatArray:
+    """Return the factor ``c`` scaling the count of every cell: ``values = c * n``.
+
+    A filled cell has ``c = variances / values`` (``variances = c**2 * n``); an
+    empty one takes the factor of the nearest filled cell, or 1 when none is
+    filled. The contents must be scaled counts (see :func:`count_problem`).
+    """
+    values = np.asarray(values, dtype=float)
+    flat_values = values.ravel()
+    flat_variances = np.asarray(variances, dtype=float).ravel()
+    filled = np.flatnonzero(flat_values > 0)
+    if not filled.size:
+        return np.ones_like(values)
+    positions = np.arange(flat_values.size)
+    after = np.clip(np.searchsorted(filled, positions), 0, filled.size - 1)
+    before = np.clip(after - 1, 0, filled.size - 1)
+    left, right = filled[before], filled[after]
+    nearest = np.where(np.abs(positions - left) <= np.abs(right - positions), left, right)
+    return np.asarray(flat_variances[nearest] / flat_values[nearest], dtype=float).reshape(
+        values.shape
+    )
+
+
 def poisson_errors(
     values: npt.ArrayLike,
     variances: npt.ArrayLike,
     z: float = 1.0,
     *,
-    sizes: npt.ArrayLike | None = None,
+    scale: npt.ArrayLike | None = None,
 ) -> tuple[FloatArray, FloatArray]:
     """Return the Garwood interval of scaled counts as ``(down, up)`` errors of ``values``.
 
-    Each cell holds a count ``n`` scaled by a factor ``c``: ``values = c * n``
-    and ``variances = c**2 * n``, so ``n = values**2 / variances`` and
-    ``c = variances / values``. Unit-weight counts have ``c = 1``; normalising
-    them changes ``c`` but not ``n``. An empty cell takes the factor of the
-    nearest filled one, or 1 when none is filled. Contents per unit size give
-    the size each cell was divided by as ``sizes``; the factor is then taken per
-    unit size, so an empty cell of any width gets its own. The contents must be
-    scaled counts (see :func:`count_problem`).
+    Each cell holds a count ``n`` scaled by a factor ``c`` (unit-weight counts:
+    ``c = 1``; normalising them changes ``c`` but not ``n``), and takes the
+    interval of ``n`` times ``c``, like its contents. A filled cell knows its
+    factor, ``variances / values``; ``scale`` gives that of every cell, which
+    an empty cell needs, else :func:`count_scale` infers it.
     """
     values = np.asarray(values, dtype=float)
     variances = np.asarray(variances, dtype=float)
-    flat_values, flat_variances = values.ravel(), variances.ravel()
-    size = np.ones_like(flat_values) if sizes is None else np.asarray(sizes, dtype=float).ravel()
-    filled = np.flatnonzero(flat_values > 0)
-    scale = np.ones_like(flat_values)
-    if filled.size:
-        positions = np.arange(flat_values.size)
-        after = np.clip(np.searchsorted(filled, positions), 0, filled.size - 1)
-        before = np.clip(after - 1, 0, filled.size - 1)
-        left, right = filled[before], filled[after]
-        nearest = np.where(np.abs(positions - left) <= np.abs(right - positions), left, right)
-        scale = flat_variances[nearest] / flat_values[nearest] * size[nearest] / size
-    lower, upper = poisson_interval(np.rint(flat_values / scale), z)
-    down = np.maximum(flat_values - scale * lower, 0.0).reshape(values.shape)
-    up = np.maximum(scale * upper - flat_values, 0.0).reshape(values.shape)
-    return down, up
+    filled = values > 0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        own = variances / values
+    guess = count_scale(values, variances) if scale is None else np.asarray(scale, dtype=float)
+    factor = np.where(filled, own, guess)
+    lower, upper = poisson_interval(np.rint(np.where(filled, values / factor, 0.0)), z)
+    down = np.maximum(values - factor * lower, 0.0)
+    up = np.maximum(factor * upper - values, 0.0)
+    return np.asarray(down, dtype=float), np.asarray(up, dtype=float)
 
 
 def is_unit_counts(values: npt.ArrayLike, variances: npt.ArrayLike) -> bool:
@@ -204,38 +218,3 @@ def count_problem(values: npt.ArrayLike, variances: npt.ArrayLike) -> str | None
     if np.any(np.abs(counts - np.rint(counts)) > _WHOLE * np.maximum(counts, 1.0)):
         return "is weighted (its effective counts are not whole numbers)"
     return None
-
-
-def wilson_interval(
-    passed: npt.ArrayLike, total: npt.ArrayLike, total_variance: npt.ArrayLike, z: float = 1.0
-) -> tuple[FloatArray, FloatArray]:
-    """Return the Wilson score interval of the efficiency ``passed / total``: ``(lower, upper)``.
-
-    ``passed`` sums the weights of a subset of the entries ``total`` sums, so the
-    interval is binomial, never that of two independent yields. For counts it
-    is ROOT's ``TEfficiency::Wilson``. With weights, the effective entries of
-    the total, ``total**2 / total_variance``, take the place of its count: the
-    weighted pass fraction of entries passing with probability ``e`` has the
-    variance ``e (1 - e) / n_eff``, and the score interval inverts it. ROOT's
-    weighted interval (``TEfficiency`` ``kFNormal``) is instead the normal
-    approximation around the observed ratio, which has no width at 0 and 1.
-    The interval covers ``z`` standard deviations, is clipped to ``[0, 1]`` and
-    always contains the efficiency. It is ``nan`` where the total is not
-    positive or the efficiency lies outside ``[0, 1]``, which no binomial
-    interval describes.
-    """
-    k = np.asarray(passed, dtype=float)
-    n = np.asarray(total, dtype=float)
-    vn = np.asarray(total_variance, dtype=float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        p = np.where(n != 0, k / n, np.nan)
-        n_eff = np.where(vn > 0, n**2 / vn, n)
-        z2 = z * z
-        denominator = 1.0 + z2 / n_eff
-        centre = (p + z2 / (2.0 * n_eff)) / denominator
-        half = (z / denominator) * np.sqrt(p * (1.0 - p) / n_eff + z2 / (4.0 * n_eff**2))
-        valid = (n > 0) & (p >= 0.0) & (p <= 1.0)
-        # the Wilson interval contains p by construction; guard against round-off at 0 and 1
-        lower = np.where(valid, np.minimum(np.clip(centre - half, 0.0, 1.0), p), np.nan)
-        upper = np.where(valid, np.maximum(np.clip(centre + half, 0.0, 1.0), p), np.nan)
-    return np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)

@@ -15,7 +15,7 @@ from rootfig._mapping import FrozenMapping
 from rootfig._storage import as_weight_storage, is_category, same_axis, same_binning
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, SystematicError
-from rootfig.histograms.intervals import count_problem, poisson_errors
+from rootfig.histograms.intervals import count_problem, count_scale, poisson_errors
 from rootfig.histograms.stats import Summary
 from rootfig.model.binning import Bins, RangeSpec, merge_target
 
@@ -80,12 +80,22 @@ def negative_bins(axis: Axis, columns: Columns) -> np.ndarray:
     return np.asarray(counts.values() > 0, dtype=bool)
 
 
-def _visible(histogram: Hist) -> tuple[slice, ...]:
-    """Index of the visible bins in an array of all cells, flow cells included."""
-    return tuple(
-        slice(1 if axis.traits.underflow else 0, -1 if axis.traits.overflow else None)
-        for axis in histogram.axes
+def _one_count(histogram: Hist) -> Hist:
+    """Return one count in every cell of ``histogram``, scaled like its counts.
+
+    Transformed along with the contents (scaled, normalised, merged, moved),
+    its ``variance / value`` stays the factor of a count in every cell, also
+    where the contents are empty (see :func:`~rootfig.histograms.intervals.count_scale`).
+    """
+    scale = count_scale(
+        np.asarray(histogram.values(flow=True), dtype=float),
+        np.asarray(histogram.variances(flow=True), dtype=float),
     )
+    unit = histogram.copy()
+    view: Any = unit.view(flow=True)
+    view.value = scale
+    view.variance = scale**2
+    return unit
 
 
 @dataclass(frozen=True, init=False)
@@ -148,8 +158,8 @@ class Histogram:
     variations: Mapping[str, tuple[Hist, Hist]] = field(default_factory=dict)
     per_object: bool = False
     poisson: bool = False
-    # the size each cell (flow cells included) was divided by, for contents per unit size
-    _sizes: FloatArray | None = field(default=None, compare=False, repr=False)
+    # one count per cell, transformed with the contents: the Poisson factor of empty cells
+    _unit: Hist | None = field(default=None, compare=False, repr=False)
 
     def __init__(  # noqa: PLR0917 - preserve the positional dataclass constructor API
         self,
@@ -164,7 +174,7 @@ class Histogram:
         variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
         per_object: bool | None = None,
         poisson: bool = False,
-        _sizes: FloatArray | None = None,
+        _unit: Hist | None = None,
     ) -> None:
         if per_object is None:  # not given: follow the statistics
             per_object = stats is not None and stats.per_object
@@ -179,7 +189,7 @@ class Histogram:
         object.__setattr__(self, "variations", {} if variations is None else variations)
         object.__setattr__(self, "per_object", per_object)
         object.__setattr__(self, "poisson", poisson)
-        object.__setattr__(self, "_sizes", _sizes)
+        object.__setattr__(self, "_unit", _unit)
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -188,9 +198,6 @@ class Histogram:
         object.__setattr__(self, "hist", as_weight_storage(self.hist))
         checked = self._checked_variations(self.variations)
         object.__setattr__(self, "variations", FrozenMapping(checked))
-        if self._sizes is not None and np.shape(self._sizes) != self.values(flow=True).shape:
-            msg = f"histogram {self.label!r}: the bin sizes do not match its binning"
-            raise BinningError(msg)
         if self.poisson:
             problem = count_problem(self.values(flow=True), self.variances(flow=True))
             if problem is not None:
@@ -199,6 +206,13 @@ class Histogram:
                     "interval of counts; keep poisson=False for sqrt(sum of squared weights)"
                 )
                 raise ValueError(msg)
+            if self._unit is None:
+                object.__setattr__(self, "_unit", _one_count(self.hist))
+            elif not same_binning(self._unit, self.hist):
+                msg = f"histogram {self.label!r}: its count scale does not have its binning"
+                raise BinningError(msg)
+        else:
+            object.__setattr__(self, "_unit", None)
 
     def _checked_variations(
         self, variations: Mapping[str, tuple[Hist, Hist | None]]
@@ -269,17 +283,22 @@ class Histogram:
         Both are ``sqrt(variances)``, the uncertainty of a sum of weights, or,
         with :attr:`poisson`, the distances to the Garwood 68 % interval of the
         counts, scaled like the contents (see
-        :func:`~rootfig.histograms.intervals.poisson_errors`; after a per-width
-        :func:`~rootfig.histograms.normalize`, an empty bin is scaled by its own
-        width). The pair is
-        matplotlib's ``yerr`` order; drawing, comparisons and
-        :func:`~rootfig.histograms.uncertainty` take it from here.
+        :func:`~rootfig.histograms.intervals.poisson_errors`). An empty bin is
+        scaled as its counts would be: a record of one count per bin goes through
+        every scaling, normalisation and rebinning with the contents, so an empty
+        histogram scaled by 3 gets ``0 +5.52`` and an empty bin divided by its
+        width its own share. The pair is matplotlib's ``yerr`` order; drawing,
+        comparisons and :func:`~rootfig.histograms.uncertainty` take it from here.
         """
-        if self.poisson:
-            sizes = self._sizes
-            if sizes is not None and not flow:
-                sizes = sizes[_visible(self.hist)]
-            return poisson_errors(self.values(flow=flow), self.variances(flow=flow), sizes=sizes)
+        if self.poisson and self._unit is not None:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                unit = self._unit
+                scale = np.asarray(unit.variances(flow=flow), dtype=float) / unit.values(flow=flow)
+            # cells a transformation added (the new flow cells of flow="show") hold no
+            # count; they take the factor of the nearest cell that does
+            known = np.isfinite(scale) & (scale > 0)
+            scale = count_scale(known.astype(float), np.where(known, scale, 0.0))
+            return poisson_errors(self.values(flow=flow), self.variances(flow=flow), scale=scale)
         sigma = np.asarray(np.sqrt(self.variances(flow=flow)), dtype=float)
         return sigma, sigma.copy()
 
@@ -336,15 +355,13 @@ class Histogram:
         """Return a copy with the given fields changed, e.g. ``h.replace(label="B")``."""
         return replace(self, **changes)
 
-    def map_hists(self, transform: Callable[[Hist], Hist], **changes: Any) -> Histogram:
-        """Return a copy with ``transform`` applied to the nominal histogram and every variation.
-
-        ``changes`` replaces further fields in the same step.
-        """
+    def map_hists(self, transform: Callable[[Hist], Hist]) -> Histogram:
+        """Return a copy with ``transform`` applied to the nominal histogram and every variation."""
         variations = {
             name: (transform(up), transform(down)) for name, (up, down) in self.variations.items()
         }
-        return replace(self, hist=transform(self.hist), variations=variations, **changes)
+        unit = None if self._unit is None else transform(self._unit)
+        return replace(self, hist=transform(self.hist), variations=variations, _unit=unit)
 
     def scaled(self, factor: float) -> Histogram:
         """Return a copy multiplied by ``factor``.

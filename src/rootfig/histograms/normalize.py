@@ -83,30 +83,36 @@ def normalize_hist(histogram: Hist, spec: NormalizeSpec) -> Hist:
     return _normalize_hist(histogram, spec)[0]
 
 
-def _normalize_hist(histogram: Hist, spec: NormalizeSpec) -> tuple[Hist, bool]:
-    """Normalise ``histogram``; also report whether the requested mode was applied."""
+def _normalize_hist(
+    histogram: Hist, spec: NormalizeSpec, factor: float | None = None
+) -> tuple[Hist, bool, float]:
+    """Normalise ``histogram``: the result, whether the mode was applied, and the factor.
+
+    ``factor`` imposes the overall factor instead of deriving it from the
+    histogram's own total (a record that must follow another histogram).
+    """
     mode = _mode(spec)
     histogram = as_weight_storage(histogram)
     if mode is None:
-        return histogram.copy(), False
+        return histogram.copy(), False, 1.0
     if mode in ("density", "width"):
-        factor = 1.0
+        scale = 1.0
         if mode == "density":
-            scale = _scale_factor(histogram, 1.0)
-            if scale is None:
-                return histogram.copy(), False
-            factor = scale
+            derived = _scale_factor(histogram, 1.0) if factor is None else factor
+            if derived is None:
+                return histogram.copy(), False, 1.0
+            scale = derived
         result = histogram.copy()
         sizes = _bin_sizes(histogram)
         view: Any = result.view(flow=True)
         view.value /= sizes
         view.variance /= sizes**2
-        return (result * factor if factor != 1.0 else result), True
+        return (result * scale if scale != 1.0 else result), True, scale
     target = 1.0 if mode == "unity" else float(mode)
-    scale = _scale_factor(histogram, target)
-    if scale is None:
-        return histogram.copy(), False
-    return histogram * scale, True
+    rescale = _scale_factor(histogram, target) if factor is None else factor
+    if rescale is None:
+        return histogram.copy(), False, 1.0
+    return histogram * rescale, True, rescale
 
 
 def _scale_factor(histogram: Hist, target: float) -> float | None:
@@ -157,7 +163,7 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
     mode = _mode(spec)
     if mode is None:
         return histogram
-    result, applied = _normalize_hist(histogram.hist, spec)
+    result, applied, factor = _normalize_hist(histogram.hist, spec)
     if not applied:
         return histogram.replace(hist=result, normalization=None)
     label = normalization_label(spec)
@@ -165,7 +171,7 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
     for name, pair in histogram.variations.items():
         normalized = []
         for direction, varied in zip(("up", "down"), pair, strict=True):
-            shifted, shift_applied = _normalize_hist(varied, spec)
+            shifted, shift_applied, _ = _normalize_hist(varied, spec)
             if not shift_applied:
                 msg = (
                     f"histogram {histogram.label!r}: systematic {name!r} {direction} cannot "
@@ -174,10 +180,10 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
                 raise SystematicError(msg)
             normalized.append(shifted)
         variations[name] = (normalized[0], normalized[1])
-    sizes = histogram._sizes
-    if mode in ("density", "width"):  # kept for the Poisson interval of empty bins
-        sizes = _bin_sizes(histogram.hist) * (1.0 if sizes is None else sizes)
-    return histogram.replace(hist=result, normalization=label, variations=variations, _sizes=sizes)
+    unit = histogram._unit  # one count per cell, normalised by the nominal's factor
+    if unit is not None:
+        unit = _normalize_hist(unit, spec, factor=factor)[0]
+    return histogram.replace(hist=result, normalization=label, variations=variations, _unit=unit)
 
 
 def normalization_label(spec: NormalizeSpec) -> str | None:

@@ -25,6 +25,8 @@ from rootfig.errors import (
 )
 from rootfig.histograms import (
     COMPARISON_KINDS,
+    Cutflow,
+    CutflowStep,
     Efficiency,
     Histogram,
     Profile,
@@ -47,9 +49,10 @@ from rootfig.histograms import (
     summarize,
     uncertainty,
 )
+from rootfig.histograms.binomial import clopper_pearson, normal_interval, wilson_interval
 from rootfig.histograms.build import from_sample
 from rootfig.histograms.groups import group_histogram, regroup_histograms
-from rootfig.histograms.intervals import poisson_errors, wilson_interval
+from rootfig.histograms.intervals import poisson_errors
 from rootfig.histograms.normalize import normalization_label, normalize_hist
 from rootfig.histograms.pipeline import combined_weight
 from rootfig.model import Cut, Group, Sample, Systematic, Variable
@@ -838,6 +841,36 @@ ROOT_WILSON = {
     (37, 50): (0.6736930271670393, 0.7968952081270785),
     (999, 1000): (0.997385028286038, 0.999617968716959),
 }
+# TEfficiency::ClopperPearson(total, passed, 0.6826894921370859, upper)
+ROOT_CLOPPER_PEARSON = {
+    (0, 1): (0.0, 0.8413447460685429),
+    (1, 1): (0.1586552539314571, 1.0),
+    (0, 10): (0.0, 0.16814918613797644),
+    (3, 10): (0.14167190110718023, 0.5082624819902524),
+    (10, 10): (0.8318508138620236, 1.0),
+    (37, 50): (0.663178241460404, 0.8058241366566161),
+    (999, 1000): (0.9967042648821212, 0.9998272611420517),
+    (5000, 10000): (0.4949502550122015, 0.5050497449877984),
+    (99990, 100000): (0.9998573335462261, 0.9999310862177838),
+    (123456, 1000000): (0.12312691723706515, 0.12378583699547208),
+    (3, 10000000): (1.3672953621198285e-07, 5.918184985409525e-07),
+    (9999999, 10000000): (0.9999996700473842, 0.999999982724622),
+}
+# TEfficiency(passed, total) with its default options, one bin filled with (weight, passes)
+# entries: (efficiency, lower, upper). Weighted histograms get the normal approximation.
+ROOT_TEFFICIENCY = {
+    "unit": ([(1.0, True)] * 3 + [(1.0, False)], (0.75, 0.38159757449607973, 0.9577308936963108)),
+    "uniform 2": (
+        [(2.0, True)] * 3 + [(2.0, False)],
+        (0.75, 0.5334936490539288, 0.9665063509460712),
+    ),
+    "toy": ([(10.0, True), (1.0, False)], (0.9090909090909091, 0.7922137551757983, 1.0)),
+    "signed": (
+        [(2.0, True), (-1.0, True), (1.0, False), (1.0, False)],
+        (0.3333333333333333, 0.0, 0.8544906399802885),
+    ),
+    "all pass": ([(1.0, True), (2.0, True), (3.0, True)], (1.0, 1.0, 1.0)),
+}
 
 
 class TestRootReference:
@@ -858,6 +891,39 @@ class TestRootReference:
         mine = wilson_interval(passed, total, total)  # counts: the variance is the count
         np.testing.assert_allclose(mine[0], lower, rtol=1e-12, atol=1e-15)
         np.testing.assert_allclose(mine[1], upper, rtol=1e-12)
+
+    def test_clopper_pearson_is_tefficiency_clopper_pearson(self) -> None:
+        passed, total = (np.array(s, dtype=float) for s in zip(*ROOT_CLOPPER_PEARSON, strict=True))
+        lower, upper = (np.array(s) for s in zip(*ROOT_CLOPPER_PEARSON.values(), strict=True))
+        mine = clopper_pearson(passed, total)
+        # 3 of 1e7: ROOT and rootfig both miss the exact bounds by ~5e-9 (lgamma of 1e7)
+        tolerance = np.where(total < 1e7, 1e-11, 1e-8)
+        for got, want in zip(mine, (lower, upper), strict=True):
+            np.testing.assert_array_less(np.abs(got - want), tolerance * np.maximum(want, 1e-300))
+        two = clopper_pearson([3.0], [10.0], z=2.0)
+        np.testing.assert_allclose(np.ravel(two), [0.06440282972673787, 0.6581255125487373])
+        # ROOT takes real counts too (beta quantiles below a or b = 1 start from the tails)
+        real = clopper_pearson([0.5, 2.5, 0.25], [3.7, 3.0, 0.5])
+        np.testing.assert_allclose(
+            real[0], [0.005049115171304538, 0.3843380720179961, 4.680016622133597e-4], rtol=1e-11
+        )
+        np.testing.assert_allclose(
+            real[1], [0.5315598555042972, 0.9938725041908549, 0.9995319983377866], rtol=1e-11
+        )
+
+    @pytest.mark.parametrize("case", sorted(ROOT_TEFFICIENCY))
+    def test_the_default_is_tefficiency(self, case: str) -> None:
+        from rootfig.histograms import efficiency
+
+        entries, (value, lower, upper) = ROOT_TEFFICIENCY[case]
+        weights = np.array([w for w, _ in entries])
+        passes = np.array([ok for _, ok in entries])
+        total = _hist([0.5] * len(entries), list(weights))
+        passed = _hist([0.5] * int(passes.sum()), list(weights[passes]))
+        eff = efficiency(passed, total)
+        assert (eff.values[0], eff.lower[0], eff.upper[0]) == pytest.approx(
+            (value, lower, upper), rel=1e-12, abs=1e-15
+        )
 
     def test_a_propagated_ratio_is_th1_divide(self) -> None:
         a = Histogram(_contents([3.0, 3.0, 0.5], [5.0, 3.0, 0.25]), label="A")
@@ -975,8 +1041,20 @@ class TestPoissonHistograms:
         np.testing.assert_allclose(normalize(data, "width").errors()[1], [1.84102164, ten / 10])
         density = normalize(data, "density")  # also divided by the total, 10
         np.testing.assert_allclose(density.errors()[1], [0.184102164, ten / 100])
-        with pytest.raises(BinningError, match="bin sizes"):
+        with pytest.raises(BinningError, match="count scale"):
             normalize(data, "width").replace(hist=_poisson([1.0, 2.0, 3.0]))
+
+    def test_an_empty_histogram_keeps_its_scale(self) -> None:
+        h = hist.Hist(hist.axis.Variable([0.0, 1.0, 11.0]), storage=hist.storage.Weight())
+        empty = Histogram(h, label="Data", is_data=True, poisson=True)
+        np.testing.assert_allclose(normalize(empty, "width").errors()[1], [1.84102164, 0.184102164])
+        np.testing.assert_allclose(empty.scaled(3.0).errors()[1], [5.52306493] * 2)
+        with pytest.warns(RootfigWarning, match="no entries"):  # nothing to normalise to
+            unchanged = normalize(empty, "density")
+        np.testing.assert_allclose(unchanged.errors()[1], [1.84102164] * 2)
+        merged = empty.scaled(2.0).rebinned(2)
+        np.testing.assert_allclose(merged.errors()[1], [3.68204329])
+        assert empty.replace(poisson=False)._unit is None
 
     def test_shown_flow_bins_keep_the_width_they_were_divided_by(self) -> None:
         edges = [0.0, 10.0, 20.0, 100.0]
@@ -1195,7 +1273,7 @@ class TestEfficiency:
 
         total = _hist([0.5] * 10 + [1.5] * 4)
         passed = _hist([0.5] * 5 + [1.5] * 4)
-        eff = efficiency(passed, total, label="tight")
+        eff = efficiency(passed, total, label="tight", interval="wilson")
         assert eff.label == "tight"
         assert eff.values[0] == pytest.approx(0.5)
         assert eff.values[1] == pytest.approx(1.0)
@@ -1215,19 +1293,69 @@ class TestEfficiency:
     def test_weights_use_effective_entries(self) -> None:
         from rootfig.histograms import efficiency
 
-        unweighted = efficiency(_hist([0.5] * 5), _hist([0.5] * 10))
-        weighted = efficiency(_hist([0.5] * 5, [2.0] * 5), _hist([0.5] * 10, [2.0] * 10))
+        unweighted = efficiency(_hist([0.5] * 5), _hist([0.5] * 10), interval="wilson")
+        weighted = efficiency(
+            _hist([0.5] * 5, [2.0] * 5), _hist([0.5] * 10, [2.0] * 10), interval="wilson"
+        )
         assert weighted.values[0] == pytest.approx(unweighted.values[0])
         assert weighted.lower[0] == pytest.approx(unweighted.lower[0])  # same n_eff = 10
-        # all of weights 1, 2 and 3 pass: n_eff = 36 / 14, and the interval keeps a width
-        # (ROOT's weighted normal approximation gives [1, 1])
+        # all of weights 1, 2 and 3 pass: n_eff = 36 / 14, and the interval keeps a width,
+        # where ROOT's weighted normal approximation (the default) gives [1, 1]
         all_pass = _hist([0.5] * 3, [1.0, 2.0, 3.0])
         n_eff = 36 / 14
-        assert efficiency(all_pass, all_pass).lower[0] == pytest.approx(n_eff / (n_eff + 1))
+        wilson = efficiency(all_pass, all_pass, interval="wilson")
+        assert wilson.lower[0] == pytest.approx(n_eff / (n_eff + 1))
+        assert efficiency(all_pass, all_pass).lower[0] == 1.0
         with pytest.raises(BinningError):
             efficiency(
                 _hist([0.5]), hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
             )
+
+
+class TestEfficiencyIntervals:
+    def test_the_default_follows_the_weights_and_explicit_choices_are_checked(self) -> None:
+        from rootfig.histograms import efficiency
+        from rootfig.histograms.binomial import is_unweighted, resolve_interval
+
+        assert is_unweighted(3.0, 3.0)
+        assert is_unweighted(0.0, 0.0)
+        assert not is_unweighted(6.0, 12.0)
+        assert resolve_interval("auto", True) == "clopper-pearson"
+        assert resolve_interval("auto", False) == "normal"
+        assert resolve_interval("wilson", False) == "wilson"
+        with pytest.raises(ValueError, match="needs unweighted"):
+            efficiency(
+                _hist([0.5], [2.0]), _hist([0.5, 0.5], [2.0, 2.0]), interval="clopper-pearson"
+            )
+        with pytest.raises(ValueError, match="interval must be"):
+            efficiency(_hist([0.5]), _hist([0.5]), interval="jeffreys")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="interval must be"):
+            Cutflow("s", (), interval="exact")  # type: ignore[arg-type]
+
+    def test_undefined_inputs(self) -> None:
+        lower, upper = clopper_pearson([0.0, 3.0, -1.0, 2.0], [0.0, 2.0, 2.0, -1.0])
+        assert np.isnan(lower).all()
+        assert np.isnan(upper).all()
+        lower, upper = normal_interval([1.0, 3.0], [0.0, 2.0], [1.0, 3.0], [1.0, 2.0])
+        assert np.isnan(lower).all()
+        assert np.isnan(upper).all()
+        empty = clopper_pearson(np.zeros(0), np.zeros(0))
+        assert empty[0].size == empty[1].size == 0
+
+    def test_a_hand_made_cutflow_resolves_auto_from_its_yields(self) -> None:
+        def step(events: int, yield_: float, error: float) -> CutflowStep:
+            return CutflowStep(label="", expression="", events=events, yield_=yield_, error=error)
+
+        counts = Cutflow("c", (step(10, 10.0, np.sqrt(10.0)), step(4, 4.0, 2.0)))
+        lower, upper = clopper_pearson([4.0], [10.0])
+        np.testing.assert_allclose(
+            [e[1] for e in counts.efficiency_errors], [0.4 - lower[0], upper[0] - 0.4]
+        )
+        weighted = Cutflow("w", (step(10, 20.0, np.sqrt(40.0)), step(4, 8.0, 4.0)))
+        lower, upper = normal_interval([8.0], [20.0], [16.0], [40.0])
+        np.testing.assert_allclose(
+            [e[1] for e in weighted.efficiency_errors], [0.4 - lower[0], upper[0] - 0.4]
+        )
 
 
 class TestProfile:
@@ -1330,40 +1458,66 @@ class TestCutflow:
 
         sample = Sample({"n": np.arange(100.0)}, label="counts")
         flow = cutflow(sample, ["n >= 40", "n >= 70"])  # 100 -> 60 -> 30
+        assert flow.interval == "clopper-pearson"  # unweighted events, as TEfficiency
         down, up = flow.efficiency_errors
         assert (down[0], up[0]) == (0.0, 0.0)  # the first step is the reference itself
+
+        def cp(k: float, n: float) -> list[float]:
+            lower, upper = clopper_pearson([k], [n])
+            return [k / n - lower[0], upper[0] - k / n]
+
+        np.testing.assert_allclose([down[1], up[1]], cp(60, 100))
+        np.testing.assert_allclose([down[2], up[2]], cp(30, 60))
+        absolute = flow.absolute_efficiency_errors
+        np.testing.assert_allclose([absolute[0][2], absolute[1][2]], cp(30, 100))
+        assert not any(step.negative_weights for step in flow.steps)
+        wilson = cutflow(sample, ["n >= 40", "n >= 70"], interval="wilson")
+        down, up = wilson.efficiency_errors
         np.testing.assert_allclose([down[1], up[1]], self._wilson(60, 100, 100))
-        np.testing.assert_allclose([down[2], up[2]], self._wilson(30, 60, 60))
         # 60 of 100: 0.6 -0.0497 +0.0478, not the independent-yield sqrt(1/60 + 1/100)
         assert (down[1], up[1]) == pytest.approx((0.04975, 0.04777), abs=1e-5)
-        absolute = flow.absolute_efficiency_errors
-        np.testing.assert_allclose([absolute[0][2], absolute[1][2]], self._wilson(30, 100, 100))
-        assert not any(step.negative_weights for step in flow.steps)
 
-    def test_one_weight_for_every_event_changes_nothing(self) -> None:
+    def test_scale_keeps_events_unweighted_and_weights_do_not(self) -> None:
         from rootfig.histograms import cutflow
 
-        plain = cutflow(Sample({"n": np.arange(100.0)}), ["n >= 40", "n >= 70"])
-        scaled = cutflow(Sample({"n": np.arange(100.0)}, weight="2.5"), ["n >= 40", "n >= 70"])
+        cuts = ["n >= 40", "n >= 70"]
+        plain = cutflow(Sample({"n": np.arange(100.0)}), cuts)
+        scaled = cutflow(Sample({"n": np.arange(100.0)}, scale=2.5), cuts)
+        assert scaled.interval == "clopper-pearson"  # a factor the efficiency cancels
         for got, want in zip(scaled.efficiency_errors, plain.efficiency_errors, strict=True):
             np.testing.assert_allclose(got, want)
+        # an event weight makes the events weighted for ROOT, even one shared by all
+        weighted = cutflow(Sample({"n": np.arange(100.0)}, weight="2.5"), cuts)
+        assert weighted.interval == "normal"
+        down, up = weighted.efficiency_errors
+        lower, upper = normal_interval([60.0], [100.0], [60.0], [100.0])
+        np.testing.assert_allclose([down[1], up[1]], [0.6 - lower[0], upper[0] - 0.6])
+        with pytest.raises(ValueError, match="needs unweighted"):
+            cutflow(Sample({"n": np.arange(100.0)}, weight="2.5"), cuts, interval="clopper-pearson")
+        with pytest.raises(ValueError, match="interval must be"):
+            cutflow(Sample({"n": np.arange(100.0)}), cuts, interval="bayes")  # type: ignore[arg-type]
 
     def test_weighted_events_use_the_effective_entries(self) -> None:
         from rootfig.histograms import cutflow
 
         weights = np.where(np.arange(100) % 2, 3.0, 1.0)  # 50 of weight 1, 50 of weight 3
-        flow = cutflow(Sample({"n": np.arange(100.0), "w": weights}, weight="w"), ["n >= 40"])
+        sample = Sample({"n": np.arange(100.0), "w": weights}, weight="w")
+        flow = cutflow(sample, ["n >= 40"], interval="wilson")
         n, vn = 200.0, 50 * 1.0 + 50 * 9.0
-        k = float(weights[40:].sum())
+        k, vk = float(weights[40:].sum()), float(np.sum(weights[40:] ** 2))
         down, up = flow.efficiency_errors
         np.testing.assert_allclose([down[1], up[1]], self._wilson(k, n, n**2 / vn))
+        down, up = cutflow(sample, ["n >= 40"]).efficiency_errors  # ROOT: normal
+        lower, upper = normal_interval([k], [n], [vk], [vn])
+        np.testing.assert_allclose([down[1], up[1]], [k / n - lower[0], upper[0] - k / n])
 
     def test_an_empty_step_leaves_later_efficiencies_undefined(self) -> None:
         from rootfig.histograms import cutflow
 
         flow = cutflow(Sample({"n": np.arange(10.0)}), ["n > 100", "n > 200"])
         down, up = flow.efficiency_errors
-        assert (down[1], up[1]) == (0.0, pytest.approx(1 / 11))  # 0 of 10: z² / (n + z²)
+        # 0 of 10: Clopper-Pearson's upper bound 1 - 0.1587^(1/10)
+        assert (down[1], up[1]) == (0.0, pytest.approx(0.16814918613797644))
         assert np.isnan(flow.efficiencies[2])
         assert np.isnan(down[2])
         assert np.isnan(up[2])
@@ -1376,7 +1530,7 @@ class TestCutflow:
         # one negative weight among ten, cut away by the first cut
         weights = np.r_[-1.0, np.ones(9)]
         sample = Sample({"n": np.arange(10.0), "w": weights}, weight="w")
-        flow = cutflow(sample, ["n >= 1", "n >= 5"])
+        flow = cutflow(sample, ["n >= 1", "n >= 5"], interval="wilson")
         assert [step.negative_weights for step in flow.steps] == [True, False, False]
         np.testing.assert_allclose(flow.efficiencies, [1.0, 9 / 8, 5 / 9])  # still reported
         down, up = flow.efficiency_errors
@@ -1385,6 +1539,12 @@ class TestCutflow:
         absolute_down, _ = flow.absolute_efficiency_errors
         assert np.isnan(absolute_down[1:]).all()  # every step measured against the first
         assert absolute_down[0] == 0.0
+        # the normal approximation (ROOT's for weighted events) holds for signed weights
+        # too; only an efficiency outside [0, 1] has none
+        down, up = cutflow(sample, ["n >= 1", "n >= 5"]).efficiency_errors
+        assert np.isnan([down[1], up[1]]).all()  # 9 / 8
+        lower, upper = normal_interval([5.0], [9.0], [5.0], [9.0])
+        np.testing.assert_allclose([down[2], up[2]], [5 / 9 - lower[0], upper[0] - 5 / 9])
 
     def test_table(self) -> None:
         from rootfig.histograms import CutflowTable, cutflow
@@ -1495,16 +1655,19 @@ class TestEfficiencyDomain:
     def test_negative_total_weight_keeps_value_without_interval(self) -> None:
         from rootfig.histograms import efficiency
 
-        # total = 1 - 2 = -1: the ratio is defined, a binomial interval is not
+        # total = 1 - 2 = -1: the ratio is defined, an interval is not
         with pytest.warns(RootfigWarning, match="negative weights"):
-            eff = efficiency(*self._weighted([-0.5], [1.0, -2.0]))
+            eff = efficiency(*self._weighted([-0.5], [1.0, -2.0]), interval="wilson")
         assert eff.values[0] == pytest.approx(0.5)
         assert np.isnan(eff.lower[0])
         assert np.isnan(eff.upper[0])
         with pytest.warns(RootfigWarning, match="negative weights"):
-            eff = efficiency(*self._weighted([-2.0], [1.0, -2.0]))
+            eff = efficiency(*self._weighted([-2.0], [1.0, -2.0]), interval="wilson")
         assert eff.values[0] == pytest.approx(2.0)
         assert np.isnan(eff.lower[0])
+        with pytest.warns(RootfigWarning, match="negative total"):  # the normal approximation
+            eff = efficiency(*self._weighted([-0.5], [1.0, -2.0]))
+        assert np.isnan([eff.lower[0], eff.upper[0]]).all()
 
     def test_cancelling_total_weight_is_empty(self) -> None:
         from rootfig.histograms import efficiency
@@ -1522,10 +1685,21 @@ class TestEfficiencyDomain:
         # p = 1 / 1.5 lies in [0, 1], but the failing entries {1, -0.5} sum to 0.5 with
         # squares summing to 1.25 > 0.25, which non-negative weights never give
         with pytest.warns(RootfigWarning, match="negative weights"):
-            eff = efficiency(*self._weighted([1.0], [1.0, 1.0, -0.5]))
+            eff = efficiency(*self._weighted([1.0], [1.0, 1.0, -0.5]), interval="wilson")
         assert eff.values[0] == pytest.approx(2 / 3)
         assert np.isnan(eff.lower[0])
         assert np.isnan(eff.upper[0])
+
+    def test_the_normal_approximation_holds_for_signed_weights(self) -> None:
+        from rootfig.histograms import efficiency
+
+        # ROOT 6.40, TEfficiency and TGraphAsymmErrors::Divide alike: {2, -1} pass, {1, 1}
+        # fail gives 1/3 in [0, 0.854491]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            eff = efficiency(*self._weighted([2.0, -1.0], [2.0, -1.0, 1.0, 1.0]))
+        assert eff.values[0] == pytest.approx(1 / 3)
+        assert (eff.lower[0], eff.upper[0]) == pytest.approx((0.0, 0.854490637), abs=1e-8)
 
     def test_negative_weights_the_sums_hide_need_the_flag(self) -> None:
         from rootfig.histograms import efficiency
@@ -1534,10 +1708,12 @@ class TestEfficiencyDomain:
         hists = self._weighted([1.0, 1.0, -0.1], [1.0, 1.0, -0.1, 1.0])
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            unknown = efficiency(*hists)
+            unknown = efficiency(*hists, interval="wilson")
+            normal = efficiency(*hists, negative_weights=[True])  # needs no flag
         assert np.isfinite(unknown.lower[0])  # nothing in the sums says so
+        assert np.isfinite(normal.lower[0])
         with pytest.warns(RootfigWarning, match="negative weights"):
-            flagged = efficiency(*hists, negative_weights=[True])
+            flagged = efficiency(*hists, negative_weights=[True], interval="wilson")
         assert flagged.values[0] == pytest.approx(1.9 / 2.9)
         assert np.isnan(flagged.lower[0])
         assert np.isnan(flagged.upper[0])
@@ -1548,8 +1724,11 @@ class TestEfficiencyDomain:
         # positive weights of different sizes, all passing or all failing included
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            eff = efficiency(*self._weighted([0.5, 3.0], [0.5, 3.0, 1.0, 0.2]))
-            ends = [efficiency(*self._weighted(w, [0.5, 3.0])) for w in ([], [0.5, 3.0])]
+            eff = efficiency(*self._weighted([0.5, 3.0], [0.5, 3.0, 1.0, 0.2]), interval="wilson")
+            ends = [
+                efficiency(*self._weighted(w, [0.5, 3.0]), interval="wilson")
+                for w in ([], [0.5, 3.0])
+            ]
         assert np.isfinite(eff.lower[0])
         assert np.isfinite(eff.upper[0])
         n, vn = 4.7, 0.25 + 9.0 + 1.0 + 0.04

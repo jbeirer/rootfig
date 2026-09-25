@@ -1,4 +1,4 @@
-"""Efficiencies (pass / total with binomial intervals) and profiles (a statistic of y per x bin)."""
+"""Efficiencies (pass / total with confidence intervals) and profiles (a statistic of y by x)."""
 
 from __future__ import annotations
 
@@ -12,8 +12,13 @@ import numpy.typing as npt
 
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning
+from rootfig.histograms.binomial import (
+    EfficiencyInterval,
+    efficiency_bounds,
+    is_unweighted,
+    resolve_interval,
+)
 from rootfig.histograms.build import compatible_binning
-from rootfig.histograms.intervals import wilson_interval
 
 __all__ = ["Efficiency", "Profile", "ProfileStatistic", "efficiency", "profile"]
 
@@ -23,7 +28,7 @@ ProfileStatistic: TypeAlias = Literal["mean", "std"]
 
 @dataclass(frozen=True)
 class Efficiency:
-    """Bin-by-bin efficiency ``passed / total`` with a binomial confidence interval.
+    """Bin-by-bin efficiency ``passed / total`` with a confidence interval.
 
     Attributes
     ----------
@@ -31,13 +36,10 @@ class Efficiency:
         The efficiency ``passed / total``; ``nan`` where the total weight is zero
         (an empty bin, or weights that cancel).
     lower, upper
-        Bounds of the Wilson score interval (``z`` standard deviations; ``z = 1``
-        is the usual 68 % band), computed with the effective number of entries
-        for weighted samples (see :func:`efficiency`). The interval always
-        contains the value; it is ``nan`` where
-        negative weights enter the bin (see :func:`efficiency`), since a
-        binomial interval is undefined there while the ratio itself is still
-        reported.
+        Bounds of the confidence interval (``z`` standard deviations; ``z = 1``
+        is the usual 68 % band; see :func:`efficiency` for the method). The
+        interval always contains the value; it is ``nan`` where none is defined
+        (see :func:`efficiency`) while the ratio itself is still reported.
     edges
         Bin edges.
     label
@@ -76,30 +78,38 @@ def efficiency(
     z: float = 1.0,
     label: str = "",
     negative_weights: npt.ArrayLike | None = None,
+    interval: EfficiencyInterval = "auto",
 ) -> Efficiency:
-    """Compute ``passed / total`` per bin with a Wilson score interval.
+    """Compute ``passed / total`` per bin with a confidence interval.
 
     Both histograms must share their binning; ``passed`` should be a subset of
-    ``total``. With weights the effective counts ``(sum w)^2 / sum w^2`` of the
-    total replace the raw counts in the interval (see
-    :func:`~rootfig.histograms.intervals.wilson_interval`, which also says how
-    this differs from ROOT). The interval is clipped to ``[0, 1]`` and always
-    contains the efficiency (at 0 % and 100 % the respective bound coincides
-    with the value).
+    ``total``. ``interval`` (see
+    :data:`~rootfig.histograms.binomial.EfficiencyInterval`) defaults to what
+    ROOT's ``TEfficiency`` gives: Clopper-Pearson when both histograms are
+    unweighted (their sum of weights equals their sum of squared weights, as
+    ROOT decides), else the normal approximation of a weighted pass fraction.
+    The interval is clipped to ``[0, 1]`` and always contains the efficiency.
 
-    The interval is binomial, so it needs non-negative weights. A bin gets
-    ``nan`` bounds and a :class:`~rootfig.errors.RootfigWarning` where negative
-    weights enter it, as far as can be told: where the total is negative, the
-    efficiency outside ``[0, 1]``, or the passing, failing or all entries have a
-    sum of squared weights above the square of their sum (non-negative weights
-    never do). The sums cannot reveal every negative weight, so
-    ``negative_weights``, one flag per bin, marks the bins in which an entry of
-    ``total`` has one; :func:`rootfig.efficiency` knows them from filling.
+    ``"clopper-pearson"`` and ``"wilson"`` are binomial, so they need
+    non-negative weights. A bin gets ``nan`` bounds from them and a
+    :class:`~rootfig.errors.RootfigWarning` where negative weights enter it, as
+    far as can be told: where the total is negative, the efficiency outside
+    ``[0, 1]``, or the passing, failing or all entries have a sum of squared
+    weights above the square of their sum (non-negative weights never do). The
+    sums cannot reveal every negative weight, so ``negative_weights``, one flag
+    per bin, marks the bins in which an entry of ``total`` has one;
+    :func:`rootfig.efficiency` knows them from filling. ``"normal"``
+    propagates the sums to first order, which holds for signed weights too: it
+    is ``nan`` (with the warning) only where the total is not positive or the
+    efficiency lies outside ``[0, 1]``.
 
     Raises
     ------
     BinningError
         If the binnings differ or ``z`` is not a positive finite number.
+    ValueError
+        For an unknown ``interval``, or ``"clopper-pearson"`` for weighted
+        histograms.
     """
     if not compatible_binning(passed, total):
         msg = "efficiency requires two one-dimensional histograms with identical bin edges"
@@ -111,22 +121,27 @@ def efficiency(
     n = np.asarray(total.values(), dtype=float)
     vk = np.asarray(passed.variances(), dtype=float)
     vn = np.asarray(total.variances(), dtype=float)
-    # The ratio is defined whenever the total is non-zero; the Wilson interval needs a
-    # positive total (a negative sum of weights is not a sample size) and p in [0, 1].
+    unweighted = is_unweighted(k.sum(), vk.sum()) and is_unweighted(n.sum(), vn.sum())
+    method = resolve_interval(interval, unweighted, label)
     ok = n != 0
     with np.errstate(divide="ignore", invalid="ignore"):
         p = np.where(ok, k / n, np.nan)
-    lower, upper = wilson_interval(k, n, vn, z)
-    signed = _signed(k, vk, n, vn) | _signed(n - k, vn - vk, n, vn) | _signed(n, vn, n, vn)
-    if negative_weights is not None:
-        signed |= np.asarray(negative_weights, dtype=bool)
-    lower, upper = np.where(signed, np.nan, lower), np.where(signed, np.nan, upper)
+    lower, upper = efficiency_bounds(method, k, n, vk, vn, z=z)
+    if method == "normal":
+        problem = "a negative total or an efficiency outside [0, 1]"
+    else:  # binomial intervals need non-negative weights
+        problem = (
+            "negative weights (a negative total, an efficiency outside [0, 1] or a signed entry)"
+        )
+        signed = _signed(k, vk, n, vn) | _signed(n - k, vn - vk, n, vn) | _signed(n, vn, n, vn)
+        if negative_weights is not None:
+            signed |= np.asarray(negative_weights, dtype=bool)
+        lower, upper = np.where(signed, np.nan, lower), np.where(signed, np.nan, upper)
     undefined = int(np.count_nonzero(ok & np.isnan(lower)))
     if undefined:
         warnings.warn(
-            f"{label + ': ' if label else ''}{undefined} bin(s) hold negative weights (a "
-            "negative total, an efficiency outside [0, 1] or a signed entry); no binomial "
-            "confidence interval is drawn for them",
+            f"{label + ': ' if label else ''}{undefined} bin(s) hold {problem}; no "
+            f"{method} confidence interval is drawn for them",
             RootfigWarning,
             stacklevel=2,
         )

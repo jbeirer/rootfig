@@ -14,7 +14,6 @@ from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 
 from rootfig._storage import is_category
-from rootfig._typing import FloatArray
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
 from rootfig.histograms.systematics import sum_histograms, uncertainty
@@ -181,20 +180,7 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
             setattr(view, field, np.r_[low, cells[visible], high])
         return new
 
-    def expand_sizes(h: Histogram) -> FloatArray | None:
-        """Lay out the sizes the cells of ``h`` were divided by like ``expand``'s cells."""
-        if h._sizes is None:
-            return None
-        traits = h.axis.traits
-        cells = h._sizes
-        inner = cells[1 if traits.underflow else 0 : -1 if traits.overflow else None]
-        low = [cells[0] if traits.underflow else inner[0]] if under else []
-        high = [cells[-1] if traits.overflow else inner[-1]] if over else []
-        shown = np.r_[low, inner, high]
-        # the new flow cells take their neighbours'
-        return np.asarray(np.r_[shown[0], shown, shown[-1]], dtype=float)
-
-    return [h.map_hists(expand, _sizes=expand_sizes(h)) for h in histograms], (under, over)
+    return [h.map_hists(expand) for h in histograms], (under, over)
 
 
 def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:

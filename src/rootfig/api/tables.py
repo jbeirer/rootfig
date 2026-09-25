@@ -8,6 +8,7 @@ from typing import Any
 
 from rootfig.histograms import (
     CutflowTable,
+    EfficiencyInterval,
     Summary,
     describe_table,
     load_columns_each,
@@ -112,6 +113,7 @@ def cutflow(
     lumi: float | str | None = None,
     label: str | Sequence[str] | None = None,
     nonfinite: NonFinitePolicy = "drop",
+    interval: EfficiencyInterval = "auto",
 ) -> CutflowTable:
     """Count events and weighted yields after each successive cut, per sample.
 
@@ -120,8 +122,11 @@ def cutflow(
     any object passes. ``weight``, ``lumi`` and ``nonfinite`` work as in
     :func:`plot`: events with a ``nan``/``inf`` weight are excluded from all
     steps with a warning, or raise for ``nonfinite="error"``. Yields carry
-    ``sqrt(sum w^2)``, efficiencies binomial Wilson intervals
-    (:attr:`~rootfig.Cutflow.efficiency_errors`); systematics are not propagated.
+    ``sqrt(sum w^2)``; efficiencies carry the confidence interval ``interval``
+    names (:attr:`~rootfig.Cutflow.efficiency_errors`): ``"auto"`` is ROOT's
+    ``TEfficiency`` default, Clopper-Pearson of the event counts when every
+    event weight is 1 (before the sample's scale and luminosity factor) and
+    the normal approximation otherwise. Systematics are not propagated.
 
     Examples
     --------
@@ -134,5 +139,8 @@ def cutflow(
     """
     samples = as_samples(data, tree=tree, labels=label)
     return CutflowTable(
-        tuple(cutflow_of(s, cuts, weight=weight, lumi=lumi, nonfinite=nonfinite) for s in samples)
+        tuple(
+            cutflow_of(s, cuts, weight=weight, lumi=lumi, nonfinite=nonfinite, interval=interval)
+            for s in samples
+        )
     )
