@@ -109,11 +109,11 @@ def poisson_errors(
     values = np.asarray(values, dtype=float)
     variances = np.asarray(variances, dtype=float)
     filled = values > 0
-    with np.errstate(divide="ignore", invalid="ignore"):
-        own = variances / values
     guess = count_scale(values, variances) if scale is None else np.asarray(scale, dtype=float)
-    factor = np.where(filled, own, guess)
-    lower, upper = poisson_interval(np.rint(np.where(filled, values / factor, 0.0)), z)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        factor = np.where(filled, variances / values, guess)
+        counts = np.rint(np.where(filled, values / factor, 0.0))
+    lower, upper = poisson_interval(counts, z)
     down = np.maximum(values - factor * lower, 0.0)
     up = np.maximum(factor * upper - values, 0.0)
     return np.asarray(down, dtype=float), np.asarray(up, dtype=float)

@@ -291,13 +291,16 @@ class Histogram:
         comparisons and :func:`~rootfig.histograms.uncertainty` take it from here.
         """
         if self.poisson and self._unit is not None:
-            with np.errstate(divide="ignore", invalid="ignore"):
-                unit = self._unit
-                scale = np.asarray(unit.variances(flow=flow), dtype=float) / unit.values(flow=flow)
-            # cells a transformation added (the new flow cells of flow="show") hold no
-            # count; they take the factor of the nearest cell that does
-            known = np.isfinite(scale) & (scale > 0)
-            scale = count_scale(known.astype(float), np.where(known, scale, 0.0))
+            ones = np.asarray(self._unit.values(flow=flow), dtype=float)
+            squares = np.asarray(self._unit.variances(flow=flow), dtype=float)
+            known = ones != 0
+            if known.any():
+                # cells a transformation added (the new flow cells of flow="show") hold no
+                # count; they take the factor of the nearest cell that does
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    scale = count_scale(known.astype(float), np.where(known, squares / ones, 0.0))
+            else:  # a count in every cell, and none left: the contents were scaled by zero
+                scale = np.zeros_like(ones)
             return poisson_errors(self.values(flow=flow), self.variances(flow=flow), scale=scale)
         sigma = np.asarray(np.sqrt(self.variances(flow=flow)), dtype=float)
         return sigma, sigma.copy()

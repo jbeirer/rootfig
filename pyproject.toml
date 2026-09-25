@@ -39,7 +39,7 @@ dependencies = [
   "hist>=2.9",
   "mplhep>=1.2.1",
   "matplotlib>=3.11",
-  "scipy>=1.11",
+  "scipy>=1.11.2",
 ]
 
 [project.urls]

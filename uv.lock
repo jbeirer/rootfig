@@ -1819,7 +1819,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.11" },
     { name = "mplhep", specifier = ">=1.2.1" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "scipy", specifier = ">=1.11" },
+    { name = "scipy", specifier = ">=1.11.2" },
     { name = "uproot", specifier = ">=5.7.1" },
 ]
 

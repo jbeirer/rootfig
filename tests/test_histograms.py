@@ -1091,6 +1091,19 @@ class TestPoissonHistograms:
         assert not sum_histograms([a, plain]).poisson
         assert not sum_histograms([a, b.scaled(2.0)]).poisson
 
+    def test_zero_scaled_poisson_has_zero_errors(self) -> None:
+        data = self._data([0.0, 1.0, 4.0])
+        zero = data.scaled(0.0)
+        np.testing.assert_array_equal(zero.values(), 0.0)
+        np.testing.assert_array_equal(zero.errors()[0], 0.0)
+        np.testing.assert_array_equal(zero.errors()[1], 0.0)
+        np.testing.assert_array_equal(zero.errors(flow=True)[1], 0.0)
+        np.testing.assert_array_equal(normalize(zero, "width").errors()[1], 0.0)
+        total = sum_histograms([zero, self._data([0.0, 2.0, 0.0]).scaled(0.0)])
+        assert total.poisson
+        np.testing.assert_array_equal(total.errors()[1], 0.0)
+        assert not sum_histograms([zero, data]).poisson  # different count scales
+
     def test_a_new_hist_brings_its_own_count_scale(self) -> None:
         # counts [0, 1, 2] scaled by 10, then replaced by counts scaled by 2 with the same
         # binning: the empty bin takes 2 x 1.84, not the old 10 x 1.84
