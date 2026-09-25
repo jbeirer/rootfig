@@ -1057,7 +1057,7 @@ class TestPoissonHistograms:
         density = normalize(data, "density")  # also divided by the total, 10
         np.testing.assert_allclose(density.errors()[1], [0.184102164, ten / 100])
         with pytest.raises(BinningError, match="count scale"):
-            normalize(data, "width").replace(hist=_poisson([1.0, 2.0, 3.0]))
+            data.replace(hist=_poisson([1.0, 2.0, 3.0]), _unit=data._unit)
 
     def test_an_empty_histogram_keeps_its_scale(self) -> None:
         h = hist.Hist(hist.axis.Variable([0.0, 1.0, 11.0]), storage=hist.storage.Weight())
@@ -1070,6 +1070,18 @@ class TestPoissonHistograms:
         merged = empty.scaled(2.0).rebinned(2)
         np.testing.assert_allclose(merged.errors()[1], [3.68204329])
         assert empty.replace(poisson=False)._unit is None
+        tripled = empty.scaled(3.0)
+        np.testing.assert_allclose(tripled.replace(label="x").errors()[1], [5.52306493] * 2)
+        with pytest.warns(RootfigWarning, match="no entries"):  # skipped: the scale stays
+            np.testing.assert_allclose(normalize(tripled, "unity").errors()[1], [5.52306493] * 2)
+
+    def test_a_new_hist_brings_its_own_count_scale(self) -> None:
+        # counts [0, 1, 2] scaled by 10, then replaced by counts scaled by 2 with the same
+        # binning: the empty bin takes 2 x 1.84, not the old 10 x 1.84
+        old = Histogram(_contents([0.0, 10.0, 20.0], [0.0, 100.0, 200.0]), "D", poisson=True)
+        new = old.replace(hist=_contents([0.0, 2.0, 4.0], [0.0, 4.0, 8.0]))
+        assert new.errors()[1][0] == pytest.approx(2 * 1.8410216450)
+        assert old.errors()[1][0] == pytest.approx(10 * 1.8410216450)
 
     def test_shown_flow_bins_keep_the_width_they_were_divided_by(self) -> None:
         edges = [0.0, 10.0, 20.0, 100.0]
@@ -1346,6 +1358,9 @@ class TestEfficiencyIntervals:
             efficiency(_hist([0.5]), _hist([0.5]), interval="jeffreys")  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="interval must be"):
             Cutflow("s", (), interval="exact")  # type: ignore[arg-type]
+        weighted = CutflowStep(label="", expression="", events=2, yield_=3.0, error=np.sqrt(5.0))
+        with pytest.raises(ValueError, match="needs unweighted"):
+            Cutflow("w", (weighted,), interval="clopper-pearson")
 
     def test_undefined_inputs(self) -> None:
         lower, upper = clopper_pearson([0.0, 3.0, -1.0, 2.0], [0.0, 2.0, 2.0, -1.0])

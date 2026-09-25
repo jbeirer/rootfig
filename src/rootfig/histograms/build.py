@@ -352,7 +352,14 @@ class Histogram:
         return None if self.stats is None else self.stats.entries
 
     def replace(self, **changes: Any) -> Histogram:
-        """Return a copy with the given fields changed, e.g. ``h.replace(label="B")``."""
+        """Return a copy with the given fields changed, e.g. ``h.replace(label="B")``.
+
+        A new ``hist`` brings its own counts: the record of one count per bin
+        that the Poisson interval of empty bins uses is rebuilt from it (use
+        :meth:`map_hists` to transform the contents and keep that record).
+        """
+        if "hist" in changes and "_unit" not in changes:
+            changes["_unit"] = None
         return replace(self, **changes)
 
     def map_hists(self, transform: Callable[[Hist], Hist]) -> Histogram:

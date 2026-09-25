@@ -78,6 +78,8 @@ class Cutflow:
 
     def __post_init__(self) -> None:
         check_interval(self.interval)
+        if self.interval == "clopper-pearson":  # counts only, as cutflow() checks too
+            resolve_interval(self.interval, all(map(is_unweighted, *self._sums())), self.sample)
 
     @property
     def labels(self) -> list[str]:

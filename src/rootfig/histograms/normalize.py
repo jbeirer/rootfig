@@ -165,7 +165,7 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
         return histogram
     result, applied, factor = _normalize_hist(histogram.hist, spec)
     if not applied:
-        return histogram.replace(hist=result, normalization=None)
+        return histogram.replace(hist=result, normalization=None, _unit=histogram._unit)
     label = normalization_label(spec)
     variations = {}
     for name, pair in histogram.variations.items():
