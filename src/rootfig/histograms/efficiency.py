@@ -33,8 +33,8 @@ class Efficiency:
     lower, upper
         Bounds of the Wilson score interval (``z`` standard deviations; ``z = 1``
         is the usual 68 % band), computed with the effective number of entries
-        for weighted samples, an approximation unless every entry has the same
-        weight. The interval always contains the value; it is ``nan`` where
+        for weighted samples (see :func:`efficiency`). The interval always
+        contains the value; it is ``nan`` where
         negative weights enter the bin (see :func:`efficiency`), since a
         binomial interval is undefined there while the ratio itself is still
         reported.
@@ -81,8 +81,9 @@ def efficiency(
 
     Both histograms must share their binning; ``passed`` should be a subset of
     ``total``. With weights the effective counts ``(sum w)^2 / sum w^2`` of the
-    total replace the raw counts in the interval, an approximation unless every
-    entry has the same weight. The interval is clipped to ``[0, 1]`` and always
+    total replace the raw counts in the interval (see
+    :func:`~rootfig.histograms.intervals.wilson_interval`, which also says how
+    this differs from ROOT). The interval is clipped to ``[0, 1]`` and always
     contains the efficiency (at 0 % and 100 % the respective bound coincides
     with the value).
 

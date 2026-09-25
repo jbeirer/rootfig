@@ -57,18 +57,22 @@ panel and in the lower panel alike, and in `p.uncertainty("Data")`:
   `ValueError` instead of getting an interval that does not describe them; use
   `"sumw2"` for them.
 - The interval of `n` counts runs from `L` to `U` with
-  `P(N ≥ n | L) = P(N ≤ n | U) = 15.87 %` (`L = 0` for `n = 0`). A bin of scaled
-  counts takes the interval of its count times its factor, like its contents
-  (see [Normalisation](#normalisation)); an empty bin borrows the factor of the
-  nearest filled bin, as mplhep and coffea do, which is exact unless a per-width
-  normalisation (`"density"`, `"width"`) meets unequal bin widths. Summed
-  flow bins (`flow="sum"`) get the interval of the summed count.
+  `P(N ≥ n | L) = P(N ≤ n | U) = 15.87 %` (`L = 0` for `n = 0`): ROOT's
+  `TH1::kPoisson`. A bin of scaled counts takes the interval of its count times
+  its factor, like its contents (see [Normalisation](#normalisation)); an empty
+  bin borrows the factor of the nearest filled bin, per unit width after a
+  per-width normalisation (`"density"`, `"width"`), so it gets `0 +1.84` divided
+  by its own width. Summed flow bins (`flow="sum"`) get the interval of the
+  summed count. ROOT keeps `kPoisson` for unweighted histograms only and falls
+  back to `√(Σw²)` once a histogram is scaled; rootfig keeps the interval of
+  scaled counts.
 - The [lower panel](#lower-panel) propagates the two sides separately: a
   data/MC ratio runs from `L / d` to `U / d`, and a pull divides by the data
   error facing the prediction (the upper one where data lie below it).
 - rootfig computes the interval itself, without SciPy: exactly up to 1000 counts
-  and from the Wilson–Hilferty approximation beyond, within 2·10⁻⁵ of the error
-  bar there. [`poisson_interval`][rootfig.histograms.poisson_interval] gives the
+  and from the Wilson–Hilferty approximation beyond, which misses the exact
+  bound by 1.8·10⁻⁵ of the error bar at 1001 counts (6·10⁻⁴ counts), less
+  further up. [`poisson_interval`][rootfig.histograms.poisson_interval] gives the
   bounds for any counts.
 - `rf.Histogram(h, label="Data", is_data=True, poisson=True)` carries the model
   on a histogram you pass yourself, so `rf.compare` uses it too;
@@ -616,10 +620,15 @@ rf.efficiency([reco], "TrueMuon_pt", passed="TrueMuon_matched", bins=(20, 0, 100
 For every sample the entries satisfying `selection` form the denominator and
 those also satisfying `passed` the numerator, with the same binning. The
 efficiency is drawn as points with Wilson score intervals (`z=1` standard
-deviations by default). Weighted samples use the effective entries
-`(Σw)² / Σw²` of the denominator, which is exact for one weight per entry and
-an approximation otherwise; the interval is binomial because the passing
-entries are a subset of all of them. Options are
+deviations by default); the interval is binomial because the passing entries
+are a subset of all of them. For counts it is ROOT's `TEfficiency::Wilson`;
+`TEfficiency` itself defaults to Clopper–Pearson, which is wider, since it
+never covers less than 68 %. Weighted samples use the effective entries
+`n_eff = (Σw)² / Σw²` of the denominator: entries passing with probability
+`ε` give a weighted fraction of variance `ε(1 − ε) / n_eff`, and the interval
+inverts that. ROOT's weighted `TEfficiency` (and `TGraphAsymmErrors::Divide`)
+use the normal approximation around the measured ratio instead, whose
+interval has no width at 0 and 1. Options are
 the usual axis, legend, label and style ones (`xlabel`, `ylabel`, `unit`,
 `title`, `logx`, `xlim`, `ylim`, `legend`, `text`, `style`, `figsize`, `ax`,
 `save`); the [`Efficiency`][rootfig.Efficiency] objects (`values`, `lower`,
@@ -690,8 +699,8 @@ Every step keeps a subset of the events before it, so their uncertainty is
 binomial, not that of two independent yields: `efficiency_errors` and
 `absolute_efficiency_errors` are the `(down, up)` distances to the Wilson score
 interval at one standard deviation, as for [efficiencies](#efficiencies), with
-the effective entries `(Σw)² / Σw²` of the denominator for weighted events
-(exact for one weight per event, an approximation otherwise). With signed (NLO)
+the effective entries `(Σw)² / Σw²` of the denominator for weighted events.
+With signed (NLO)
 weights a yield can be negative and a ratio can lie outside `[0, 1]`; the ratio
 is reported as is, but an efficiency measured against events that include a
 negative weight (`CutflowStep.negative_weights`) has `nan` errors: no binomial

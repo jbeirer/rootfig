@@ -98,8 +98,8 @@ def efficiency(
     entries satisfying ``selection`` (the denominator) and those also
     satisfying ``passed`` (the numerator); the ratio is drawn as points with
     Wilson score intervals (``z`` standard deviations; effective entries for
-    weighted samples, an approximation unless every entry has the same
-    weight). A bin that an entry with a negative weight falls into keeps its
+    weighted samples, see :func:`~rootfig.histograms.intervals.wilson_interval`).
+    A bin that an entry with a negative weight falls into keeps its
     efficiency but has no interval, with a warning: no binomial interval
     describes signed weights. The :class:`~rootfig.histograms.Efficiency`
     objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a

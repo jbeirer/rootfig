@@ -96,8 +96,8 @@ class Cutflow:
         A step keeps a subset of the previous step's events, so its efficiency
         has a binomial uncertainty: the Wilson score interval (one standard
         deviation) of the two yields, with the effective entries of the previous
-        step for weighted events (see :func:`~rootfig.histograms.intervals.wilson_interval`;
-        an approximation unless every event has the same weight). ``nan`` where
+        step for weighted events (see :func:`~rootfig.histograms.intervals.wilson_interval`).
+        ``nan`` where
         the efficiency is undefined or lies outside ``[0, 1]``, and after a step
         holding a negative weight (:attr:`CutflowStep.negative_weights`): no
         binomial interval describes signed weights.

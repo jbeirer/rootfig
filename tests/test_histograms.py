@@ -49,11 +49,11 @@ from rootfig.histograms import (
 )
 from rootfig.histograms.build import from_sample
 from rootfig.histograms.groups import group_histogram, regroup_histograms
-from rootfig.histograms.intervals import poisson_errors
+from rootfig.histograms.intervals import poisson_errors, wilson_interval
 from rootfig.histograms.normalize import normalization_label, normalize_hist
 from rootfig.histograms.pipeline import combined_weight
 from rootfig.model import Cut, Group, Sample, Systematic, Variable
-from rootfig.plotting import fold_flow_bins
+from rootfig.plotting import fold_flow_bins, show_flow_bins
 from rootfig.selection import Columns, prepare
 
 
@@ -815,6 +815,58 @@ GARWOOD = {
     ],
 }
 
+# Computed with ROOT 6.40. TH1 without Sumw2, kPoisson: count -> (GetBinErrorLow, GetBinErrorUp)
+ROOT_POISSON = {
+    0: (0.0, 1.841021644577239),
+    1: (0.8272462208950817, 2.2995265585528952),
+    2: (1.291814559984522, 2.6378596227967464),
+    5: (2.1596911439740243, 3.382472651278441),
+    10: (3.1086944386636226, 4.266949759891316),
+    100: (9.983254820245776, 11.033360938117326),
+    1000: (31.61749858466783, 32.633323465689045),
+    1001: (31.633308662952913, 32.649125631397055),
+    10000: (99.99833255931117, 101.00333399898227),
+    1000000: (999.9998331097886, 1001.0003342226846),
+}
+# TEfficiency::Wilson(total, passed, 0.6826894921370859, upper): (passed, total) -> (lower, upper)
+ROOT_WILSON = {
+    (0, 1): (0.0, 0.5),
+    (1, 1): (0.5, 1.0),
+    (0, 10): (0.0, 0.09090909090909091),
+    (3, 10): (0.17882082075676461, 0.4575428156068717),
+    (10, 10): (0.9090909090909092, 1.0),
+    (37, 50): (0.6736930271670393, 0.7968952081270785),
+    (999, 1000): (0.997385028286038, 0.999617968716959),
+}
+
+
+class TestRootReference:
+    """rootfig against numbers computed with ROOT, where both implement the same interval."""
+
+    def test_poisson_errors_are_th1_kpoisson(self) -> None:
+        counts = np.array(list(ROOT_POISSON), dtype=float)
+        down, up = (np.array(side) for side in zip(*ROOT_POISSON.values(), strict=True))
+        ours = Histogram(_poisson(list(counts)), label="Data", is_data=True, poisson=True)
+        # ROOT's coverage is the truncated 1 - 0.682689492; above 1000 counts Wilson-Hilferty
+        tolerance = np.where(counts <= 1000, 1e-9, 2e-5)
+        for mine, root in zip(ours.errors(), (down, up), strict=True):
+            np.testing.assert_array_less(np.abs(mine - root) / np.maximum(root, 1.0), tolerance)
+
+    def test_efficiency_intervals_are_tefficiency_wilson(self) -> None:
+        passed, total = (np.array(side, dtype=float) for side in zip(*ROOT_WILSON, strict=True))
+        lower, upper = (np.array(side) for side in zip(*ROOT_WILSON.values(), strict=True))
+        mine = wilson_interval(passed, total, total)  # counts: the variance is the count
+        np.testing.assert_allclose(mine[0], lower, rtol=1e-12, atol=1e-15)
+        np.testing.assert_allclose(mine[1], upper, rtol=1e-12)
+
+    def test_a_propagated_ratio_is_th1_divide(self) -> None:
+        a = Histogram(_contents([3.0, 3.0, 0.5], [5.0, 3.0, 0.25]), label="A")
+        b = Histogram(_contents([2.0, 3.0, 4.0], [2.0, 9.0, 6.0]), label="B")
+        ratio = compare(a, b, uncertainty="propagate")
+        np.testing.assert_allclose(ratio.values, [1.5, 1.0, 0.125])
+        root = [1.541103500742244, 1.1547005383792515, 0.14657549249448218]
+        np.testing.assert_allclose(_symmetric(ratio.errors), root, rtol=1e-12)
+
 
 class TestPoissonIntervals:
     @pytest.mark.parametrize("z", sorted(GARWOOD))
@@ -840,6 +892,19 @@ class TestPoissonIntervals:
         np.testing.assert_allclose([down[-1], up[-1]], 1.0, rtol=2e-3)
         only_large = poisson_interval([2e6, 3e6])  # none solved exactly
         np.testing.assert_allclose(only_large[1] - [2e6, 3e6], np.sqrt([2e6, 3e6]), rtol=1e-3)
+
+    @pytest.mark.parametrize("counts", [[-1.0], [1.5], [2.0, np.nan], [np.inf]])
+    def test_counts_must_be_whole_and_non_negative(self, counts: list[float]) -> None:
+        with pytest.raises(ValueError, match="non-negative whole numbers"):
+            poisson_interval(counts)
+
+    @pytest.mark.parametrize("z", [0.0, -1.0, np.nan, np.inf])
+    def test_z_must_be_positive_and_finite(self, z: float) -> None:
+        with pytest.raises(ValueError, match="positive finite"):
+            poisson_interval([2.0], z)
+
+    def test_round_off_is_a_whole_count(self) -> None:
+        np.testing.assert_array_equal(poisson_interval([2.0 + 1e-12]), poisson_interval([2.0]))
 
     def test_equal_counts_solve_once_and_agree(self) -> None:
         low, high = poisson_interval([3.0, 0.0, 3.0, 7.0, 0.0])
@@ -900,6 +965,32 @@ class TestPoissonHistograms:
         density = normalize(self._data([2.0, 0.0, 6.0]), "density")
         np.testing.assert_allclose(density.errors()[1][1], 1.8410216450 / 8, rtol=1e-9)
         assert data.scaled(3.0).poisson
+
+    def test_an_empty_bin_takes_its_own_width(self) -> None:
+        h = hist.Hist(hist.axis.Variable([0.0, 1.0, 11.0]), storage=hist.storage.Weight())
+        h.fill(np.full(10, 5.0))  # counts [0, 10] in bins 1 and 10 wide
+        data = Histogram(h, label="Data", is_data=True, poisson=True)
+        ten = poisson_interval([10.0])[1][0] - 10.0
+        # per width, the empty bin's factor is 1 / 1, not the filled bin's 1 / 10
+        np.testing.assert_allclose(normalize(data, "width").errors()[1], [1.84102164, ten / 10])
+        density = normalize(data, "density")  # also divided by the total, 10
+        np.testing.assert_allclose(density.errors()[1], [0.184102164, ten / 100])
+        with pytest.raises(BinningError, match="bin sizes"):
+            normalize(data, "width").replace(hist=_poisson([1.0, 2.0, 3.0]))
+
+    def test_shown_flow_bins_keep_the_width_they_were_divided_by(self) -> None:
+        edges = [0.0, 10.0, 20.0, 100.0]
+        h = hist.Hist(hist.axis.Variable(edges), storage=hist.storage.Weight())
+        h.fill([150.0] * 3)  # three counts in the overflow, divided by the last width, 80
+        mc = hist.Hist(hist.axis.Variable(edges), storage=hist.storage.Weight())
+        mc.fill([-5.0, 5.0])  # an underflow, so that one is shown too (empty for data)
+        data = normalize(Histogram(h, label="Data", is_data=True, poisson=True), "width")
+        shown, _ = show_flow_bins([data, normalize(Histogram(mc, label="MC"), "width")])
+        np.testing.assert_allclose(shown[0].values(), [0.0, 0.0, 0.0, 0.0, 3 / 80])
+        three = poisson_interval([3.0])[1][0] - 3.0
+        # the empty bins borrow the count scale of the shown overflow per unit of *its* size
+        expected = np.array([1.84102164 / 10, 1.84102164 / 10, 1.84102164 / 10, 1.84102164 / 80])
+        np.testing.assert_allclose(shown[0].errors()[1], [*expected, three / 80])
 
     def test_folded_flow_bins_take_the_interval_of_the_sum(self) -> None:
         h = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
@@ -1128,6 +1219,11 @@ class TestEfficiency:
         weighted = efficiency(_hist([0.5] * 5, [2.0] * 5), _hist([0.5] * 10, [2.0] * 10))
         assert weighted.values[0] == pytest.approx(unweighted.values[0])
         assert weighted.lower[0] == pytest.approx(unweighted.lower[0])  # same n_eff = 10
+        # all of weights 1, 2 and 3 pass: n_eff = 36 / 14, and the interval keeps a width
+        # (ROOT's weighted normal approximation gives [1, 1])
+        all_pass = _hist([0.5] * 3, [1.0, 2.0, 3.0])
+        n_eff = 36 / 14
+        assert efficiency(all_pass, all_pass).lower[0] == pytest.approx(n_eff / (n_eff + 1))
         with pytest.raises(BinningError):
             efficiency(
                 _hist([0.5]), hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())

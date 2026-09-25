@@ -174,7 +174,10 @@ def normalize(histogram: Histogram, spec: NormalizeSpec) -> Histogram:
                 raise SystematicError(msg)
             normalized.append(shifted)
         variations[name] = (normalized[0], normalized[1])
-    return histogram.replace(hist=result, normalization=label, variations=variations)
+    sizes = histogram._sizes
+    if mode in ("density", "width"):  # kept for the Poisson interval of empty bins
+        sizes = _bin_sizes(histogram.hist) * (1.0 if sizes is None else sizes)
+    return histogram.replace(hist=result, normalization=label, variations=variations, _sizes=sizes)
 
 
 def normalization_label(spec: NormalizeSpec) -> str | None:
