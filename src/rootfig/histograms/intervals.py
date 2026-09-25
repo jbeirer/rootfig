@@ -1,13 +1,7 @@
-"""Poisson (Garwood) intervals of counts, for the error bars of data.
-
-No SciPy: the bounds are quantiles of the gamma distribution with an integer
-shape, which for counts up to :data:`EXACT_COUNTS` are solved exactly from
-Poisson sums, and beyond from the Wilson-Hilferty approximation.
-"""
+"""Poisson (Garwood) intervals of counts, for the error bars of data."""
 
 from __future__ import annotations
 
-import functools
 import math
 from typing import Literal, TypeAlias
 
@@ -34,14 +28,6 @@ DataErrors: TypeAlias = Literal["auto", "poisson", "sumw2"]
   ``"sumw2"`` otherwise.
 """
 
-EXACT_COUNTS = 1000
-"""Counts up to which the Garwood bounds are solved to machine precision.
-
-Above, the Wilson-Hilferty approximation of the gamma quantile misses the exact
-bound by ``1.8e-5`` of the error bar (``6e-4`` counts at 1001), and the
-relative error falls as ``1 / n``.
-"""
-
 _WHOLE = 1e-9
 """Relative tolerance within which an effective count is a whole number."""
 
@@ -52,8 +38,9 @@ def poisson_interval(counts: npt.ArrayLike, z: float = 1.0) -> tuple[FloatArray,
     The bounds cover ``z`` standard deviations of a normal distribution (68.27 %
     for ``z = 1``), half the remainder on each side: ``P(N >= n | lower)`` and
     ``P(N <= n | upper)`` are both ``(1 - coverage) / 2``. The lower bound of
-    ``n = 0`` is 0, its upper bound ``-log((1 - coverage) / 2)`` (1.84). This
-    is ROOT's ``TH1::kPoisson`` interval of unweighted counts.
+    ``n = 0`` is 0, its upper bound ``-log((1 - coverage) / 2)`` (1.84). Both
+    are gamma quantiles (SciPy's inverse incomplete gamma functions), as in
+    ROOT's ``TH1::kPoisson`` interval of unweighted counts.
 
     Raises
     ------
@@ -71,60 +58,14 @@ def poisson_interval(counts: npt.ArrayLike, z: float = 1.0) -> tuple[FloatArray,
     if bad.any():
         msg = f"counts must be non-negative whole numbers, got {float(n[bad].flat[0])!r}"
         raise ValueError(msg)
-    n = whole
+    from scipy.special import gammainccinv, gammaincinv  # noqa: PLC0415 - 0.3 s to import
+
     tail = 0.5 * math.erfc(z / math.sqrt(2.0))
-    lower = np.where(n > 0, _gamma_quantile(np.maximum(n, 1.0), -z), 0.0)
-    upper = _gamma_quantile(n + 1.0, z)
-    exact = n <= EXACT_COUNTS
-    if exact.any():
-        wanted = n[exact]
-        filled = wanted > 0
-        low = lower[exact]
-        low[filled] = _solve(wanted[filled], 1.0 - tail, low[filled])
-        lower[exact] = low
-        upper[exact] = _solve(wanted + 1.0, tail, upper[exact])
-    return lower, upper
-
-
-def _gamma_quantile(shape: FloatArray, z: float) -> FloatArray:
-    """Return the Wilson-Hilferty quantile of a gamma distribution ``z`` deviations out."""
-    return np.asarray(shape * (1.0 - 1.0 / (9.0 * shape) + z / (3.0 * np.sqrt(shape))) ** 3)
-
-
-def _solve(shape: FloatArray, target: float, start: FloatArray) -> FloatArray:
-    """Solve ``P(N < shape | x) = target`` for ``x``, per element, by Newton in ``log x``.
-
-    ``P(N < shape | x)`` is the sum of the Poisson probabilities below the
-    (whole) ``shape``; it falls with ``x`` at the rate of the probability of
-    ``shape - 1``. Steps are capped at a factor ``e``, which keeps a poor start
-    from overshooting.
-    """
-    if shape.size == 0:
-        return np.asarray(start, dtype=float)
-    # equal shapes have equal solutions: solve each once
-    a, first, inverse = np.unique(
-        np.rint(shape).astype(int), return_index=True, return_inverse=True
-    )
-    k = np.arange(int(a.max()))
-    below = k < a[:, np.newaxis]
-    log_factorial = _log_factorials(int(a.max()))
-    log_x = np.log(np.maximum(np.asarray(start, dtype=float)[first], 1e-3))
-    for _ in range(100):
-        x = np.exp(log_x)
-        log_terms = k * log_x[:, np.newaxis] - x[:, np.newaxis] - log_factorial[k]
-        cumulative = np.sum(np.exp(log_terms), axis=1, where=below)
-        density = np.exp((a - 1) * log_x - x - log_factorial[a - 1]) * x
-        step = np.clip((cumulative - target) / density, -1.0, 1.0)
-        log_x = log_x + step
-        if np.all(np.abs(step) < 1e-13):
-            break
-    return np.asarray(np.exp(log_x)[inverse])
-
-
-@functools.cache
-def _log_factorials(size: int) -> FloatArray:
-    """``log(k!)`` for ``k = 0, ..., size``."""
-    return np.array([math.lgamma(k + 1.0) for k in range(size + 1)])
+    # P(N >= n | lower) = P(n, lower) and P(N <= n | upper) = Q(n + 1, upper), the regularised
+    # lower and upper incomplete gamma functions
+    lower = np.where(whole > 0, gammaincinv(np.maximum(whole, 1.0), tail), 0.0)
+    upper = gammainccinv(whole + 1.0, tail)
+    return np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)
 
 
 def count_scale(values: npt.ArrayLike, variances: npt.ArrayLike) -> FloatArray:

@@ -1,4 +1,4 @@
-# How rootfig relates to uproot, Awkward, hist, mplhep and matplotlib
+# How rootfig relates to uproot, Awkward, hist, mplhep, matplotlib and SciPy
 
 rootfig is a thin, opinionated layer over the Scientific Python HEP stack. It
 owns no file format, array type, histogram type or drawing primitive of its
@@ -44,8 +44,9 @@ mplhep's per-experiment label functions when a `Style(experiment=...)` is
 given. The experiment-neutral default style and the lower panel (ratios,
 differences, asymmetries, pulls and significances of histograms; ratios,
 differences, asymmetries and pulls of efficiencies and profiles) are rootfig's,
-and so are the Poisson intervals of data: mplhep's (and `hist.intervals`) need
-SciPy, which rootfig does not depend on.
+and so are the Poisson intervals of data: mplhep's (and `hist.intervals`) give
+an empty bin of scaled counts the scale of a neighbour, where rootfig keeps the
+bin's own (see [SciPy](#scipy)).
 
 ## matplotlib
 
@@ -53,6 +54,16 @@ Every figure is a plain `matplotlib.figure.Figure` with plain `Axes`. rootfig
 applies its style only inside a `plt.style.context` while drawing, so it does
 not change global rcParams (unless you call `rf.use_style`). Anything you
 would do to a matplotlib figure, you can do to `Plot.fig` and `Plot.ax`.
+
+## SciPy
+
+[SciPy](https://scipy.org) supplies the quantiles behind rootfig's intervals, from
+`scipy.special`: the inverse incomplete gamma functions for the Garwood interval
+of data (ROOT's `TH1::kPoisson`) and the inverse incomplete beta function for the
+Clopper–Pearson interval of efficiencies (`TEfficiency`'s default). rootfig
+decides what the quantiles are taken of (the counts behind scaled or normalised
+contents, which interval ROOT would choose) and imports SciPy only when it
+computes one.
 
 ## Trees and histogram files
 

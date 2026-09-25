@@ -880,10 +880,9 @@ class TestRootReference:
         counts = np.array(list(ROOT_POISSON), dtype=float)
         down, up = (np.array(side) for side in zip(*ROOT_POISSON.values(), strict=True))
         ours = Histogram(_poisson(list(counts)), label="Data", is_data=True, poisson=True)
-        # ROOT's coverage is the truncated 1 - 0.682689492; above 1000 counts Wilson-Hilferty
-        tolerance = np.where(counts <= 1000, 1e-9, 2e-5)
+        # exact at every count; ROOT's coverage is the truncated 1 - 0.682689492
         for mine, root in zip(ours.errors(), (down, up), strict=True):
-            np.testing.assert_array_less(np.abs(mine - root) / np.maximum(root, 1.0), tolerance)
+            np.testing.assert_array_less(np.abs(mine - root) / np.maximum(root, 1.0), 1e-9)
 
     def test_efficiency_intervals_are_tefficiency_wilson(self) -> None:
         passed, total = (np.array(side, dtype=float) for side in zip(*ROOT_WILSON, strict=True))
@@ -896,13 +895,16 @@ class TestRootReference:
         passed, total = (np.array(s, dtype=float) for s in zip(*ROOT_CLOPPER_PEARSON, strict=True))
         lower, upper = (np.array(s) for s in zip(*ROOT_CLOPPER_PEARSON.values(), strict=True))
         mine = clopper_pearson(passed, total)
-        # 3 of 1e7: ROOT and rootfig both miss the exact bounds by ~5e-9 (lgamma of 1e7)
+        # 3 of 1e7: ROOT misses the exact bounds by ~4e-9 (lgamma of 1e7), SciPy does not
         tolerance = np.where(total < 1e7, 1e-11, 1e-8)
         for got, want in zip(mine, (lower, upper), strict=True):
             np.testing.assert_array_less(np.abs(got - want), tolerance * np.maximum(want, 1e-300))
+        # the exact bounds (mpmath, 40 digits): SciPy is within 2e-10 of them, ROOT 4e-9
+        exact = [1.3672953571451469e-07, 5.918184969365128e-07]
+        np.testing.assert_allclose(np.ravel(clopper_pearson([3.0], [1e7])), exact, rtol=1e-9)
         two = clopper_pearson([3.0], [10.0], z=2.0)
         np.testing.assert_allclose(np.ravel(two), [0.06440282972673787, 0.6581255125487373])
-        # ROOT takes real counts too (beta quantiles below a or b = 1 start from the tails)
+        # ROOT takes real counts too
         real = clopper_pearson([0.5, 2.5, 0.25], [3.7, 3.0, 0.5])
         np.testing.assert_allclose(
             real[0], [0.005049115171304538, 0.3843380720179961, 4.680016622133597e-4], rtol=1e-11
@@ -956,8 +958,8 @@ class TestPoissonIntervals:
             np.array(column, dtype=float) for column in zip(*GARWOOD[z], strict=True)
         )
         low, high = poisson_interval(counts, z)
-        # exact up to 1000 counts, Wilson-Hilferty beyond: judged against the error bar
-        tolerance = np.where(counts <= 1000, 1e-10, 3e-5)
+        # judged against the error bar, which is exact at every count
+        tolerance = 1e-10
         down_bar = np.where(counts > 0, counts - lower, 1.0)
         np.testing.assert_array_less(np.abs(low - lower) / down_bar, tolerance)
         np.testing.assert_array_less(np.abs(high - upper) / (upper - counts), tolerance)
@@ -971,7 +973,7 @@ class TestPoissonIntervals:
         assert np.all(np.diff(np.abs(up - 1.0)) < 0)
         assert np.all(np.diff(np.abs(down - 1.0)) < 0)
         np.testing.assert_allclose([down[-1], up[-1]], 1.0, rtol=2e-3)
-        only_large = poisson_interval([2e6, 3e6])  # none solved exactly
+        only_large = poisson_interval([2e6, 3e6])
         np.testing.assert_allclose(only_large[1] - [2e6, 3e6], np.sqrt([2e6, 3e6]), rtol=1e-3)
 
     @pytest.mark.parametrize("counts", [[-1.0], [1.5], [2.0, np.nan], [np.inf]])
@@ -987,7 +989,7 @@ class TestPoissonIntervals:
     def test_round_off_is_a_whole_count(self) -> None:
         np.testing.assert_array_equal(poisson_interval([2.0 + 1e-12]), poisson_interval([2.0]))
 
-    def test_equal_counts_solve_once_and_agree(self) -> None:
+    def test_equal_counts_agree(self) -> None:
         low, high = poisson_interval([3.0, 0.0, 3.0, 7.0, 0.0])
         assert (low[0], high[0]) == (low[2], high[2])
         assert high[1] == high[4]
@@ -1074,6 +1076,20 @@ class TestPoissonHistograms:
         np.testing.assert_allclose(tripled.replace(label="x").errors()[1], [5.52306493] * 2)
         with pytest.warns(RootfigWarning, match="no entries"):  # skipped: the scale stays
             np.testing.assert_allclose(normalize(tripled, "unity").errors()[1], [5.52306493] * 2)
+
+    def test_sums_of_counts_with_one_scale_keep_the_interval(self) -> None:
+        a, b = self._data([0.0, 1.0, 4.0]), self._data([0.0, 2.0, 0.0])
+        total = sum_histograms([a, b])
+        assert total.poisson
+        low, high = poisson_interval([0.0, 3.0, 4.0])
+        np.testing.assert_allclose(total.errors()[0], [0.0, 3.0, 4.0] - low)
+        np.testing.assert_allclose(total.errors()[1], high - [0.0, 3.0, 4.0])
+        empty_scaled = sum_histograms([a.scaled(2.0), b.scaled(2.0)])
+        assert empty_scaled.errors()[1][0] == pytest.approx(2 * 1.8410216450)
+        # a plain input, or counts scaled differently, are no longer counts of one scale
+        plain = Histogram(_poisson([0.0, 2.0, 0.0]), label="MC")
+        assert not sum_histograms([a, plain]).poisson
+        assert not sum_histograms([a, b.scaled(2.0)]).poisson
 
     def test_a_new_hist_brings_its_own_count_scale(self) -> None:
         # counts [0, 1, 2] scaled by 10, then replaced by counts scaled by 2 with the same

@@ -70,14 +70,13 @@ panel and in the lower panel alike, and in `p.uncertainty("Data")`:
 - The [lower panel](#lower-panel) propagates the two sides separately: a
   data/MC ratio runs from `L / d` to `U / d`, and a pull divides by the data
   error facing the prediction (the upper one where data lie below it).
-- rootfig computes the interval itself, without SciPy: exactly up to 1000 counts
-  and from the Wilson–Hilferty approximation beyond, which misses the exact
-  bound by 1.8·10⁻⁵ of the error bar at 1001 counts (6·10⁻⁴ counts), less
-  further up. [`poisson_interval`][rootfig.histograms.poisson_interval] gives the
-  bounds for any counts.
+- The bounds are gamma quantiles from SciPy, exact at any count, as ROOT's.
+  [`poisson_interval`][rootfig.histograms.poisson_interval] gives them for any
+  counts.
 - `rf.Histogram(h, label="Data", is_data=True, poisson=True)` carries the model
   on a histogram you pass yourself, so `rf.compare` uses it too;
-  `data_errors="sumw2"` overrides it in a plot.
+  `data_errors="sumw2"` overrides it in a plot. `sum_histograms` keeps it when
+  every input is counts of one scale (two data periods), as `TH1::Add` does.
 
 ## Systematic uncertainties
 
@@ -640,9 +639,9 @@ zero or negative, change its efficiency; a `weight=`, even one constant for
 every entry, makes it weighted.
 The normal approximation shrinks to nothing at 0 % and 100 %, which is why the
 two Z + jets bins at 100 % in the [gallery](gallery/efficiency.md) have no error bar;
-`"wilson"` is the alternative that keeps one for weighted samples. rootfig
-computes the Clopper–Pearson bounds itself, without SciPy, and matches ROOT
-to 10⁻¹¹ (10⁻⁸ for extreme counts, where both are limited by round-off).
+`"wilson"` is the alternative that keeps one for weighted samples. The
+Clopper–Pearson bounds are beta quantiles from SciPy, as ROOT's, and agree with
+ROOT's to 10⁻¹¹.
 Options are
 the usual axis, legend, label and style ones (`xlabel`, `ylabel`, `unit`,
 `title`, `logx`, `xlim`, `ylim`, `legend`, `text`, `style`, `figsize`, `ax`,

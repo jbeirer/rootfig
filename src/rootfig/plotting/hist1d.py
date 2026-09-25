@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
@@ -121,15 +120,15 @@ class Drawn:
 
 
 def _histplot(*args: Any, **kwargs: Any) -> Any:
-    """Call ``mplhep.histplot`` without its scipy-less Poisson-interval warning.
+    """Call ``mplhep.histplot`` with its automatic uncertainties made cheap.
 
-    mplhep evaluates automatic uncertainties even for ``yerr=False`` and warns
-    when scipy is absent; the errors are never drawn in that case, so the
-    warning is noise for rootfig users.
+    rootfig passes every error bar itself (``yerr`` arrays or ``False``), yet
+    mplhep evaluates its own uncertainties even for ``yerr=False``: the Garwood
+    interval of unweighted histograms, which imports ``scipy.stats`` (0.6 s on
+    the first plot). ``w2method="sqrt"`` makes those undrawn errors
+    ``sqrt(w2)``.
     """
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="Integer weights indicate poissonian data")
-        return hep.histplot(*args, **kwargs)
+    return hep.histplot(*args, w2method="sqrt", **kwargs)
 
 
 def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tuple[bool, bool]]:

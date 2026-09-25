@@ -2,9 +2,7 @@
 
 ``"auto"`` is what ROOT's ``TEfficiency`` (and ``TGraphAsymmErrors::Divide``)
 gives by default: Clopper-Pearson for unweighted counts, the normal
-approximation for weighted entries. No SciPy: the Clopper-Pearson bounds are
-beta quantiles, solved from the continued fraction of the incomplete beta
-function.
+approximation for weighted entries.
 """
 
 from __future__ import annotations
@@ -126,23 +124,23 @@ def clopper_pearson(
 
     The bounds are the efficiencies at which ``passed`` or more, and ``passed``
     or fewer, entries pass with the probability beyond ``z`` standard deviations
-    on one side: beta quantiles, as ``TEfficiency::ClopperPearson`` computes
-    them. The lower bound is 0 for no passing entry, the upper 1 when all pass.
-    ``nan`` where the total is not positive or ``passed`` lies outside
-    ``[0, total]``.
+    on one side: beta quantiles (SciPy's inverse incomplete beta function), as
+    ``TEfficiency::ClopperPearson`` computes them. The lower bound is 0 for no
+    passing entry, the upper 1 when all pass. ``nan`` where the total is not
+    positive or ``passed`` lies outside ``[0, total]``.
     """
-    k = np.asarray(passed, dtype=float)
-    n = np.asarray(total, dtype=float)
-    k, n = np.broadcast_arrays(k, n)
+    from scipy.special import betaincinv  # noqa: PLC0415 - 0.3 s to import, only when used
+
+    k, n = np.broadcast_arrays(np.asarray(passed, dtype=float), np.asarray(total, dtype=float))
     valid = (n > 0) & (k >= 0) & (k <= n)
     tail = _tail(z)
-    lower = np.where(valid, 0.0, np.nan)
-    upper = np.where(valid, 1.0, np.nan)
-    some = valid & (k > 0)
-    lower[some] = _beta_quantile(k[some], n[some] - k[some] + 1.0, tail, -z)
-    short = valid & (k < n)
-    upper[short] = _beta_quantile(k[short] + 1.0, n[short] - k[short], 1.0 - tail, z)
-    return lower, upper
+    with np.errstate(invalid="ignore"):
+        lower = np.where(k > 0, betaincinv(k, n - k + 1.0, tail), 0.0)
+        upper = np.where(k < n, betaincinv(k + 1.0, n - k, 1.0 - tail), 1.0)
+    return (
+        np.asarray(np.where(valid, lower, np.nan), dtype=float),
+        np.asarray(np.where(valid, upper, np.nan), dtype=float),
+    )
 
 
 def normal_interval(
@@ -205,122 +203,3 @@ def wilson_interval(
         lower = np.where(valid, np.minimum(np.clip(centre - half, 0.0, 1.0), p), np.nan)
         upper = np.where(valid, np.maximum(np.clip(centre + half, 0.0, 1.0), p), np.nan)
     return np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)
-
-
-# -- beta quantiles ----------------------------------------------------------------------
-
-_TINY = 1e-300
-
-
-def _log_beta(a: FloatArray, b: FloatArray) -> FloatArray:
-    """``log B(a, b)`` per element."""
-    lgamma = np.frompyfunc(math.lgamma, 1, 1)
-    return np.asarray(lgamma(a) + lgamma(b) - lgamma(a + b), dtype=float)
-
-
-def _continued_fraction(a: FloatArray, b: FloatArray, x: FloatArray) -> FloatArray:
-    """Continued fraction of the incomplete beta function (modified Lentz).
-
-    It converges quickly for ``x < (a + 1) / (a + b + 2)``; the caller uses the
-    symmetry ``I_x(a, b) = 1 - I_{1-x}(b, a)`` beyond. Each element stops once
-    a step changes it by less than ``1e-15``: after that its steps only
-    scatter around 1 by round-off, and waiting for all of them to fall below
-    at once can take thousands of iterations.
-    """
-
-    def clamp(value: FloatArray) -> FloatArray:
-        return np.where(np.abs(value) < _TINY, _TINY, value)
-
-    c = np.ones_like(x)
-    d = 1.0 / clamp(1.0 - (a + b) * x / (a + 1.0))
-    result = d
-    active = np.ones(x.shape, dtype=bool)
-    for m in range(1, 100_000):
-        numerator = m * (b - m) * x / ((a + 2 * m - 1.0) * (a + 2 * m))
-        d = 1.0 / clamp(1.0 + numerator * d)
-        c = clamp(1.0 + numerator / c)
-        step = d * c
-        numerator = -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1.0))
-        d = 1.0 / clamp(1.0 + numerator * d)
-        c = clamp(1.0 + numerator / c)
-        last = d * c
-        result = np.where(active, result * step * last, result)
-        active &= np.abs(last - 1.0) >= 1e-15
-        if not active.any():
-            break
-    return result
-
-
-def _beta_cdf(a: FloatArray, b: FloatArray, x: FloatArray, log_beta: FloatArray) -> FloatArray:
-    """Regularised incomplete beta function ``I_x(a, b)`` for ``0 < x < 1``."""
-    swap = x > (a + 1.0) / (a + b + 2.0)
-    a_, b_ = np.where(swap, b, a), np.where(swap, a, b)
-    x_ = np.where(swap, 1.0 - x, x)
-    front = np.exp(a_ * np.log(x_) + b_ * np.log1p(-x_) - log_beta) / a_
-    part = front * _continued_fraction(a_, b_, x_)
-    return np.asarray(np.where(swap, 1.0 - part, part), dtype=float)
-
-
-def _beta_start(
-    a: FloatArray, b: FloatArray, q: float, deviations: float, log_beta: FloatArray
-) -> FloatArray:
-    """First guess of the ``q`` quantile of the beta distribution (Numerical Recipes).
-
-    For ``a, b >= 1`` a normal approximation corrected for skewness
-    (Abramowitz and Stegun 26.5.22), else the power law of the nearer tail.
-    """
-    upper_tail = -deviations  # the deviate beyond which the normal tail holds q
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        shape = (upper_tail**2 - 3.0) / 6.0
-        h = 2.0 / (1.0 / (2.0 * a - 1.0) + 1.0 / (2.0 * b - 1.0))
-        asymmetry = 1.0 / (2.0 * b - 1.0) - 1.0 / (2.0 * a - 1.0)
-        w = upper_tail * np.sqrt(shape + h) / h - asymmetry * (shape + 5.0 / 6.0 - 2.0 / (3.0 * h))
-        normal = a / (a + b * np.exp(2.0 * w))
-        # the power laws x^a / (a B) and (1 - x)^b / (b B) of the two tails
-        t = np.exp(a * np.log(a / (a + b)) - log_beta) / a
-        u = np.exp(b * np.log(b / (a + b)) - log_beta) / b
-        tails = np.where(
-            q < t / (t + u),
-            (a * (t + u) * q) ** (1.0 / a),
-            1.0 - (b * (t + u) * (1.0 - q)) ** (1.0 / b),
-        )
-    x = np.where((a >= 1.0) & (b >= 1.0), normal, tails)
-    return np.clip(np.nan_to_num(x, nan=0.5), 1e-300, 1.0 - 1e-16)
-
-
-def _beta_quantile(a: FloatArray, b: FloatArray, q: float, deviations: float) -> FloatArray:
-    """Return ``x`` with ``I_x(a, b) = q``, per element, by Halley's method within a bracket.
-
-    The start is that of Numerical Recipes (``invbetai``), from the normal
-    quantile ``deviations`` of ``q``; a step that leaves the bracket around the
-    root is replaced by bisection. An element stops once its step falls below
-    ``1e-12`` of ``x`` (or ``1 - x``): for large ``a + b`` the round-off of
-    ``I_x`` leaves about ``1e-13`` of it undetermined.
-    """
-    if a.size == 0:
-        return np.asarray(a, dtype=float)
-    pairs, inverse = np.unique(np.stack([a, b], axis=1), axis=0, return_inverse=True)
-    a, b = pairs[:, 0], pairs[:, 1]
-    log_beta = _log_beta(a, b)
-    x = _beta_start(a, b, q, deviations, log_beta)
-    low, high = np.zeros_like(x), np.ones_like(x)
-    active = np.ones(x.shape, dtype=bool)
-    for _ in range(200):
-        xa, aa, ba, lb = x[active], a[active], b[active], log_beta[active]
-        excess = _beta_cdf(aa, ba, xa, lb) - q
-        low[active] = np.where(excess < 0, xa, low[active])
-        high[active] = np.where(excess > 0, xa, high[active])
-        density = np.exp((aa - 1.0) * np.log(xa) + (ba - 1.0) * np.log1p(-xa) - lb)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            newton = excess / density
-            curvature = (aa - 1.0) / xa - (ba - 1.0) / (1.0 - xa)
-            halley = xa - newton / (1.0 - 0.5 * np.minimum(1.0, newton * curvature))
-        # converged: a step below 1e-12 of the nearer bound, or of the spacing of floats near 1
-        still = np.abs(halley - xa) > np.maximum(1e-12 * np.minimum(xa, 1.0 - xa), 4e-16)
-        inside = (halley > low[active]) & (halley < high[active])
-        new = np.where(inside | ~still, halley, 0.5 * (low[active] + high[active]))
-        x[active] = new
-        active[active] = still & (excess != 0)
-        if not active.any():
-            break
-    return np.asarray(x[inverse.ravel()], dtype=float)

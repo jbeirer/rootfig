@@ -194,6 +194,7 @@ stack, building on familiar libraries:
 | Jagged arrays | [Awkward Array](https://github.com/scikit-hep/awkward) | the per-event/per-object rules for cuts and weights |
 | Histograms | [hist](https://github.com/scikit-hep/hist) / boost-histogram | shared binning, robust automatic ranges, normalisation, ratios |
 | Drawing | [mplhep](https://github.com/scikit-hep/mplhep) + matplotlib | overlays, stacks, ratio panels, labels and legends with good defaults |
+| Intervals | [SciPy](https://scipy.org) | ROOT's Poisson and efficiency intervals, from the counts behind scaled contents |
 
 If your histograms already exist, `rf.plot` draws them too: name a `TH1`
 stored in the file instead of a branch (`rf.plot("zh_histo.root", "m_recoil")`),
