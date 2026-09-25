@@ -508,11 +508,12 @@ class Histogram:
 
         The result has ``sqrt(variances)`` errors and holds no known counts
         (:attr:`poisson` off, errors given as ``stat_errors`` dropped) unless
-        ``linear=True`` says that ``transform`` acts on the cells linearly, as
-        cropping, rebinning, moving flow cells and scaling do. The record of
-        counts and the given errors then go through it too, which holds only
-        while every cell stays counts times factors that do not depend on the
-        contents.
+        ``linear=True`` says that ``transform`` acts on the cells linearly with
+        non-negative coefficients, as cropping, rebinning, moving flow cells and
+        scaling by a positive factor do (:meth:`scaled` handles a negative one,
+        which turns intervals over). The record of counts and the given errors
+        then go through it too, which holds only while every cell stays counts
+        times factors that do not depend on the contents.
         """
         variations = {
             name: (transform(up), transform(down)) for name, (up, down) in self.variations.items()
@@ -544,7 +545,9 @@ class Histogram:
 
         Variances scale with ``factor**2``. The statistics' sum of weights (and
         sum of squared weights) scale along; the moments, entry count and
-        effective entries are unchanged by a uniform rescaling.
+        effective entries are unchanged by a uniform rescaling. A negative
+        factor turns an interval over, so errors given as ``stat_errors`` swap
+        their sides.
         """
         stats = self.stats
         if stats is not None:
@@ -554,7 +557,12 @@ class Histogram:
                 _sum_w2=stats._sum_w2 * factor**2,
             )
         scaled = self.map_hists(lambda h: h * factor, linear=True)
-        return replace(scaled, stats=stats, _weighted=self._weighted or factor != 1.0)
+        errors = scaled._errors
+        if errors is not None and factor < 0:
+            errors = (errors[1], errors[0])
+        return replace(
+            scaled, stats=stats, _weighted=self._weighted or factor != 1.0, _errors=errors
+        )
 
     def rebinned(self, factor: int | Sequence[int]) -> Histogram:
         """Return a copy with every ``factor`` adjacent bins merged (per axis for a sequence).

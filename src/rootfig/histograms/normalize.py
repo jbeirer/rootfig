@@ -44,7 +44,9 @@ NormalizeUncertainty: TypeAlias = Literal["scale", "shape"]
   division by the total (``p (1 - p) / N`` for a fraction ``p`` of ``N``
   counts), and counts with a Poisson interval get the Clopper-Pearson interval
   of their fraction of the total, at the same confidence level. See
-  :func:`shape_covariance` for the correlations.
+  :func:`shape_covariance` for the correlations. Refused for errors given as
+  ``stat_errors``: the total enters every bin with the opposite sign, so their
+  asymmetric sides would mix.
 """
 
 
@@ -266,17 +268,6 @@ def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | f
                     _unit=None,
                     _errors=_error_sides(normalized.hist, sides, normalized.label),
                 )
-    if original._errors is not None:
-        down, up = (
-            np.sqrt(shape_variances(values, np.asarray(side.variances(flow=True)), gain, visible))
-            for side in original._errors
-        )
-        sides = (down, up)
-        return normalized.replace(
-            poisson=False,
-            _unit=None,
-            _errors=_error_sides(normalized.hist, sides, normalized.label),
-        )
     result = normalized.hist.copy()
     view: Any = result.view(flow=True)
     view.variance = shape_variances(values, original.variances(flow=True), gain, visible)
@@ -291,7 +282,8 @@ def normalize(
     ``uncertainty`` says what normalising to the histogram's own total does to
     its statistical uncertainty (see :data:`NormalizeUncertainty`): ``"scale"``
     keeps every bin's relative uncertainty, as ``TH1::Scale``; ``"shape"``
-    lets the total fluctuate with the bins.
+    lets the total fluctuate with the bins, and raises ``ValueError`` for a
+    histogram with ``stat_errors``.
 
     ``normalization`` is set only when the normalisation was actually applied;
     a histogram that could not be normalised (see :func:`normalize_hist`) keeps
@@ -308,6 +300,13 @@ def normalize(
     """
     mode = _mode(spec)
     _check_uncertainty(uncertainty, mode)
+    if uncertainty == "shape" and histogram._errors is not None:
+        msg = (
+            f"histogram {histogram.label!r} has statistical errors of its own (stat_errors), "
+            "whose sides the fluctuating total mixes with opposite signs; normalise it with "
+            "normalize_uncertainty='scale'"
+        )
+        raise ValueError(msg)
     if mode is None:
         return histogram
     result, applied, factor = _normalize_hist(histogram.hist, spec)
@@ -339,10 +338,8 @@ def normalize(
         unit = _normalize_hist(unit, spec, factor=factor)[0]
     errors = histogram._errors
     if errors is not None:
-        errors = (
-            _normalize_hist(errors[0], spec, factor=factor)[0],
-            _normalize_hist(errors[1], spec, factor=factor)[0],
-        )
+        down, up = (_normalize_hist(side, spec, factor=factor)[0] for side in errors)
+        errors = (up, down) if factor < 0 else (down, up)  # a negative total turns them over
     rescaled = histogram.replace(
         hist=result,
         normalization=label,

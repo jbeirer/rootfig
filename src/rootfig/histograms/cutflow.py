@@ -184,11 +184,11 @@ class Cutflow:
             method = resolve_interval(self.interval, bool(self._unweighted().all()))
             _, lower, upper = efficiency_interval(method, *sums, cl=self.cl, weighted=True)
             binomial = np.full(len(self.steps), method != "normal")
-        # binomial intervals need non-negative weights. The denominator's flag covers both
-        # sides: a step's events are a subset of those of the step it is measured against,
-        # so a negative weight among the passing events is among the denominator's too
-        negative = np.array([step.negative_weights for step in self.steps])[index]
-        signed = negative & binomial
+        # binomial intervals need non-negative weights on both sides; for a cut flow of rf.cutflow
+        # the denominator's flag implies it (every step keeps a subset of the events of the one
+        # it is measured against), a hand-made one may flag the numerator alone
+        negative = np.array([step.negative_weights for step in self.steps])
+        signed = (negative | negative[index]) & binomial
         down = np.where(signed, np.nan, values - lower)
         up = np.where(signed, np.nan, upper - values)
         # the first step is the reference itself: its efficiency is exact where defined

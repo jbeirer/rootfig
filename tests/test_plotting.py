@@ -1160,6 +1160,25 @@ class TestAsymmetricErrorBars:
         assert drawn.ymax == pytest.approx(max(values + self.UP))
         plt.close(fig)
 
+    def test_stack_band(self) -> None:
+        # statistical errors only: the band must still reach down and up by different amounts
+        h = hist.Hist(hist.axis.Regular(4, 0, 4), storage=hist.storage.Weight())
+        h.fill([0.5, 1.5, 1.5, 2.5, 3.5, 3.5, 3.5])
+        down, up = np.array(self.DOWN), np.array(self.UP)
+        parts = [
+            Histogram(h, label=label, stat_errors=(down / np.sqrt(2), up / np.sqrt(2)))
+            for label in ("A", "B")
+        ]
+        fig, ax = plt.subplots()
+        drawn = draw_histograms(parts, ax, style=Style(), stack=True)
+        (band,) = [patch for patch in ax.patches if patch.get_hatch() == "////"]
+        top, _, bottom = band.get_data()
+        total = 2 * h.values()
+        np.testing.assert_allclose(top, total + up)  # in quadrature: the sides of one part x sqrt 2
+        np.testing.assert_allclose(bottom, total - down)
+        assert drawn.ymax == pytest.approx(max(total + up))
+        plt.close(fig)
+
     def test_panel_points(self) -> None:
         fig, ax = plt.subplots()
         values = [1.0, 1.2, 0.8, 1.1]

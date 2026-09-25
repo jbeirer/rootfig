@@ -505,7 +505,7 @@ def _draw_stack(
             total.hist,
             ax=ax,
             histtype="band",
-            yerr=[down, up] if summary.has_systematics else up,
+            yerr=[down, up],
             flow=flow,
             facecolor="none",
             edgecolor=foreground(),

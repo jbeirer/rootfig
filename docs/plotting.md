@@ -111,10 +111,12 @@ and in `p.uncertainty("Data")`:
 - Errors of any other origin, a fit or a bootstrap, are given as
   `rf.Histogram(h, label="Fit", stat_errors=(down, up))`, one per bin (or per
   cell with the flow bins). They are what `errors()`, the drawing and the lower
-  panel use; scaling and normalising scale them, and where bins are merged
-  (rebinning, `flow="sum"`, `sum_histograms`) they add in quadrature side by
-  side, an approximation for asymmetric errors, whose statistical meaning
-  rootfig does not know.
+  panel use; scaling and normalising scale them (a negative factor, or a
+  negative total, turns the interval over and swaps the sides), and where bins
+  are merged (rebinning, `flow="sum"`, `sum_histograms`) they add in quadrature
+  side by side, an approximation for asymmetric errors, whose statistical
+  meaning rootfig does not know. `normalize_uncertainty="shape"` refuses them
+  (see [Normalisation](#normalisation)).
 
 ## Systematic uncertainties
 
@@ -297,8 +299,11 @@ weights (its rows sum to zero for `True`: the normalised bins always add up to
 one; for counts its diagonal is the binomial `p (1 − p) / N`, not the exact
 interval). It raises for a histogram without a shape (empty, or with weights
 that cancel) and for one with `stat_errors`, whose asymmetric errors no
-covariance matrix describes. `"shape"` needs a normalisation to the
-histogram's own total and raises with `"width"` or none.
+covariance matrix describes. `"shape"` refuses `stat_errors` too: the total
+enters every bin with the opposite sign, so a bin's lower error would take the
+other bins' upper errors, and rootfig does not know what those errors mean.
+`"shape"` needs a normalisation to the histogram's own total and raises with
+`"width"` or none.
 Systematic variations are normalised by their own totals either way, so a pure
 normalisation uncertainty drops out of the rescaling modes
 ([Systematic uncertainties](#systematic-uncertainties)).

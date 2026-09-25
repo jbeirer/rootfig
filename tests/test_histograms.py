@@ -1582,6 +1582,19 @@ class TestEfficiencyIntervals:
             with pytest.raises(ValueError, match="resolved method"):
                 efficiency_interval(unresolved, [1.0], [2.0], [1.0], [2.0])  # type: ignore[arg-type]
 
+    def test_a_negative_weight_on_either_side_has_no_binomial_interval(self) -> None:
+        # a hand-made cut flow may flag the numerator alone; rf.cutflow never does
+        def step(negative: bool, events: int) -> CutflowStep:
+            error = float(np.sqrt(events))
+            return CutflowStep("", "", events, float(events), error, negative_weights=negative)
+
+        flow = Cutflow("c", (step(False, 10), step(True, 4), step(False, 2)))
+        down, up = flow.efficiency_errors
+        assert np.isnan([down[1], up[1]]).all()  # the numerator holds a negative weight
+        assert np.isnan([down[2], up[2]]).all()  # measured against it
+        absolute_down, _ = flow.absolute_efficiency_errors
+        assert np.isfinite(absolute_down[2])  # 2 of the clean first step
+
     def test_a_hand_made_cutflow_resolves_auto_from_its_yields(self) -> None:
         def step(events: int, yield_: float, error: float) -> CutflowStep:
             return CutflowStep(label="", expression="", events=events, yield_=yield_, error=error)
@@ -4458,7 +4471,21 @@ class TestStatErrors:
         np.testing.assert_array_equal(given.errors()[0], [1.0, 2.0, 0.5, 0.5])
         np.testing.assert_array_equal(given.errors()[1], [3.0, 4.0, 1.0, 1.0])
         np.testing.assert_array_equal(given.errors(flow=True)[1], [0.0, 3.0, 4.0, 1.0, 1.0, 0.0])
-        np.testing.assert_allclose(given.scaled(-2.0).errors()[1], [6.0, 8.0, 2.0, 2.0])
+        # a negative factor turns the interval over: 4 -1 +3 becomes -8 -6 +2
+        flipped = given.scaled(-2.0).errors()
+        np.testing.assert_allclose(flipped[0], [6.0, 8.0, 2.0, 2.0])
+        np.testing.assert_allclose(flipped[1], [2.0, 4.0, 1.0, 1.0])
+        np.testing.assert_array_equal(given.scaled(-1.0).scaled(-1.0).errors(), given.errors())
+        negative = Histogram(
+            _contents([-4.0, -9.0, -1.0, -1.0], [4.0, 9.0, 1.0, 1.0]),
+            label="N",
+            stat_errors=([1.0, 2.0, 0.5, 0.5], [3.0, 4.0, 1.0, 1.0]),
+        )
+        for spec in (True, "density"):  # the negative total, -15, flips the sign too
+            with pytest.warns(RootfigWarning, match="negative total"):
+                unity = normalize(negative, spec)
+            np.testing.assert_allclose(unity.errors()[0], np.array([3.0, 4.0, 1.0, 1.0]) / 15)
+            np.testing.assert_allclose(unity.errors()[1], np.array([1.0, 2.0, 0.5, 0.5]) / 15)
         merged = given.rebinned(2)  # in quadrature, side by side
         np.testing.assert_allclose(merged.errors()[0], [np.hypot(1, 2), np.hypot(0.5, 0.5)])
         unity = normalize(given, True)  # the total, 15, taken as a constant
@@ -4629,15 +4656,14 @@ class TestSavedErrorOptions:
 
 class TestShapeEdges:
     def test_given_errors_and_empty_counts(self) -> None:
+        # the total enters every bin with the opposite sign, so a bin's lower error takes the
+        # others' upper ones: no side-by-side propagation, refused like shape_covariance
         given = Histogram(
             _contents([1.0, 3.0], [1.0, 3.0]), label="G", stat_errors=([0.5, 1.0], [1.0, 2.0])
         )
-        shape = normalize(given, True, uncertainty="shape")
-        fraction = np.array([0.25, 0.75])
-        for side, errors in zip(shape.errors(), ([0.5, 1.0], [1.0, 2.0]), strict=True):
-            squares = np.square(errors)
-            expected = (squares * (1 - 2 * fraction) + fraction**2 * squares.sum()) / 16
-            np.testing.assert_allclose(side, np.sqrt(expected))
+        with pytest.raises(ValueError, match=r"stat_errors.*normalize_uncertainty='scale'"):
+            normalize(given, True, uncertainty="shape")
+        np.testing.assert_allclose(normalize(given, True).errors()[1], [0.25, 0.5])  # scale
         # counts only in the overflow: no visible total, the first-order spread instead
         h = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
         h.fill([0.5, 5.0, 5.0])
