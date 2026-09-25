@@ -804,7 +804,7 @@ wheels = [
 
 [[package]]
 name = "hist"
-version = "2.11.0"
+version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boost-histogram" },
@@ -812,9 +812,9 @@ dependencies = [
     { name = "numpy" },
     { name = "packaging" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cf/34/1dde027ac2e1a78e4d4dadc29b8ec500a79354760c449802abc807f297dc/hist-2.11.0.tar.gz", hash = "sha256:92eb1fa0ca39bad619f7f704b3ba93c44b3553b0445f6db2c17c67c01b9cb534", size = 1023354, upload-time = "2026-08-10T16:34:00.852Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/99/7ca29fbe7f0073e910ff7b79bf0b77b41fe5ecc7d75f5c8c73a16a7a2799/hist-2.12.0.tar.gz", hash = "sha256:cde1bc60439252f5851f05cbec183529752bf905b3cc28fbe92489d88c3b5596", size = 1030758, upload-time = "2026-09-21T18:06:15.568Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/d4/0915ff6087bb75be6f00bf362214406ded3f937b97c51cd065e11bdc6092/hist-2.11.0-py3-none-any.whl", hash = "sha256:94eb8bef077b1aa998ac7d1cdda904d1f0d4c73e4e0488ec5aee9d826ddc16b2", size = 50428, upload-time = "2026-08-10T16:33:59.108Z" },
+    { url = "https://files.pythonhosted.org/packages/90/e6/8290ba050272b0685414ae7e704081f3e7cba32bcd45b332774ecf134312/hist-2.12.0-py3-none-any.whl", hash = "sha256:d4a5a2e8231af3cd4aff711357d8ff547ee6c7630b7ba45cb58f86292c635bde", size = 53098, upload-time = "2026-09-21T18:06:14.112Z" },
 ]
 
 [[package]]
