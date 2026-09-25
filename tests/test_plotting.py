@@ -792,18 +792,28 @@ def comparison(
     band: Any = None,
     syst_errors: Any = None,
 ) -> Comparison:
-    """A comparison over the bins ``0, 1, ..., len(values)``."""
+    """A comparison over the bins ``0, 1, ..., len(values)``; symmetric ``errors`` and ``band``
+    may be given as one array."""
     values = np.asarray(values, dtype=float)
     return Comparison(
         kind=kind,
         label="N",
         reference="R",
         values=values,
-        errors=np.zeros_like(values) if errors is None else np.asarray(errors, dtype=float),
+        errors=_pair(np.zeros_like(values) if errors is None else errors),
         edges=np.arange(len(values) + 1.0),
-        band=band,
+        band=None if band is None else _pair(band),
         syst_errors=syst_errors,
     )
+
+
+def _pair(errors: Any) -> tuple[np.ndarray, np.ndarray]:
+    """``errors`` as ``(down, up)``: a pair as it is, one array on both sides."""
+    if isinstance(errors, tuple):
+        down, up = errors
+        return np.asarray(down, dtype=float), np.asarray(up, dtype=float)
+    symmetric = np.asarray(errors, dtype=float)
+    return symmetric, symmetric.copy()
 
 
 class TestPanel:
@@ -939,10 +949,11 @@ class TestPanel:
         (band,) = [c for c in rax.collections if isinstance(c, PolyCollection)]
         vertices = band.get_paths()[0].vertices
         assert result.band is not None
-        filled = np.isfinite(result.band)
-        spread = result.band[filled].max()
-        assert vertices[:, 1].max() == pytest.approx(baseline + spread)  # around the baseline
-        assert vertices[:, 1].min() == pytest.approx(baseline - spread)
+        down, up = result.band
+        assert vertices[:, 1].max() == pytest.approx(
+            baseline + np.nanmax(up)
+        )  # around the baseline
+        assert vertices[:, 1].min() == pytest.approx(baseline - np.nanmax(down))
         (container,) = rax.containers
         drawn = container.lines[0].get_ydata()
         np.testing.assert_allclose(drawn, result.values[np.isfinite(result.values)])
@@ -1104,6 +1115,59 @@ class TestPanel:
         assert rax.lines[0].get_ydata() == [0.0, 0.0]
         assert rax.lines[0].get_linestyle() == "--"
         assert not [c for c in rax.collections if isinstance(c, PolyCollection)]  # no band
+        plt.close(fig)
+
+
+def _vertical_bars(ax: Axes) -> list[list[tuple[float, float]]]:
+    """``(low, high)`` of every vertical error bar, per errorbar container of ``ax``."""
+    found = []
+    for container in ax.containers:
+        for collection in container.lines[2]:
+            segments = collection.get_segments()
+            if segments and all(np.isclose(seg[0][0], seg[1][0]) for seg in segments):
+                found.append([(float(seg[0][1]), float(seg[1][1])) for seg in segments])
+    return found
+
+
+def _asymmetric(histogram: Histogram, down: list[float], up: list[float]) -> Histogram:
+    """``histogram`` reporting the given ``(down, up)`` statistical errors."""
+    pair = (np.asarray(down, dtype=float), np.asarray(up, dtype=float))
+    object.__setattr__(histogram, "errors", lambda *, flow=False: pair)
+    return histogram
+
+
+class TestAsymmetricErrorBars:
+    """``(down, up)`` statistical errors reach the drawn error bars as they are."""
+
+    DOWN = [0.5, 0.25, 1.0, 0.75]
+    UP = [1.0, 2.0, 3.0, 4.0]
+
+    def test_data_points(self, data_hist: Histogram) -> None:
+        fig, ax = plt.subplots()
+        draw_histograms([_asymmetric(data_hist, self.DOWN, self.UP)], ax, style=Style())
+        (bars,) = _vertical_bars(ax)
+        values = data_hist.values()
+        np.testing.assert_allclose(bars, np.c_[values - self.DOWN, values + self.UP])
+        plt.close(fig)
+
+    def test_overlay_error_bars(self, mc_hists: list[Histogram]) -> None:
+        fig, ax = plt.subplots()
+        overlay = _asymmetric(mc_hists[0], self.DOWN, self.UP)
+        drawn = draw_histograms([overlay], ax, style=Style(), errorbars=True)
+        (bars,) = _vertical_bars(ax)
+        values = overlay.values()
+        np.testing.assert_allclose(bars, np.c_[values - self.DOWN, values + self.UP])
+        assert drawn.ymax == pytest.approx(max(values + self.UP))
+        plt.close(fig)
+
+    def test_panel_points(self) -> None:
+        fig, ax = plt.subplots()
+        values = [1.0, 1.2, 0.8, 1.1]
+        draw_panel([comparison(values, errors=(self.DOWN, self.UP))], ax, ylim=(-5.0, 9.0))
+        (bars,) = _vertical_bars(ax)
+        np.testing.assert_allclose(
+            bars, np.c_[np.subtract(values, self.DOWN), np.add(values, self.UP)]
+        )
         plt.close(fig)
 
 
@@ -1557,7 +1621,7 @@ class TestSignificancePanelAndPoints:
         assert ax.get_ylabel() == r"$S/\sqrt{B}$"
         assert ax.get_ylim() == (0.0, pytest.approx(1.25 * 2.2))
         assert ax.get_xlim() == (0.0, 3.0)
-        large = comparison(result.values * 3, kind="s/sqrt(b)", errors=result.errors * 2)
+        large = comparison(result.values * 3, kind="s/sqrt(b)", errors=result.errors[1] * 2)
         draw_panel([result, large], ax, colors=["red", "blue"])
         assert ax.get_ylim() == (0.0, pytest.approx(1.25 * 6.4))
         assert [c.lines[0].get_color() for c in ax.containers[-2:]] == ["red", "blue"]

@@ -119,7 +119,9 @@ def cutflow(
     every further row applies one more cut. Per-object cuts pass an event when
     any object passes. ``weight``, ``lumi`` and ``nonfinite`` work as in
     :func:`plot`: events with a ``nan``/``inf`` weight are excluded from all
-    steps with a warning, or raise for ``nonfinite="error"``.
+    steps with a warning, or raise for ``nonfinite="error"``. Yields carry
+    ``sqrt(sum w^2)``, efficiencies binomial Wilson intervals
+    (:attr:`~rootfig.Cutflow.efficiency_errors`); systematics are not propagated.
 
     Examples
     --------
@@ -128,6 +130,7 @@ def cutflow(
     ... )  # doctest: +SKIP
     >>> print(table)  # doctest: +SKIP
     >>> table.get("Signal").efficiencies  # doctest: +SKIP
+    >>> table.get("Signal").efficiency_errors  # (down, up)  # doctest: +SKIP
     """
     samples = as_samples(data, tree=tree, labels=label)
     return CutflowTable(

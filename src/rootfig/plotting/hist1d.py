@@ -544,7 +544,7 @@ def _draw_overlay(
         "label": histogram.label,
         "color": color,
         "flow": flow,
-        "yerr": errors if show_errors else False,
+        "yerr": list(errors) if show_errors else False,
     }
     if kind == "fill":
         kwargs["alpha"] = 0.45 if alpha is None else alpha
@@ -597,7 +597,7 @@ def _draw_data(
         histogram.hist,
         ax=ax,
         histtype="errorbar",
-        yerr=errors,
+        yerr=list(errors),
         xerr=False,
         label=histogram.label,
         flow=flow,

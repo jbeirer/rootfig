@@ -92,6 +92,7 @@ above.
         - fill
         - sum_histograms
         - uncertainty
+        - poisson_interval
         - summarize
         - read_stored
         - compatible_binning

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from rootfig.expressions import parse
+from rootfig.histograms.intervals import wilson_interval
 from rootfig.histograms.pipeline import combined_weight, read_arrays
 from rootfig.model.cuts import Cut, CutLike, as_cut
 from rootfig.model.samples import Sample
@@ -33,6 +34,9 @@ class CutflowStep:
         Weighted yield (sum of weights, including the sample scale and luminosity).
     error
         Statistical uncertainty on ``yield_``, ``sqrt(sum w^2)``.
+    negative_weights
+        Whether an event passing all cuts so far has a negative weight; the
+        efficiencies measured against this step then have no binomial interval.
     """
 
     label: str
@@ -40,6 +44,7 @@ class CutflowStep:
     events: int
     yield_: float
     error: float
+    negative_weights: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,44 @@ class Cutflow:
         y = self.yields
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(y[0] != 0, y / y[0], np.nan)
+
+    @property
+    def efficiency_errors(self) -> tuple[np.ndarray, np.ndarray]:
+        """``(down, up)`` statistical errors of :attr:`efficiencies`, 0 for the first step.
+
+        A step keeps a subset of the previous step's events, so its efficiency
+        has a binomial uncertainty: the Wilson score interval (one standard
+        deviation) of the two yields, with the effective entries of the previous
+        step for weighted events (see :func:`~rootfig.histograms.intervals.wilson_interval`;
+        an approximation unless every event has the same weight). ``nan`` where
+        the efficiency is undefined or lies outside ``[0, 1]``, and after a step
+        holding a negative weight (:attr:`CutflowStep.negative_weights`): no
+        binomial interval describes signed weights.
+        """
+        return self._errors([self.steps[0], *self.steps[:-1]], self.efficiencies)
+
+    @property
+    def absolute_efficiency_errors(self) -> tuple[np.ndarray, np.ndarray]:
+        """``(down, up)`` errors of :attr:`absolute_efficiencies`, as :attr:`efficiency_errors`.
+
+        Every step keeps a subset of the first step's events, the denominator.
+        """
+        return self._errors([self.steps[0]] * len(self.steps), self.absolute_efficiencies)
+
+    def _errors(
+        self, before: Sequence[CutflowStep], values: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Wilson errors of ``values``, each step measured against the one ``before`` it."""
+        lower, upper = wilson_interval(
+            self.yields, [b.yield_ for b in before], [b.error**2 for b in before]
+        )
+        signed = np.array([b.negative_weights for b in before])
+        down = np.where(signed, np.nan, values - lower)
+        up = np.where(signed, np.nan, upper - values)
+        # the first step is the reference itself: its efficiency is exact where defined
+        exact = 0.0 if np.isfinite(values[0]) else np.nan
+        down[0] = up[0] = exact
+        return down, up
 
 
 @dataclass(frozen=True)
@@ -191,6 +234,7 @@ def cutflow(
             events=int(np.count_nonzero(passing)),
             yield_=float(selected.sum()),
             error=float(np.sqrt(np.sum(selected**2))),
+            negative_weights=bool(np.any(selected < 0)),
         )
 
     base = sample.selection

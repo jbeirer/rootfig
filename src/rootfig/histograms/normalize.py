@@ -69,6 +69,11 @@ def normalize_hist(histogram: Hist, spec: NormalizeSpec) -> Hist:
     per-width modes so they stay comparable when drawn. Histograms with a plain
     count storage are converted (see :func:`~rootfig.histograms.as_weight_storage`).
 
+    Variances are multiplied by the square of the factor, which is taken as a
+    constant although the rescaling modes derive it from the histogram's own
+    total: the bins keep their relative uncertainties, and the correlation the
+    shared total brings (a normalised shape's covariance) is not represented.
+
     The rescaling modes divide by the signed sum of the visible bins, so the
     bins sum to the target even when negative weights dominate (the shape then
     flips sign, with a warning). A histogram whose visible bins sum to zero,

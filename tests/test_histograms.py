@@ -36,19 +36,24 @@ from rootfig.histograms import (
     compare,
     compatible_binning,
     correlation_matrix,
+    count_problem,
     describe_table,
     fill,
+    is_unit_counts,
     load_columns,
     normalize,
+    poisson_interval,
     sum_histograms,
     summarize,
     uncertainty,
 )
 from rootfig.histograms.build import from_sample
 from rootfig.histograms.groups import group_histogram, regroup_histograms
+from rootfig.histograms.intervals import poisson_errors
 from rootfig.histograms.normalize import normalization_label, normalize_hist
 from rootfig.histograms.pipeline import combined_weight
 from rootfig.model import Cut, Group, Sample, Systematic, Variable
+from rootfig.plotting import fold_flow_bins
 from rootfig.selection import Columns, prepare
 
 
@@ -95,7 +100,7 @@ class TestHistogram:
         assert histogram.centers.tolist() == [0.5, 1.5, 2.5]
         assert histogram.widths.tolist() == [1, 1, 1]
         assert histogram.values().tolist() == [2.0, 2.0, 1.0]
-        assert histogram.errors().tolist() == pytest.approx([np.sqrt(2), 2.0, 1.0])
+        assert _symmetric(histogram.errors()).tolist() == pytest.approx([np.sqrt(2), 2.0, 1.0])
         assert histogram.integral == 5.0
         assert histogram.overflow == 1.0
         assert histogram.underflow == 0.0
@@ -256,12 +261,75 @@ class TestNormalize:
         assert (out.values() * areas).sum() == pytest.approx(1.0)
 
 
+class TestNormalisedUncertainties:
+    """Normalising scales the variances by the factor squared, the factor taken as a constant.
+
+    The factor is the histogram's own total, which fluctuates with its bins; the
+    multinomial variance of a shape, ``p (1 - p) / N``, is not what is drawn.
+    """
+
+    def _counts(self) -> Histogram:
+        h = hist.Hist(hist.axis.Variable([0.0, 1.0, 3.0]), storage=hist.storage.Weight())
+        h.fill(np.repeat([0.5, 2.0], [10, 30]))
+        return Histogram(h, label="A")
+
+    def test_the_factor_is_a_constant(self) -> None:
+        unity = normalize(self._counts(), True)
+        np.testing.assert_allclose(unity.values(), [0.25, 0.75])
+        np.testing.assert_allclose(unity.variances(), [10 / 40**2, 30 / 40**2])
+        multinomial = 0.25 * 0.75 / 40
+        assert not np.allclose(unity.variances(), multinomial)
+        np.testing.assert_allclose(uncertainty(unity).stat_up, np.sqrt([10, 30]) / 40)
+
+    @pytest.mark.parametrize(
+        ("spec", "factors"),
+        [
+            ("density", [1 / 40, 1 / 80]),  # per unit width, then to unit area
+            ("width", [1.0, 0.5]),  # per unit width only
+            (100, [2.5, 2.5]),  # to a total of 100
+        ],
+    )
+    def test_every_mode_scales_the_variance_with_its_factor(
+        self, spec: Any, factors: list[float]
+    ) -> None:
+        normalised = normalize(self._counts(), spec)
+        np.testing.assert_allclose(normalised.values(), np.multiply([10, 30], factors))
+        np.testing.assert_allclose(
+            normalised.variances(), np.multiply([10, 30], np.square(factors))
+        )
+
+    def test_a_comparison_of_shapes_keeps_the_relative_errors(self) -> None:
+        a = self._counts()
+        b = Histogram(a.hist.copy(), label="B")
+        b.hist.view().value = [20.0, 20.0]
+        b.hist.view().variance = [20.0, 20.0]
+        raw = compare(a, b)
+        shapes = compare(normalize(a, True), normalize(b, True))
+        np.testing.assert_allclose(shapes.values, raw.values)  # both totals are 40
+        for got, want in zip(shapes.errors, raw.errors, strict=True):
+            np.testing.assert_allclose(got, want)
+
+    def test_a_normalisation_source_drops_out_of_a_shape(self) -> None:
+        h = self._counts()
+        varied = h.replace(variations={"lumi": (h.hist * 1.1, h.hist * 0.9)})
+        np.testing.assert_allclose(uncertainty(normalize(varied, True)).syst_up, 0.0, atol=1e-15)
+        per_width = uncertainty(normalize(varied, "width"))
+        np.testing.assert_allclose(per_width.syst_up, 0.1 * np.array([10.0, 15.0]))
+
+
 def _poisson(values: list[float]) -> hist.Hist:
     """Two bins holding ``values``, with Poisson variances."""
     h = hist.Hist(hist.axis.Regular(len(values), 0, len(values)), storage=hist.storage.Weight())
     h.view().value = values
     h.view().variance = values
     return h
+
+
+def _symmetric(errors: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
+    """The one side of a ``(down, up)`` pair whose sides agree exactly."""
+    down, up = errors
+    np.testing.assert_array_equal(down, up)
+    return down
 
 
 def _normalisation(h: hist.Hist, label: str, size: float = 0.1) -> Histogram:
@@ -300,19 +368,21 @@ class TestCompare:
         assert result.kind == kind
         np.testing.assert_allclose(result.values, values, atol=1e-4)
         if propagate is not None:
-            np.testing.assert_allclose(result.errors, propagate, atol=1e-4)
+            np.testing.assert_allclose(_symmetric(result.errors), propagate, atol=1e-4)
         if band is None:
             assert result.band is None
             assert result.total_band() is None
         else:
-            np.testing.assert_allclose(result.band, band, atol=1e-4)
+            assert result.band is not None
+            np.testing.assert_allclose(_symmetric(result.band), band, atol=1e-4)
         if numerator is not None:
             split = compare(
                 _poisson(list(self.N)), _poisson(list(self.D)), kind=kind, uncertainty="numerator"
             )
             np.testing.assert_allclose(split.values, values, atol=1e-4)
-            np.testing.assert_allclose(split.errors, numerator, atol=1e-4)
-            np.testing.assert_allclose(split.band, band, atol=1e-4)  # type: ignore[arg-type]
+            np.testing.assert_allclose(_symmetric(split.errors), numerator, atol=1e-4)
+            assert split.band is not None
+            np.testing.assert_allclose(_symmetric(split.band), band, atol=1e-4)
         else:
             with pytest.raises(ValueError, match="reference band"):
                 compare(_poisson([1.0]), _poisson([1.0]), kind=kind, uncertainty="numerator")
@@ -387,12 +457,13 @@ class TestCompare:
         den = fill([hist.axis.Regular(3, 0, 3)], columns([0.5, 1.5, 2.5]))
         r = compare(num, den)
         assert r.values.tolist() == pytest.approx([2.0, 4.0, 0.0])
+        errors = _symmetric(r.errors)
         # bin 0: n=2, vn=2, d=1, vd=1 -> sqrt(2/1 + 4*1/1) = sqrt(6)
-        assert r.errors[0] == pytest.approx(np.sqrt(6))
+        assert errors[0] == pytest.approx(np.sqrt(6))
         # bin 2: n=0, vn=0, d=1 -> 0
-        assert r.errors[2] == pytest.approx(0.0)
+        assert errors[2] == pytest.approx(0.0)
         assert r.band is not None
-        assert r.band.tolist() == pytest.approx([1.0, 1.0, 1.0])
+        assert _symmetric(r.band).tolist() == pytest.approx([1.0, 1.0, 1.0])
         assert r.centers.tolist() == [0.5, 1.5, 2.5]
         assert r.half_widths.tolist() == [0.5, 0.5, 0.5]
 
@@ -401,18 +472,18 @@ class TestCompare:
         den = fill([hist.axis.Regular(2, 0, 2)], columns([0.5, 0.5, 1.5], [2.0, 2.0, 1.0]))
         r = compare(num, den, uncertainty="numerator")
         assert r.values.tolist() == pytest.approx([1.0, 0.0])
-        assert r.errors.tolist() == pytest.approx([2 / 4, 0.0])
+        assert _symmetric(r.errors).tolist() == pytest.approx([2 / 4, 0.0])
         assert r.band is not None
-        assert r.band.tolist() == pytest.approx([np.sqrt(8) / 4, 1.0])
+        assert _symmetric(r.band).tolist() == pytest.approx([np.sqrt(8) / 4, 1.0])
 
     def test_zero_denominator_is_nan(self) -> None:
         num = fill([hist.axis.Regular(2, 0, 2)], columns([0.5]))
         den = fill([hist.axis.Regular(2, 0, 2)], columns([1.5]))
         r = compare(num, den)
         assert np.isnan(r.values[0])
-        assert np.isnan(r.errors[0])
+        assert all(np.isnan(side[0]) for side in r.errors)
         assert r.band is not None
-        assert np.isnan(r.band[0])
+        assert all(np.isnan(side[0]) for side in r.band)
         assert r.values[1] == 0.0
 
     def test_incompatible(self) -> None:
@@ -610,6 +681,276 @@ def _hist(values: list[float], weights: list[float] | None = None) -> hist.Hist:
     return h
 
 
+def _contents(values: list[float], variances: list[float]) -> hist.Hist:
+    """One bin per value, with the given variances."""
+    h = hist.Hist(hist.axis.Regular(len(values), 0, len(values)), storage=hist.storage.Weight())
+    h.view().value = values
+    h.view().variance = variances
+    return h
+
+
+def _with_errors(histogram: Histogram, down: list[float], up: list[float]) -> Histogram:
+    """``histogram`` reporting the given ``(down, up)`` statistical errors, as an asymmetric
+    model of its contents would."""
+    pair = (np.asarray(down, dtype=float), np.asarray(up, dtype=float))
+    object.__setattr__(histogram, "errors", lambda *, flow=False: pair)
+    return histogram
+
+
+class TestAsymmetricErrors:
+    """Statistical errors are ``(down, up)`` pairs from the histogram to the comparison."""
+
+    N = [4.0, 9.0, 1.0, 30.0]
+    VN = [2.0, 7.0, 0.5, 45.0]
+    D = [2.0, 3.0, -2.0, 12.0]
+    VD = [1.5, 4.0, 3.0, 20.0]
+
+    def _sides(self) -> tuple[hist.Hist, hist.Hist]:
+        return _contents(self.N, self.VN), _contents(self.D, self.VD)
+
+    @staticmethod
+    def _closed_form(kind: str, n: Any, d: Any, vn: Any, vd: Any) -> Any:
+        """The symmetric error of ``kind`` from the textbook formula."""
+        errors = {
+            "ratio": np.sqrt(vn / d**2 + n**2 * vd / d**4),
+            "relative_difference": np.sqrt(vn / d**2 + n**2 * vd / d**4),
+            "difference": np.sqrt(vn + vd),
+            "pull": np.ones(4),
+            "asymmetry": 2 * np.sqrt(d**2 * vn + n**2 * vd) / (n + d) ** 2,
+            "s/sqrt(b)": np.sqrt(vn / d + n**2 * vd / (4 * d**3)),
+            "s/sqrt(s+b)": np.sqrt(
+                ((n + 2 * d) / (2 * (n + d) ** 1.5)) ** 2 * vn
+                + (n / (2 * (n + d) ** 1.5)) ** 2 * vd
+            ),
+        }
+        return errors[kind]
+
+    @pytest.mark.parametrize("kind", COMPARISON_KINDS)
+    def test_symmetric_errors_match_the_closed_forms(self, kind: Any) -> None:
+        n, d = np.array(self.N), np.array(self.D)
+        vn, vd = np.array(self.VN), np.array(self.VD)
+        with np.errstate(invalid="ignore"):  # a negative background has no significance
+            expected = self._closed_form(kind, n, d, vn, vd)
+            result = compare(*self._sides(), kind=kind)
+        defined = np.isfinite(result.values)
+        errors = _symmetric(result.errors)
+        np.testing.assert_allclose(errors[defined], expected[defined], rtol=1e-13)
+        assert np.isnan(errors[~defined]).all()
+        if kind == "pull":
+            np.testing.assert_allclose(result.values, (n - d) / np.sqrt(vn + vd), rtol=1e-13)
+        if kind in ("ratio", "difference"):
+            split = compare(*self._sides(), kind=kind, uncertainty="numerator")
+            assert split.band is not None
+            scale = np.abs(d) if kind == "ratio" else 1.0
+            np.testing.assert_allclose(_symmetric(split.errors), np.sqrt(vn) / scale, rtol=1e-13)
+            np.testing.assert_allclose(_symmetric(split.band), np.sqrt(vd) / scale, rtol=1e-13)
+
+    def test_a_ratio_takes_the_side_that_moves_it(self) -> None:
+        # n = 4 with errors (1, 3); d = 2 with errors (0.5, 1), and d = -2 in bin 1
+        num = _with_errors(Histogram(_contents([4.0, 4.0], [4.0, 4.0]), "N"), [1, 1], [3, 3])
+        ref = _with_errors(
+            Histogram(_contents([2.0, -2.0], [1.0, 1.0]), "D"), [0.5, 0.5], [1.0, 1.0]
+        )
+        split = compare(num, ref, uncertainty="numerator")
+        # n / d falls with n where d > 0 and rises with it where d < 0
+        np.testing.assert_allclose(split.errors[0], [1 / 2, 3 / 2])
+        np.testing.assert_allclose(split.errors[1], [3 / 2, 1 / 2])
+        assert split.band is not None  # the reference's own relative interval, around 1
+        np.testing.assert_allclose(split.band[0], [0.5 / 2, 1.0 / 2])
+        np.testing.assert_allclose(split.band[1], [1.0 / 2, 0.5 / 2])
+        both = compare(num, ref)
+        # bin 0: lowering n / d = lowering n (1) or raising d (1): hypot(1/2, 4 * 1 / 4)
+        np.testing.assert_allclose(both.errors[0][0], np.hypot(1 / 2, 4 * 1.0 / 4))
+        np.testing.assert_allclose(both.errors[1][0], np.hypot(3 / 2, 4 * 0.5 / 4))
+
+    def test_a_difference_and_a_pull_face_the_reference(self) -> None:
+        num = _with_errors(Histogram(_contents([5.0, 1.0], [5.0, 1.0]), "N"), [2, 0.8], [3, 2.3])
+        ref = _with_errors(Histogram(_contents([3.0, 3.0], [3.0, 3.0]), "D"), [1, 1], [1.5, 1.5])
+        difference = compare(num, ref, kind="difference")
+        np.testing.assert_allclose(difference.errors[0], np.hypot([2, 0.8], [1.5, 1.5]))
+        np.testing.assert_allclose(difference.errors[1], np.hypot([3, 2.3], [1, 1]))
+        split = compare(num, ref, kind="difference", uncertainty="numerator")
+        np.testing.assert_allclose(split.errors[0], [2, 0.8])
+        assert split.band is not None
+        np.testing.assert_allclose(split.band[1], [1.5, 1.5])
+        pull = compare(num, ref, kind="pull")
+        # n > d in bin 0: the lower side of n - d faces zero; n < d in bin 1: the upper one
+        np.testing.assert_allclose(
+            pull.values, [2 / np.hypot(2, 1.5), -2 / np.hypot(2.3, 1)], rtol=1e-13
+        )
+        np.testing.assert_array_equal(_symmetric(pull.errors), [1.0, 1.0])
+
+    def test_uncertainty_adds_each_statistical_side_to_its_systematic_side(self) -> None:
+        nominal = _contents([10.0, 10.0], [10.0, 10.0])
+        varied = Histogram(nominal, "A", variations={"s": (nominal * 1.3, nominal * 0.8)})
+        u = uncertainty(_with_errors(varied, [2.0, 1.0], [4.0, 5.0]))
+        np.testing.assert_allclose(u.stat_down, [2.0, 1.0])
+        np.testing.assert_allclose(u.stat_up, [4.0, 5.0])
+        np.testing.assert_allclose(u.total_down, np.hypot([2.0, 1.0], 2.0))
+        np.testing.assert_allclose(u.total_up, np.hypot([4.0, 5.0], 3.0))
+
+
+# Garwood bounds (count, lower, upper) from scipy.special.gammaincinv, at z = 1 and z = 2
+GARWOOD = {
+    1.0: [
+        (0, 0.0, 1.8410216450092634),
+        (1, 0.17275377902344996, 3.299526559115855),
+        (2, 0.7081854398189713, 4.637859623455245),
+        (3, 1.367295313890434, 5.918185832883396),
+        (5, 2.8403088555932205, 8.382472652146888),
+        (10, 6.891305560638357, 14.266949761009391),
+        (20, 15.56555201778588, 25.54651922951146),
+        (100, 90.0167451771134, 111.03336094114967),
+        (1000, 968.3825014065658, 1032.633323474849),
+        (1001, 969.3666913282727, 1033.6491256405543),
+        (5000, 4929.291680397712, 5071.715393515044),
+        (1000000, 999000.000166674, 1001001.0003333407),
+    ],
+    2.0: [
+        (0, 0.0, 3.783184333682032),
+        (1, 0.0230129093289635, 5.682707562895901),
+        (10, 4.719233718620755, 18.577119961610656),
+        (1000, 937.7596419630572, 1065.2718274168408),
+        (1001, 938.7280245307875, 1066.303429205423),
+    ],
+}
+
+
+class TestPoissonIntervals:
+    @pytest.mark.parametrize("z", sorted(GARWOOD))
+    def test_garwood_bounds(self, z: float) -> None:
+        counts, lower, upper = (
+            np.array(column, dtype=float) for column in zip(*GARWOOD[z], strict=True)
+        )
+        low, high = poisson_interval(counts, z)
+        # exact up to 1000 counts, Wilson-Hilferty beyond: judged against the error bar
+        tolerance = np.where(counts <= 1000, 1e-10, 3e-5)
+        down_bar = np.where(counts > 0, counts - lower, 1.0)
+        np.testing.assert_array_less(np.abs(low - lower) / down_bar, tolerance)
+        np.testing.assert_array_less(np.abs(high - upper) / (upper - counts), tolerance)
+        assert low[0] == 0.0
+
+    def test_many_counts_become_symmetric(self) -> None:
+        counts = np.array([100.0, 1e4, 1e6])
+        low, high = poisson_interval(counts)
+        down, up = (counts - low) / np.sqrt(counts), (high - counts) / np.sqrt(counts)
+        # both sides approach sqrt(n), and each other
+        assert np.all(np.diff(np.abs(up - 1.0)) < 0)
+        assert np.all(np.diff(np.abs(down - 1.0)) < 0)
+        np.testing.assert_allclose([down[-1], up[-1]], 1.0, rtol=2e-3)
+        only_large = poisson_interval([2e6, 3e6])  # none solved exactly
+        np.testing.assert_allclose(only_large[1] - [2e6, 3e6], np.sqrt([2e6, 3e6]), rtol=1e-3)
+
+    def test_equal_counts_solve_once_and_agree(self) -> None:
+        low, high = poisson_interval([3.0, 0.0, 3.0, 7.0, 0.0])
+        assert (low[0], high[0]) == (low[2], high[2])
+        assert high[1] == high[4]
+
+    def test_scaled_counts(self) -> None:
+        counts = np.array([0.0, 3.0, 0.0, 0.0, 5.0, 0.0])
+        raw_down, raw_up = poisson_errors(counts, counts)
+        low, high = poisson_interval(counts)
+        np.testing.assert_allclose(raw_down, counts - low)
+        np.testing.assert_allclose(raw_up, high - counts)
+        # normalised to unity: one factor for every bin, empty ones included
+        down, up = poisson_errors(counts / 8, counts / 64)
+        np.testing.assert_allclose(down, raw_down / 8, rtol=1e-12)
+        np.testing.assert_allclose(up, raw_up / 8, rtol=1e-12)
+        # per-bin factors: an empty bin borrows the nearest filled bin's (ties: the lower one)
+        factor = np.array([1.0, 2.0, 1.0, 1.0, 4.0, 1.0])
+        _, borrowed = poisson_errors(counts / factor, counts / factor**2)
+        np.testing.assert_allclose(borrowed, raw_up / [2.0, 2.0, 2.0, 4.0, 4.0, 4.0])
+        np.testing.assert_allclose(poisson_errors(np.zeros(2), np.zeros(2))[1], 1.8410216450, 1e-9)
+
+    def test_unit_counts_and_count_problems(self) -> None:
+        assert is_unit_counts([0.0, 3.0, 7.0], [0.0, 3.0, 7.0])
+        assert not is_unit_counts([0.0, 1.5], [0.0, 1.5])  # not whole
+        assert not is_unit_counts([2.0, 4.0], [4.0, 8.0])  # weight 2
+        assert count_problem([0.0, 2.0, 4.0], [0.0, 4.0, 8.0]) is None  # counts scaled by 2
+        assert count_problem([0.25, 0.75], [0.0625, 0.1875]) is None  # normalised counts
+        assert "negative" in str(count_problem([-1.0, 2.0], [1.0, 2.0]))
+        assert "cancel" in str(count_problem([0.0, 2.0], [2.0, 2.0]))
+        assert "weighted" in str(count_problem([1.5, 2.0], [1.25, 2.0]))
+        assert "without a variance" in str(count_problem([1.0], [0.0]))
+        assert "non-finite" in str(count_problem([np.nan], [1.0]))
+
+
+class TestPoissonHistograms:
+    def _data(self, counts: list[float], **kwargs: Any) -> Histogram:
+        return Histogram(_poisson(counts), label="Data", is_data=True, poisson=True, **kwargs)
+
+    def test_errors_are_the_interval_of_the_counts(self) -> None:
+        data = self._data([0.0, 1.0, 4.0])
+        low, high = poisson_interval([0.0, 1.0, 4.0])
+        down, up = data.errors()
+        np.testing.assert_allclose(down, [0.0, 1.0, 4.0] - low)
+        np.testing.assert_allclose(up, high - [0.0, 1.0, 4.0])
+        assert up[0] == pytest.approx(1.8410216450)  # an empty bin still has an upper error
+        u = uncertainty(data)
+        np.testing.assert_array_equal(u.stat_up, up)
+        np.testing.assert_array_equal(u.total_down, down)
+        plain = Histogram(_poisson([0.0, 1.0, 4.0]), label="Data", is_data=True)
+        np.testing.assert_array_equal(_symmetric(plain.errors()), [0.0, 1.0, 2.0])
+
+    def test_the_flag_survives_display_transformations(self) -> None:
+        data = self._data([2.0, 6.0])
+        unity = normalize(data, True)
+        assert unity.poisson
+        np.testing.assert_allclose(unity.errors()[1], data.errors()[1] / 8, rtol=1e-12)
+        density = normalize(self._data([2.0, 0.0, 6.0]), "density")
+        np.testing.assert_allclose(density.errors()[1][1], 1.8410216450 / 8, rtol=1e-9)
+        assert data.scaled(3.0).poisson
+
+    def test_folded_flow_bins_take_the_interval_of_the_sum(self) -> None:
+        h = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+        h.fill([-1.0, -1.0, 0.5, 1.5, 5.0])  # underflow 2, bins 1 and 1, overflow 1
+        (folded,) = fold_flow_bins([Histogram(h, label="Data", is_data=True, poisson=True)])
+        assert folded.poisson
+        low, high = poisson_interval([3.0, 2.0])
+        np.testing.assert_allclose(folded.errors()[1], high - [3.0, 2.0])
+        np.testing.assert_allclose(folded.errors()[0], [3.0, 2.0] - low)
+
+    @pytest.mark.parametrize(
+        ("values", "variances", "problem"),
+        [
+            ([2.0, 3.0], [2.5, 3.5], "weighted"),
+            ([-1.0, 3.0], [1.0, 3.0], "negative"),
+            ([0.0, 3.0], [2.0, 3.0], "cancel"),
+        ],
+    )
+    def test_contents_that_are_not_counts_are_refused(
+        self, values: list[float], variances: list[float], problem: str
+    ) -> None:
+        with pytest.raises(ValueError, match=problem):
+            Histogram(_contents(values, variances), label="Data", poisson=True)
+        with pytest.raises(ValueError, match="negative"):
+            self._data([1.0, 2.0]).scaled(-1.0)
+
+    def test_a_ratio_to_data_counts_takes_its_interval(self) -> None:
+        data = self._data([0.0, 1.0, 9.0])
+        mc = Histogram(_poisson([2.0, 2.0, 8.0]), label="MC")
+        low, high = poisson_interval([0.0, 1.0, 9.0])
+        split = compare(data, mc, uncertainty="numerator")
+        np.testing.assert_allclose(split.values, [0.0, 0.5, 9 / 8])
+        np.testing.assert_allclose(split.errors[0], ([0.0, 1.0, 9.0] - low) / [2, 2, 8])
+        np.testing.assert_allclose(split.errors[1], (high - [0.0, 1.0, 9.0]) / [2, 2, 8])
+        assert split.errors[1][0] == pytest.approx(1.8410216450 / 2)  # not 0 +- 0
+        # data as the reference: lowering mc / data raises data, so its upper error enters
+        inverse = compare(mc, data, uncertainty="numerator")
+        assert inverse.band is not None
+        np.testing.assert_allclose(inverse.band[1][1:], (high[1:] - [1, 9]) / [1, 9])
+        propagated = compare(mc, data)
+        n, d = np.array([2.0, 8.0]), np.array([1.0, 9.0])
+        d_up = (high - [0.0, 1.0, 9.0])[1:]
+        np.testing.assert_allclose(
+            propagated.errors[0][1:], np.hypot(np.sqrt(n) / d, n * d_up / d**2)
+        )
+        pull = compare(data, mc, kind="pull")
+        # data below the prediction: its upper error faces the reference
+        sigma = np.hypot((high - [0.0, 1.0, 9.0])[:2], np.sqrt(2.0))
+        np.testing.assert_allclose(pull.values[:2], [-2.0, -1.0] / sigma)
+
+
 class TestComparePoints:
     """Efficiencies and profiles: independent points, asymmetric intervals propagated."""
 
@@ -637,7 +978,6 @@ class TestComparePoints:
         (a_down, a_up), (b_down, b_up) = a.errors, b.errors
         result = compare(a, b)
         np.testing.assert_allclose(result.values, [2.0, 1.0])
-        assert isinstance(result.errors, tuple)
         down, up = result.errors
         # lowering a / b lowers a or raises b: a's lower error with b's upper one
         np.testing.assert_allclose(down, np.hypot(a_down / b.values, a.values * b_up / b.values**2))
@@ -668,7 +1008,7 @@ class TestComparePoints:
         pull = compare(a, b, kind="pull")
         # a > b in bin 0: the lower error of a - b faces zero; a == b in bin 1: the upper
         np.testing.assert_allclose(pull.values, [0.25 / np.hypot(0.1, 0.1), 0.0], atol=1e-12)
-        np.testing.assert_array_equal(pull.errors, [1.0, 1.0])
+        np.testing.assert_array_equal(_symmetric(pull.errors), [1.0, 1.0])
 
     def test_profiles_propagate_symmetric_errors(self) -> None:
         def profile_(values: list[float], errors: list[float], label: str) -> Profile:
@@ -730,7 +1070,7 @@ class TestSignificance:
         np.testing.assert_allclose(result.values[:2], [2 / 2, 1 / 1])
         assert np.isnan(result.values[2])
         # var = vs/b + s^2 vb/(4 b^3): bin 0 -> 2/4 + 4*4/(4*64) = 0.5 + 0.0625
-        assert result.errors[0] == pytest.approx(np.sqrt(0.5625))
+        assert _symmetric(result.errors)[0] == pytest.approx(np.sqrt(0.5625))
         assert result.band is None
         np.testing.assert_allclose(result.edges, [0, 1, 2, 3])
 
@@ -741,7 +1081,7 @@ class TestSignificance:
         assert result.values[0] == pytest.approx(2 / np.sqrt(4))
         assert result.values[1] == pytest.approx(0.0)
         assert np.isnan(result.values[2])
-        assert np.isfinite(result.errors[0])
+        assert np.isfinite(_symmetric(result.errors)[0])
         with pytest.raises(BinningError):
             compare(
                 signal,
@@ -881,6 +1221,75 @@ class TestCutflow:
         assert np.isnan(cancelled.efficiencies[1])  # zero yield: undefined
         assert np.isnan(cancelled.absolute_efficiencies).all()
 
+    @staticmethod
+    def _wilson(k: float, n: float, n_eff: float) -> tuple[float, float]:
+        """The Wilson interval at one standard deviation, written out."""
+        p = k / n
+        centre = (p + 1 / (2 * n_eff)) / (1 + 1 / n_eff)
+        half = np.sqrt(p * (1 - p) / n_eff + 1 / (4 * n_eff**2)) / (1 + 1 / n_eff)
+        return p - (centre - half), (centre + half) - p
+
+    def test_efficiency_errors_are_binomial(self) -> None:
+        from rootfig.histograms import cutflow
+
+        sample = Sample({"n": np.arange(100.0)}, label="counts")
+        flow = cutflow(sample, ["n >= 40", "n >= 70"])  # 100 -> 60 -> 30
+        down, up = flow.efficiency_errors
+        assert (down[0], up[0]) == (0.0, 0.0)  # the first step is the reference itself
+        np.testing.assert_allclose([down[1], up[1]], self._wilson(60, 100, 100))
+        np.testing.assert_allclose([down[2], up[2]], self._wilson(30, 60, 60))
+        # 60 of 100: 0.6 -0.0497 +0.0478, not the independent-yield sqrt(1/60 + 1/100)
+        assert (down[1], up[1]) == pytest.approx((0.04975, 0.04777), abs=1e-5)
+        absolute = flow.absolute_efficiency_errors
+        np.testing.assert_allclose([absolute[0][2], absolute[1][2]], self._wilson(30, 100, 100))
+        assert not any(step.negative_weights for step in flow.steps)
+
+    def test_one_weight_for_every_event_changes_nothing(self) -> None:
+        from rootfig.histograms import cutflow
+
+        plain = cutflow(Sample({"n": np.arange(100.0)}), ["n >= 40", "n >= 70"])
+        scaled = cutflow(Sample({"n": np.arange(100.0)}, weight="2.5"), ["n >= 40", "n >= 70"])
+        for got, want in zip(scaled.efficiency_errors, plain.efficiency_errors, strict=True):
+            np.testing.assert_allclose(got, want)
+
+    def test_weighted_events_use_the_effective_entries(self) -> None:
+        from rootfig.histograms import cutflow
+
+        weights = np.where(np.arange(100) % 2, 3.0, 1.0)  # 50 of weight 1, 50 of weight 3
+        flow = cutflow(Sample({"n": np.arange(100.0), "w": weights}, weight="w"), ["n >= 40"])
+        n, vn = 200.0, 50 * 1.0 + 50 * 9.0
+        k = float(weights[40:].sum())
+        down, up = flow.efficiency_errors
+        np.testing.assert_allclose([down[1], up[1]], self._wilson(k, n, n**2 / vn))
+
+    def test_an_empty_step_leaves_later_efficiencies_undefined(self) -> None:
+        from rootfig.histograms import cutflow
+
+        flow = cutflow(Sample({"n": np.arange(10.0)}), ["n > 100", "n > 200"])
+        down, up = flow.efficiency_errors
+        assert (down[1], up[1]) == (0.0, pytest.approx(1 / 11))  # 0 of 10: z² / (n + z²)
+        assert np.isnan(flow.efficiencies[2])
+        assert np.isnan(down[2])
+        assert np.isnan(up[2])
+        empty = cutflow(Sample({"n": np.arange(10.0)}, selection="n < 0"), ["n > 1"])
+        assert np.isnan(empty.absolute_efficiency_errors[0]).all()
+
+    def test_negative_weights_have_no_interval(self) -> None:
+        from rootfig.histograms import cutflow
+
+        # one negative weight among ten, cut away by the first cut
+        weights = np.r_[-1.0, np.ones(9)]
+        sample = Sample({"n": np.arange(10.0), "w": weights}, weight="w")
+        flow = cutflow(sample, ["n >= 1", "n >= 5"])
+        assert [step.negative_weights for step in flow.steps] == [True, False, False]
+        np.testing.assert_allclose(flow.efficiencies, [1.0, 9 / 8, 5 / 9])  # still reported
+        down, up = flow.efficiency_errors
+        assert np.isnan([down[1], up[1]]).all()  # measured against a signed step
+        np.testing.assert_allclose([down[2], up[2]], self._wilson(5, 9, 9))
+        absolute_down, _ = flow.absolute_efficiency_errors
+        assert np.isnan(absolute_down[1:]).all()  # every step measured against the first
+        assert absolute_down[0] == 0.0
+
     def test_table(self) -> None:
         from rootfig.histograms import CutflowTable, cutflow
 
@@ -991,12 +1400,12 @@ class TestEfficiencyDomain:
         from rootfig.histograms import efficiency
 
         # total = 1 - 2 = -1: the ratio is defined, a binomial interval is not
-        with pytest.warns(RootfigWarning, match="negative total weight"):
+        with pytest.warns(RootfigWarning, match="negative weights"):
             eff = efficiency(*self._weighted([-0.5], [1.0, -2.0]))
         assert eff.values[0] == pytest.approx(0.5)
         assert np.isnan(eff.lower[0])
         assert np.isnan(eff.upper[0])
-        with pytest.warns(RootfigWarning, match="negative total weight"):
+        with pytest.warns(RootfigWarning, match="negative weights"):
             eff = efficiency(*self._weighted([-2.0], [1.0, -2.0]))
         assert eff.values[0] == pytest.approx(2.0)
         assert np.isnan(eff.lower[0])
@@ -1011,16 +1420,50 @@ class TestEfficiencyDomain:
         assert np.isnan(eff.lower[0])
         assert np.isnan(eff.upper[0])
 
-    def test_positive_total_with_negative_weights_keeps_interval(self) -> None:
+    def test_negative_weights_inside_the_unit_interval_have_no_interval(self) -> None:
         from rootfig.histograms import efficiency
 
-        # total = 1.5 with sum w^2 = 2.25, so n_eff = 1; p = 2/3 with a Wilson band
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
+        # p = 1 / 1.5 lies in [0, 1], but the failing entries {1, -0.5} sum to 0.5 with
+        # squares summing to 1.25 > 0.25, which non-negative weights never give
+        with pytest.warns(RootfigWarning, match="negative weights"):
             eff = efficiency(*self._weighted([1.0], [1.0, 1.0, -0.5]))
         assert eff.values[0] == pytest.approx(2 / 3)
-        assert eff.lower[0] == pytest.approx(0.2397411978652, rel=1e-6)
-        assert eff.upper[0] == pytest.approx(0.9269254688015, rel=1e-6)
+        assert np.isnan(eff.lower[0])
+        assert np.isnan(eff.upper[0])
+
+    def test_negative_weights_the_sums_hide_need_the_flag(self) -> None:
+        from rootfig.histograms import efficiency
+
+        # passing {1, 1, -0.1} and failing {1}: every sum looks like non-negative weights
+        hists = self._weighted([1.0, 1.0, -0.1], [1.0, 1.0, -0.1, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            unknown = efficiency(*hists)
+        assert np.isfinite(unknown.lower[0])  # nothing in the sums says so
+        with pytest.warns(RootfigWarning, match="negative weights"):
+            flagged = efficiency(*hists, negative_weights=[True])
+        assert flagged.values[0] == pytest.approx(1.9 / 2.9)
+        assert np.isnan(flagged.lower[0])
+        assert np.isnan(flagged.upper[0])
+
+    def test_positive_weights_keep_their_interval(self) -> None:
+        from rootfig.histograms import efficiency
+
+        # positive weights of different sizes, all passing or all failing included
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            eff = efficiency(*self._weighted([0.5, 3.0], [0.5, 3.0, 1.0, 0.2]))
+            ends = [efficiency(*self._weighted(w, [0.5, 3.0])) for w in ([], [0.5, 3.0])]
+        assert np.isfinite(eff.lower[0])
+        assert np.isfinite(eff.upper[0])
+        n, vn = 4.7, 0.25 + 9.0 + 1.0 + 0.04
+        n_eff = n**2 / vn
+        p = 3.5 / n
+        centre = (p + 1 / (2 * n_eff)) / (1 + 1 / n_eff)
+        half = np.sqrt(p * (1 - p) / n_eff + 1 / (4 * n_eff**2)) / (1 + 1 / n_eff)
+        assert (eff.lower[0], eff.upper[0]) == pytest.approx((centre - half, centre + half))
+        assert [e.values[0] for e in ends] == [0.0, 1.0]
+        assert all(np.isfinite(e.lower[0]) and np.isfinite(e.upper[0]) for e in ends)
 
     @pytest.mark.parametrize("z", [0.0, -1.0, np.inf, np.nan])
     def test_z_is_validated(self, z: float) -> None:
@@ -1620,7 +2063,8 @@ class TestVariations:
         u = uncertainty(h)
         np.testing.assert_allclose(u.syst_up, [5.0, 5.0])
         np.testing.assert_allclose(u.syst_down, [5.0, 3.0])
-        np.testing.assert_allclose(u.stat, [10.0, 10.0])
+        np.testing.assert_allclose(u.stat_down, [10.0, 10.0])
+        np.testing.assert_allclose(u.stat_up, [10.0, 10.0])
         np.testing.assert_allclose(u.total_up, np.hypot(10.0, [5.0, 5.0]))
         np.testing.assert_allclose(u.components["a"][0], [3.0, 4.0])
         assert u.has_systematics
@@ -1680,15 +2124,17 @@ class TestVariations:
         np.testing.assert_allclose(both.syst_errors[0], [0.5 - 8 / 19])
         np.testing.assert_allclose(both.syst_errors[1], [0.0])
         down, up = both.total_errors()
-        np.testing.assert_allclose(up, np.hypot(both.errors, both.syst_errors[1]))
+        np.testing.assert_allclose(up, np.hypot(both.errors[1], both.syst_errors[1]))
         band_down, _ = split.total_band()
-        np.testing.assert_allclose(band_down, np.hypot(split.band, 1.0 / 20.0))
+        assert split.band is not None
+        np.testing.assert_allclose(band_down, np.hypot(split.band[0], 1.0 / 20.0))
 
         plain = compare(num.hist, den.hist)
         assert plain.syst_errors is None
         assert plain.syst_band is None
-        np.testing.assert_allclose(plain.total_errors()[0], plain.errors)
-        np.testing.assert_allclose(plain.total_band()[1], plain.band)
+        assert plain.band is not None
+        np.testing.assert_allclose(plain.total_errors()[0], plain.errors[0])
+        np.testing.assert_allclose(plain.total_band()[1], plain.band[1])
         no_num = compare(Histogram(contents([10.0]), label="N"), den, uncertainty="numerator")
         assert no_num.syst_errors is None
         assert no_num.syst_band is not None
@@ -1808,6 +2254,58 @@ class TestSystematicsPipeline:
         sample = Sample(arrays, label="MC", systematics={"alt": Systematic.samples(42)})
         with pytest.raises(SystematicError, match=r"MC \[alt up\]"):
             build_histograms([sample], "x")
+
+
+class TestNuisanceIdentity:
+    """A source's name is its nuisance: one name is one fully correlated source, two names
+    are independent sources, in a sum as in a comparison."""
+
+    @staticmethod
+    def _pair(first: str, second: str) -> tuple[Histogram, Histogram]:
+        a = Histogram(
+            contents([100.0]), label="A", variations={first: (contents([110.0]), contents([90.0]))}
+        )
+        b = Histogram(
+            contents([200.0]),
+            label="B",
+            variations={second: (contents([220.0]), contents([180.0]))},
+        )
+        return a, b
+
+    def test_one_name_is_one_nuisance(self) -> None:
+        a, b = self._pair("scale", "scale")
+        total = uncertainty(sum_histograms([a, b]))
+        assert list(total.components) == ["scale"]
+        np.testing.assert_allclose(total.syst_up, [30.0])  # 10 + 20, linearly
+        ratio = compare(a, b)
+        assert ratio.syst_errors is not None
+        np.testing.assert_allclose(ratio.syst_errors, [[0.0], [0.0]], atol=1e-12)  # cancels
+
+    def test_two_names_are_independent(self) -> None:
+        a, b = self._pair("scale_a", "scale_b")
+        total = uncertainty(sum_histograms([a, b]))
+        assert list(total.components) == ["scale_a", "scale_b"]
+        np.testing.assert_allclose(total.syst_up, [np.hypot(10.0, 20.0)])
+        ratio = compare(a, b)
+        assert ratio.syst_errors is not None
+        # each source varies its own side against the other's nominal contents
+        np.testing.assert_allclose(ratio.syst_errors[1], [np.hypot(0.05, 100 / 180 - 0.5)])
+        np.testing.assert_allclose(ratio.syst_errors[0], [np.hypot(0.05, 0.5 - 100 / 220)])
+
+    def test_a_plot_level_source_is_shared_by_every_sample(self) -> None:
+        x = Variable("x", bins=(1, 0.0, 1.0))
+        a = Sample({"x": np.full(100, 0.5)}, label="A")
+        b = Sample({"x": np.full(300, 0.5)}, label="B")
+        shared = sum_histograms(build_histograms([a, b], x, systematics={"xsec": 0.1}))
+        np.testing.assert_allclose(uncertainty(shared).syst_up, [40.0])  # 10 % of 400
+        # independent cross sections per process: one name per sample
+        own = sum_histograms(
+            build_histograms(
+                [a.replace(systematics={"xsec_a": 0.1}), b.replace(systematics={"xsec_b": 0.1})],
+                x,
+            )
+        )
+        np.testing.assert_allclose(uncertainty(own).syst_up, [np.hypot(10.0, 30.0)])
 
 
 class TestSystematicsRegressions:

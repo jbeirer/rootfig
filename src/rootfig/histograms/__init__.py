@@ -5,6 +5,8 @@ from rootfig.histograms.build import (
     as_weight_storage,
     compatible_binning,
     fill,
+    from_sample,
+    negative_bins,
 )
 from rootfig.histograms.comparison import (
     COMPARISON_KINDS,
@@ -15,6 +17,12 @@ from rootfig.histograms.comparison import (
 )
 from rootfig.histograms.cutflow import Cutflow, CutflowStep, CutflowTable, cutflow
 from rootfig.histograms.efficiency import Efficiency, Profile, ProfileStatistic, efficiency, profile
+from rootfig.histograms.intervals import (
+    DataErrors,
+    count_problem,
+    is_unit_counts,
+    poisson_interval,
+)
 from rootfig.histograms.normalize import (
     NormalizeSpec,
     normalize,
@@ -39,6 +47,7 @@ __all__ = [
     "Cutflow",
     "CutflowStep",
     "CutflowTable",
+    "DataErrors",
     "Efficiency",
     "Histogram",
     "NormalizeSpec",
@@ -55,14 +64,19 @@ __all__ = [
     "compare",
     "compatible_binning",
     "correlation_matrix",
+    "count_problem",
     "cutflow",
     "describe_axes",
     "describe_table",
     "efficiency",
     "fill",
+    "from_sample",
+    "is_unit_counts",
     "load_columns",
     "load_columns_each",
+    "negative_bins",
     "normalize",
+    "poisson_interval",
     "prefetch",
     "profile",
     "read_arrays",

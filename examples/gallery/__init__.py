@@ -240,6 +240,20 @@ def pull(mc: list[rf.Sample], data: rf.Sample, met: rf.Variable, style: rf.Style
 
 
 @example(
+    "poisson_data",
+    "Low counts: Poisson intervals for data",
+    section=SIMULATION_AND_DATA,
+)
+def poisson_data(mc: list[rf.Sample], data: rf.Sample) -> rf.Plot:
+    """Unweighted data is drawn with the Garwood (Poisson) 68 % interval of its counts:
+    asymmetric where few events fall into a bin, and with an upper error for an empty one,
+    in the ratio panel as in the main one. ``data_errors="sumw2"`` draws ``sqrt(N)`` instead,
+    and weighted data keeps its ``sqrt(sum of squared weights)``."""
+    met = rf.Variable("MET", bins=(20, 150, 450), label=r"$E_T^{miss}$", unit="GeV")
+    return rf.plot(mc, met, observed=data, stack=True, panel="ratio")
+
+
+@example(
     "selective_stack",
     "Stacked backgrounds with a signal overlaid",
     section=SIMULATION_AND_DATA,

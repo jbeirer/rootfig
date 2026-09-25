@@ -39,15 +39,17 @@ class Uncertainty:
         Bin edges.
     nominal
         Nominal bin contents.
-    stat
-        Statistical uncertainty, ``sqrt(variances)``.
+    stat_down, stat_up
+        Statistical uncertainty below and above the contents
+        (:meth:`Histogram.errors() <rootfig.histograms.Histogram.errors>`).
     components
         Signed shifts of every source, ``{name: (up - nominal, down - nominal)}``.
     """
 
     edges: FloatArray
     nominal: FloatArray
-    stat: FloatArray
+    stat_down: FloatArray
+    stat_up: FloatArray
     components: Mapping[str, tuple[FloatArray, FloatArray]] = field(default_factory=dict)
 
     @property
@@ -65,12 +67,12 @@ class Uncertainty:
     @property
     def total_up(self) -> FloatArray:
         """Statistical and systematic uncertainty above the nominal, in quadrature."""
-        return np.asarray(np.hypot(self.stat, self.syst_up), dtype=float)
+        return np.asarray(np.hypot(self.stat_up, self.syst_up), dtype=float)
 
     @property
     def total_down(self) -> FloatArray:
         """Statistical and systematic uncertainty below the nominal, in quadrature."""
-        return np.asarray(np.hypot(self.stat, self.syst_down), dtype=float)
+        return np.asarray(np.hypot(self.stat_down, self.syst_down), dtype=float)
 
     @property
     def has_systematics(self) -> bool:
@@ -104,10 +106,12 @@ def uncertainty(histogram: Histogram) -> Uncertainty:
         )
         for name, (up, down) in histogram.variations.items()
     }
+    stat_down, stat_up = histogram.errors()
     return Uncertainty(
         edges=histogram.edges,
         nominal=nominal,
-        stat=histogram.errors(),
+        stat_down=stat_down,
+        stat_up=stat_up,
         components=components,
     )
 

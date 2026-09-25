@@ -16,8 +16,11 @@ from rootfig.histograms import (
     Efficiency,
     Profile,
     ProfileStatistic,
-    build_histograms,
+    fill,
+    from_sample,
     load_columns,
+    negative_bins,
+    summarize,
 )
 from rootfig.histograms import efficiency as efficiency_of
 from rootfig.histograms import profile as profile_of
@@ -94,9 +97,11 @@ def efficiency(
     For every sample two histograms are filled with the same binning, all
     entries satisfying ``selection`` (the denominator) and those also
     satisfying ``passed`` (the numerator); the ratio is drawn as points with
-    Wilson score intervals (``z`` standard deviations, effective entries for
-    weighted samples; see :func:`rootfig.histograms.efficiency` for the
-    treatment of negative weights). The :class:`~rootfig.histograms.Efficiency`
+    Wilson score intervals (``z`` standard deviations; effective entries for
+    weighted samples, an approximation unless every entry has the same
+    weight). A bin that an entry with a negative weight falls into keeps its
+    efficiency but has no interval, with a warning: no binomial interval
+    describes signed weights. The :class:`~rootfig.histograms.Efficiency`
     objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a
     ``range`` infers one robustly, shared by numerator and denominator (see
     :func:`plot`).
@@ -115,25 +120,35 @@ def efficiency(
     ...     "reco.root", "TrueMuon_pt", passed="TrueMuon_matched", bins=(20, 0, 100)
     ... )  # doctest: +SKIP
     """
-    # efficiencies are statistical only: systematics are neither evaluated nor needed
-    samples = [s.replace(systematics={}) for s in as_samples(data, tree=tree, labels=label)]
+    # efficiencies are statistical only: load_columns reads no systematic variations
+    samples = as_samples(data, tree=tree, labels=label)
     var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
     logx = var.log if logx is None else logx
-    totals = build_histograms(
-        samples, var, selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
-    )
-    fixed = var.replace(bins=totals[0].axis)  # same binning for the numerators
     pass_cut = as_cut(passed)
     if pass_cut is None:
         msg = "efficiency() needs a 'passed' selection"
         raise ValueError(msg)
     base = as_cut(selection)
     numerator_cut = pass_cut if base is None else base & pass_cut
-    passes = build_histograms(
-        samples, fixed, selection=numerator_cut, weight=weight, lumi=lumi, nonfinite=nonfinite
+    options: dict[str, Any] = {"weight": weight, "lumi": lumi, "nonfinite": nonfinite}
+    totals = [load_columns(s, [var], selection=selection, **options) for s in samples]
+    axis = resolve_axis(
+        var, [c.values for c in totals], name=var.safe_name, weights=[c.weights for c in totals]
     )
+    fixed = var.replace(bins=axis)  # the same binning for the numerators
+    passing = [load_columns(s, [fixed], selection=numerator_cut, **options) for s in samples]
+    passes = [
+        from_sample(s, fill([axis], c), stats=summarize(c), per_object=c.per_object)
+        for s, c in zip(samples, passing, strict=True)
+    ]
     efficiencies = [
-        efficiency_of(p.hist, t.hist, z=z, label=sample.label)
+        efficiency_of(
+            p.hist,
+            fill([axis], t),
+            z=z,
+            label=sample.label,
+            negative_weights=negative_bins(axis, t),  # which the sums cannot always tell
+        )
         for p, t, sample in zip(passes, totals, samples, strict=True)
     ]
     plan = resolve_points(

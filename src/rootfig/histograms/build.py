@@ -15,6 +15,7 @@ from rootfig._mapping import FrozenMapping
 from rootfig._storage import as_weight_storage, is_category, same_axis, same_binning
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, SystematicError
+from rootfig.histograms.intervals import count_problem, poisson_errors
 from rootfig.histograms.stats import Summary
 from rootfig.model.binning import Bins, RangeSpec, merge_target
 
@@ -30,6 +31,7 @@ __all__ = [
     "fill",
     "from_sample",
     "mirror",
+    "negative_bins",
 ]
 
 
@@ -63,6 +65,19 @@ def fill(axes: Sequence[Axis], columns: Columns) -> Hist:
         else:
             histogram.fill(*columns.arrays, weight=columns.weights)
     return histogram
+
+
+def negative_bins(axis: Axis, columns: Columns) -> np.ndarray:
+    """Flag the visible bins of ``axis`` that an entry of ``columns`` with a negative weight fills.
+
+    What the sums of a filled histogram cannot always tell: a bin whose
+    negative weights are outweighed still sums like one without them.
+    """
+    if columns.weights is None:
+        return np.zeros(axis.size, dtype=bool)
+    negative = columns.weights < 0
+    counts: Hist = hist.Hist(axis).fill(columns.values[negative])
+    return np.asarray(counts.values() > 0, dtype=bool)
 
 
 @dataclass(frozen=True, init=False)
@@ -103,6 +118,13 @@ class Histogram:
         Whether an entry is an object rather than an event (a per-object
         variable), which words the ``Entries``/``Events`` y label. Follows
         ``stats`` unless given.
+    poisson
+        Whether the statistical uncertainty is the Poisson (Garwood) interval
+        of the counts rather than ``sqrt(variances)`` (see :meth:`errors`).
+        Needs counts, possibly scaled (normalised): non-negative contents whose
+        effective counts ``values**2 / variances`` are whole numbers; anything
+        else raises ``ValueError``. ``plot(data_errors=...)`` sets it for
+        observed data.
     """
 
     hist: Hist
@@ -115,6 +137,7 @@ class Histogram:
     normalization: str | None = None
     variations: Mapping[str, tuple[Hist, Hist]] = field(default_factory=dict)
     per_object: bool = False
+    poisson: bool = False
 
     def __init__(  # noqa: PLR0917 - preserve the positional dataclass constructor API
         self,
@@ -128,6 +151,7 @@ class Histogram:
         normalization: str | None = None,
         variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
         per_object: bool | None = None,
+        poisson: bool = False,
     ) -> None:
         if per_object is None:  # not given: follow the statistics
             per_object = stats is not None and stats.per_object
@@ -141,6 +165,7 @@ class Histogram:
         object.__setattr__(self, "normalization", normalization)
         object.__setattr__(self, "variations", {} if variations is None else variations)
         object.__setattr__(self, "per_object", per_object)
+        object.__setattr__(self, "poisson", poisson)
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -149,6 +174,14 @@ class Histogram:
         object.__setattr__(self, "hist", as_weight_storage(self.hist))
         checked = self._checked_variations(self.variations)
         object.__setattr__(self, "variations", FrozenMapping(checked))
+        if self.poisson:
+            problem = count_problem(self.values(flow=True), self.variances(flow=True))
+            if problem is not None:
+                msg = (
+                    f"histogram {self.label!r} {problem}, so its uncertainty is not the Poisson "
+                    "interval of counts; keep poisson=False for sqrt(sum of squared weights)"
+                )
+                raise ValueError(msg)
 
     def _checked_variations(
         self, variations: Mapping[str, tuple[Hist, Hist | None]]
@@ -213,9 +246,20 @@ class Histogram:
         """Bin variances (sum of squared weights)."""
         return np.asarray(self.hist.variances(flow=flow), dtype=float)
 
-    def errors(self, *, flow: bool = False) -> FloatArray:
-        """Bin uncertainties, ``sqrt(variances)``."""
-        return np.asarray(np.sqrt(self.variances(flow=flow)), dtype=float)
+    def errors(self, *, flow: bool = False) -> tuple[FloatArray, FloatArray]:
+        """Statistical uncertainty below and above the contents, ``(down, up)``.
+
+        Both are ``sqrt(variances)``, the uncertainty of a sum of weights, or,
+        with :attr:`poisson`, the distances to the Garwood 68 % interval of the
+        counts, scaled like the contents (see
+        :func:`~rootfig.histograms.intervals.poisson_errors`). The pair is
+        matplotlib's ``yerr`` order; drawing, comparisons and
+        :func:`~rootfig.histograms.uncertainty` take it from here.
+        """
+        if self.poisson:
+            return poisson_errors(self.values(flow=flow), self.variances(flow=flow))
+        sigma = np.asarray(np.sqrt(self.variances(flow=flow)), dtype=float)
+        return sigma, sigma.copy()
 
     @property
     def integral(self) -> float:

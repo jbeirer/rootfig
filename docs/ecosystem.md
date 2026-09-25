@@ -43,7 +43,9 @@ draws every histogram through `mplhep.histplot`/`hist2dplot` and uses
 mplhep's per-experiment label functions when a `Style(experiment=...)` is
 given. The experiment-neutral default style and the lower panel (ratios,
 differences, asymmetries, pulls and significances of histograms; ratios,
-differences, asymmetries and pulls of efficiencies and profiles) are rootfig's.
+differences, asymmetries and pulls of efficiencies and profiles) are rootfig's,
+and so are the Poisson intervals of data: mplhep's (and `hist.intervals`) need
+SciPy, which rootfig does not depend on.
 
 ## matplotlib
 

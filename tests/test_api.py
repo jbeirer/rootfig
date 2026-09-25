@@ -33,6 +33,7 @@ from rootfig.errors import (
     SelectionError,
     SourceError,
 )
+from rootfig.histograms import poisson_interval
 from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
     add_experiment_label,
@@ -595,7 +596,8 @@ class TestRatioReference:
         np.testing.assert_allclose(partial_stack.comparisons[0].values, [2.0, 2.0])
         without_data = rf.plot([make(10.0, "A"), make(30.0, "B")], panel="ratio", stack=["A"])
         np.testing.assert_allclose(without_data.comparisons[0].values, [3.0, 3.0])
-        np.testing.assert_allclose(without_data.comparisons[0].errors, np.sqrt([18.0, 18.0]))
+        for side in without_data.comparisons[0].errors:
+            np.testing.assert_allclose(side, np.sqrt([18.0, 18.0]))
 
 
 class TestPanelRoles:
@@ -703,7 +705,12 @@ class TestPanelRoles:
             ("pull", -20.0 / np.sqrt(60.0)),
         ):
             # data over the stack of A and B, 40: C is overlaid and not compared
-            p = rf.plot(self._hists(data=True), stack=["A", "B"], panel=kind)  # type: ignore[arg-type]
+            p = rf.plot(
+                self._hists(data=True),
+                stack=["A", "B"],
+                panel=kind,  # type: ignore[arg-type]
+                data_errors="sumw2",
+            )
             (comparison,) = p.comparisons
             np.testing.assert_allclose(comparison.values, expected)
             p.close()
@@ -728,7 +735,7 @@ class TestPanelRoles:
             plot.close()
 
     def test_uncertainty_modes(self) -> None:
-        p = rf.plot(self._hists(data=True), panel="difference", reference="A")
+        p = rf.plot(self._hists(data=True), panel="difference", reference="A", data_errors="sumw2")
         by_label = {c.label: c for c in p.comparisons}
         # data over simulation: the reference is the band; simulation: both propagated
         np.testing.assert_allclose(by_label["Data"].errors, np.sqrt(20.0))
@@ -740,6 +747,7 @@ class TestPanelRoles:
             panel="difference",
             reference="A",
             panel_uncertainty="propagate",
+            data_errors="sumw2",
         )
         np.testing.assert_allclose(both.comparisons[-1].errors, np.sqrt(30.0))
         assert both.panel_ax is not None
@@ -2321,7 +2329,7 @@ class TestSystematics:
             total.components["lumi"][0],
             0.02 * (p.histograms[0].values() + p.histograms[1].values()),
         )
-        assert np.all(total.total_up >= total.stat)
+        assert np.all(total.total_up >= total.stat_up)
         assert p.comparisons[0].syst_band is not None
         filled = total.nominal > 0
         np.testing.assert_allclose(
@@ -2375,7 +2383,8 @@ class TestSystematics:
         other_ratio, data_ratio = p.comparisons
         assert other_ratio.syst_errors is not None  # simulation / simulation: lumi cancels
         np.testing.assert_allclose(other_ratio.syst_errors, 0.0, atol=1e-12)
-        np.testing.assert_allclose(other_ratio.errors**2, _propagated_variance(p))
+        for side in other_ratio.errors:
+            np.testing.assert_allclose(side**2, _propagated_variance(p))
         assert data_ratio.syst_errors is None  # data / simulation: the reference is the band
         assert data_ratio.syst_band is not None
         np.testing.assert_allclose(data_ratio.syst_band, 0.1)
@@ -2392,6 +2401,20 @@ class TestSystematics:
             0
         ].syst_errors:  # its own lumi against the nominal reference
             np.testing.assert_allclose(side, 0.1 * explicit.comparisons[0].values)
+
+    def test_efficiency_intervals_need_non_negative_weights(self) -> None:
+        # bin 0: {1, 1, -0.1} pass and {1} fails, a ratio in [0, 1] whose sums hide the sign
+        x = np.array([0.5, 0.5, 0.5, 0.5, 1.5, 1.5, 1.5])
+        w = np.array([1.0, 1.0, -0.1, 1.0, 1.0, 2.0, 1.0])
+        passes = np.array([1, 1, 1, 0, 1, 0, 1])
+        sample = rf.Sample({"x": x, "w": w, "ok": passes}, label="nlo", weight="w")
+        with pytest.warns(RootfigWarning, match="nlo: 1 bin"):
+            p = rf.efficiency(sample, "x", passed="ok == 1", bins=(2, 0, 2))
+        (eff,) = p.efficiencies
+        np.testing.assert_allclose(eff.values, [1.9 / 2.9, 2.0 / 4.0])
+        assert np.isnan([eff.lower[0], eff.upper[0]]).all()
+        assert np.isfinite([eff.lower[1], eff.upper[1]]).all()  # positive weights only
+        p.close()
 
     def test_efficiency_ignores_systematics(self) -> None:
         sample = rf.Sample({"x": [0.5, 1.5]}, systematics={"unused": "missing_weight"})
@@ -3187,3 +3210,141 @@ def test_xbreak_excludes_hidden_extrema(logy: bool) -> None:
     p = rf.plot(h, xbreak=(2, 4), logy=logy, style=rf.Style(legend=False))
     np.testing.assert_allclose(p.ax.get_ylim(), (5, 120) if logy else (0, 12))
     p.close()
+
+
+def _vertical_bars(ax: Any) -> list[tuple[float, float]]:
+    """``(low, high)`` of the vertical error bars of the one errorbar container of ``ax``."""
+    (container,) = ax.containers
+    for collection in container.lines[2]:
+        segments = collection.get_segments()
+        if segments and all(np.isclose(seg[0][0], seg[1][0]) for seg in segments):
+            return [(float(seg[0][1]), float(seg[1][1])) for seg in segments]
+    return []
+
+
+class TestDataErrors:
+    """``data_errors``: the Poisson interval of observed counts, in the main and lower panel."""
+
+    COUNTS = np.array([1.0, 4.0, 0.0, 9.0])
+
+    def _mc(self) -> rf.Sample:
+        rng = np.random.default_rng(5)
+        return rf.Sample({"x": rng.uniform(0, 4, 800)}, label="MC", scale=0.01)
+
+    def _data(self, weights: Any = None, **options: Any) -> rf.Sample:
+        values = np.repeat([0.5, 1.5, 2.5, 3.5], self.COUNTS.astype(int))
+        columns = {"x": values}
+        if weights is not None:
+            columns["w"] = np.broadcast_to(np.asarray(weights, dtype=float), values.shape)
+            options["weight"] = "w"
+        return rf.Sample(columns, label="Data", is_data=True, **options)
+
+    def test_auto_draws_the_interval_of_counts_in_both_panels(self) -> None:
+        p = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=self._data(), panel="ratio")
+        data = p.histograms[-1]
+        assert data.poisson
+        low, high = poisson_interval(self.COUNTS)
+        np.testing.assert_allclose(_vertical_bars(p.ax), np.c_[low, high])
+        (ratio,) = p.comparisons
+        mc = p.histograms[0].values()
+        np.testing.assert_allclose(ratio.errors[0], (self.COUNTS - low) / mc)
+        np.testing.assert_allclose(ratio.errors[1], (high - self.COUNTS) / mc)
+        assert ratio.values[2] == 0.0
+        assert ratio.errors[1][2] == pytest.approx(1.8410216450 / mc[2])  # empty: not 0 +- 0
+        assert p.panel_ax is not None
+        drawn = np.array(_vertical_bars(p.panel_ax))
+        np.testing.assert_allclose(drawn[:, 0], ratio.values - ratio.errors[0])
+        np.testing.assert_allclose(drawn[:, 1], ratio.values + ratio.errors[1])
+        u = p.uncertainty("Data")
+        np.testing.assert_allclose(u.stat_up, high - self.COUNTS)
+        p.close()
+
+    def test_sumw2_keeps_the_square_root_of_the_counts(self) -> None:
+        p = rf.plot(
+            self._mc(),
+            "x",
+            bins=(4, 0, 4),
+            observed=self._data(),
+            panel="ratio",
+            data_errors="sumw2",
+        )
+        assert not p.histograms[-1].poisson
+        (ratio,) = p.comparisons
+        for side in ratio.errors:
+            np.testing.assert_allclose(side, np.sqrt(self.COUNTS) / p.histograms[0].values())
+        assert ratio.errors[1][2] == 0.0
+        p.close()
+
+    def test_weighted_data(self) -> None:
+        # one weight for every event: counts scaled by it, Poisson only when asked
+        scaled = self._data(weights=0.5)
+        auto = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=scaled)
+        assert not auto.histograms[-1].poisson
+        forced = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=scaled, data_errors="poisson")
+        _, high = poisson_interval(self.COUNTS)
+        np.testing.assert_allclose(forced.histograms[-1].errors()[1], 0.5 * (high - self.COUNTS))
+        weights = np.linspace(0.6, 1.4, int(self.COUNTS.sum()))
+        with pytest.raises(ValueError, match=r"'Data' is weighted.*data_errors='sumw2'"):
+            rf.plot(
+                self._mc(),
+                "x",
+                bins=(4, 0, 4),
+                observed=self._data(weights=weights),
+                data_errors="poisson",
+            )
+        for plot in (auto, forced):
+            plot.close()
+
+    def test_signed_weights_are_refused(self) -> None:
+        signed = self._data(weights=np.where(np.arange(int(self.COUNTS.sum())) < 1, -1.0, 1.0))
+        figures = plt.get_fignums()
+        with pytest.raises(ValueError, match="negative contents"):
+            rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=signed, data_errors="poisson")
+        assert plt.get_fignums() == figures  # refused before a figure exists
+        auto = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=signed)
+        assert not auto.histograms[-1].poisson
+        auto.close()
+
+    def test_the_model_is_decided_before_normalising(self) -> None:
+        p = rf.plot(self._mc(), "x", bins=(4, 0, 4), observed=self._data(), normalize=True)
+        data = p.histograms[-1]
+        assert data.poisson
+        _, high = poisson_interval(self.COUNTS)
+        total = self.COUNTS.sum()
+        np.testing.assert_allclose(data.errors()[1], (high - self.COUNTS) / total, rtol=1e-12)
+        p.close()
+
+    def test_stored_histograms(self, stored_dir: Path, tmp_path: Path) -> None:
+        mc = stored_dir / "ZZ_sel0_histo.root"
+        # whole numbers without Sumw2: unweighted counts, as ROOT itself reads them
+        raw = rf.plot(mc, "mz_raw", observed=stored_dir / "ZH_sel0_histo.root")
+        assert raw.histograms[-1].poisson
+        # Sumw2 with weights of 0.5: not unit-weight counts
+        weighted = rf.plot(mc, "mz", observed=stored_dir / "ZH_sel0_histo.root")
+        assert not weighted.histograms[-1].poisson
+        # contents that are not whole numbers, without Sumw2: sqrt(content), as ROOT draws them
+        path = tmp_path / "fractional.root"
+        with uproot.recreate(path) as file:
+            file["h"] = (np.array([0.5, 2.5, 3.0]), np.array([0.0, 1.0, 2.0, 3.0]))
+        fractional = rf.plot(path, "h", observed=path)
+        assert not fractional.histograms[-1].poisson
+        with pytest.raises(ValueError, match="weighted"):
+            rf.plot(path, "h", observed=path, data_errors="poisson")
+        for plot in (raw, weighted, fractional):
+            plot.close()
+
+    def test_histogram_objects(self) -> None:
+        counts = hist.Hist(hist.axis.Regular(4, 0, 4))  # a plain count storage
+        counts.fill(np.repeat([0.5, 1.5, 3.5], [1, 4, 9]))
+        expected = rf.Histogram(counts.copy(), label="MC")
+        p = rf.plot([expected], observed=[counts])
+        assert p.histograms[-1].poisson
+        flagged = rf.Histogram(counts, label="Data", is_data=True, poisson=True)
+        forced = rf.plot([expected], observed=[flagged], data_errors="sumw2")
+        assert not forced.histograms[-1].poisson  # the keyword wins
+        kept = rf.plot([expected], observed=[flagged])
+        assert kept.histograms[-1].poisson
+        with pytest.raises(ValueError, match="data_errors must be"):
+            rf.plot([expected], observed=[counts], data_errors="garwood")  # type: ignore[arg-type]
+        for plot in (p, forced, kept):
+            plot.close()

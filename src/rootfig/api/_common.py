@@ -7,7 +7,13 @@ from collections.abc import Sequence
 from typing import Any
 
 from rootfig.errors import RootfigWarning, SourceError
-from rootfig.histograms import Histogram, NormalizeSpec
+from rootfig.histograms import (
+    DataErrors,
+    Histogram,
+    NormalizeSpec,
+    count_problem,
+    is_unit_counts,
+)
 from rootfig.histograms import normalize as normalize_histogram
 from rootfig.model import (
     Group,
@@ -71,3 +77,46 @@ def normalize_for_plot(histogram_: Histogram, spec: NormalizeSpec) -> Histogram:
             stacklevel=3,
         )
     return normalize_histogram(histogram_, spec)
+
+
+def with_data_errors(histograms: Sequence[Histogram], mode: DataErrors) -> list[Histogram]:
+    """Give the observed histograms the error model ``mode`` asks for (``plot(data_errors=)``).
+
+    Decided on the histograms as filled or read, before normalisation or flow
+    bins change their contents, so the model does not depend on how they are
+    drawn. ``"auto"`` takes Poisson intervals for unit-weight counts and keeps a
+    histogram's own :attr:`~rootfig.histograms.Histogram.poisson`; the others
+    apply to every observed histogram. Non-data histograms are returned as they are.
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``mode``, or ``"poisson"`` for a histogram that does not
+        hold counts.
+    """
+    if mode not in ("auto", "poisson", "sumw2"):
+        msg = f"data_errors must be 'auto', 'poisson' or 'sumw2', got {mode!r}"
+        raise ValueError(msg)
+    result = []
+    for histogram_ in histograms:
+        if not histogram_.is_data:
+            result.append(histogram_)
+            continue
+        values = histogram_.values(flow=True)
+        variances = histogram_.variances(flow=True)
+        if mode == "poisson":
+            problem = count_problem(values, variances)
+            if problem is not None:
+                msg = (
+                    f"data_errors='poisson' draws the Poisson interval of counts, but "
+                    f"{histogram_.label!r} {problem}; use data_errors='sumw2' for "
+                    "sqrt(sum of squared weights)"
+                )
+                raise ValueError(msg)
+        poisson = mode == "poisson" or (
+            mode == "auto" and (histogram_.poisson or is_unit_counts(values, variances))
+        )
+        result.append(
+            histogram_ if histogram_.poisson == poisson else histogram_.replace(poisson=poisson)
+        )
+    return result

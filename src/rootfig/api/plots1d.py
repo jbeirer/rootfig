@@ -16,7 +16,7 @@ from typing import Any
 
 from matplotlib.gridspec import SubplotSpec
 
-from rootfig.api._common import as_observed, normalize_for_plot, style_for
+from rootfig.api._common import as_observed, normalize_for_plot, style_for, with_data_errors
 from rootfig.api._hists import (
     histogram_objects,
     rebin_ready_made,
@@ -28,6 +28,7 @@ from rootfig.api._hists import (
 from rootfig.api._panel import resolve as resolve_panel
 from rootfig.histograms import (
     ComparisonKind,
+    DataErrors,
     Histogram,
     NormalizeSpec,
     ReadPlan,
@@ -138,6 +139,7 @@ def plot(
     flow: FlowSpec = "hint",
     histtype: HistType | None = None,
     errorbars: bool | None = None,
+    data_errors: DataErrors = "auto",
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float | None, float | None] | None = None,
     xbreak: tuple[float, float] | None = None,
@@ -278,6 +280,14 @@ def plot(
     errorbars
         Draw statistical error bars on overlaid histograms; ignored for stacked
         histograms. ``None`` draws them only for ``"errorbar"`` histtypes.
+    data_errors
+        The statistical uncertainty of observed data, in the main and the lower
+        panel alike: ``"poisson"``, the Garwood 68 % interval of the counts,
+        asymmetric and with an upper error for an empty bin; ``"sumw2"``,
+        ``sqrt(sum of squared weights)``; or ``"auto"``, Poisson for unit-weight
+        counts (every bin a whole number equal to its variance, before any
+        normalisation) and ``"sumw2"`` otherwise. ``"poisson"`` refuses weighted
+        or signed contents.
     xlim, ylim
         Axis limits; ``ylim`` entries may be ``None`` to keep the automatic value.
     xbreak
@@ -309,8 +319,10 @@ def plot(
         the statistical and systematic uncertainty as one band, overlaid samples
         with variations a light band in their colour, and the lower panel
         includes them in its band and error bars (in a pull, in its
-        denominator; a significance is statistical only). Sources of the same name are
-        fully correlated across samples, different ones added in quadrature;
+        denominator; a significance is statistical only). A name is one source:
+        sources of the same name are fully correlated across samples (a
+        plot-level source is shared by all of them), different names are
+        independent and added in quadrature;
         ``Plot.uncertainty()`` returns the components. Histogram objects carry
         theirs in :attr:`~rootfig.histograms.Histogram.variations`.
     assume_poisson
@@ -359,6 +371,7 @@ def plot(
         flow=flow,
         histtype=histtype,
         errorbars=errorbars,
+        data_errors=data_errors,
         xlim=xlim,
         ylim=ylim,
         xbreak=xbreak,
@@ -519,6 +532,7 @@ def draw_plot(
     flow: FlowSpec = "hint",
     histtype: HistType | None = None,
     errorbars: bool | None = None,
+    data_errors: DataErrors = "auto",
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float | None, float | None] | None = None,
     xbreak: tuple[float, float] | None = None,
@@ -569,6 +583,7 @@ def draw_plot(
             "or use normalize='width'"
         )
         raise ValueError(msg)
+    histograms_ = with_data_errors(histograms_, data_errors)
     if normalize is not None and normalize is not False:
         histograms_ = [normalize_for_plot(h, normalize) for h in histograms_]
     resolved_style = style_for(style, text, prepared.lumi)
