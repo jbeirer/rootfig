@@ -23,6 +23,7 @@ from rootfig.histograms.intervals import (
     count_scale,
     poisson_errors,
 )
+from rootfig.histograms.provenance import Provenance, error_sides, one_count
 from rootfig.histograms.stats import Summary
 from rootfig.model.binning import Bins, RangeSpec, merge_target
 
@@ -85,58 +86,6 @@ def negative_bins(axis: Axis, columns: Columns) -> np.ndarray:
     negative = columns.weights < 0
     counts: Hist = hist.Hist(axis).fill(columns.values[negative])
     return np.asarray(counts.values() > 0, dtype=bool)
-
-
-def _one_count(histogram: Hist) -> Hist:
-    """Return one unit count in every cell of ``histogram``, unit-weight counts.
-
-    Transformed along with the contents (scaled, normalised, merged, moved),
-    its ``variance / value`` stays the factor of a count in every cell, also
-    where the contents are empty (see :func:`~rootfig.histograms.intervals.count_scale`).
-    """
-    unit = histogram.copy()
-    view: Any = unit.view(flow=True)
-    view.value = 1.0
-    view.variance = 1.0
-    return unit
-
-
-def _error_sides(
-    histogram: Hist, errors: tuple[npt.ArrayLike, npt.ArrayLike], label: str
-) -> tuple[Hist, Hist]:
-    """Hold ``(down, up)`` errors as the variances of two histograms shaped like ``histogram``.
-
-    Transformed with the contents, their variances follow the squared errors:
-    scaled by the squared factor, and added where cells merge.
-    """
-    try:
-        down, up = (np.asarray(side, dtype=float) for side in errors)
-    except (TypeError, ValueError):
-        msg = f"histogram {label!r}: stat_errors must be a (down, up) pair of arrays"
-        raise ValueError(msg) from None
-    visible = np.shape(histogram.values(flow=False))
-    cells = np.shape(histogram.values(flow=True))
-    sides = []
-    for side in (down, up):
-        if side.shape not in (visible, cells):
-            msg = (
-                f"histogram {label!r}: stat_errors need one error per bin {visible} or per "
-                f"cell with the flow bins {cells}, got {side.shape}"
-            )
-            raise ValueError(msg)
-        if not np.all(np.isfinite(side) & (side >= 0)):
-            msg = f"histogram {label!r}: stat_errors must be non-negative and finite"
-            raise ValueError(msg)
-        held = histogram.copy()
-        view: Any = held.view(flow=True)
-        if side.shape == cells:
-            view.variance = side**2
-        else:
-            view.variance = 0.0
-            inner: Any = held.view(flow=False)
-            inner.variance = side**2
-        sides.append(held)
-    return sides[0], sides[1]
 
 
 @dataclass(frozen=True, init=False)
@@ -215,15 +164,8 @@ class Histogram:
     variations: Mapping[str, tuple[Hist, Hist]] = field(default_factory=dict)
     per_object: bool = False
     poisson: bool | float = False
-    # Count provenance, independent of the error model: set iff the contents are known counts.
-    # One unit count per cell, transformed with the contents (value m c, variance m c**2 for
-    # m merged counts of factor c), so every cell's factor is known, empty cells included.
-    _unit: Hist | None = field(default=None, compare=False, repr=False)
-    # filled with weights, scaled or transformed: never judged unit counts from its contents
-    _weighted: bool = field(default=False, compare=False, repr=False)
-    # errors given as stat_errors: (down, up) sides as the variances of two histograms, so
-    # every linear transform of the contents (scale, rebin, crop, flow) applies to them too
-    _errors: tuple[Hist, Hist] | None = field(default=None, compare=False, repr=False)
+    # what the errors rest on (known counts, weights, given errors), changed with the contents
+    _provenance: Provenance = field(default_factory=Provenance, compare=False, repr=False)
 
     def __init__(  # noqa: PLR0917 - preserve the positional dataclass constructor API
         self,
@@ -238,9 +180,7 @@ class Histogram:
         variations: Mapping[str, tuple[Hist, Hist | None]] | None = None,
         per_object: bool | None = None,
         poisson: bool | float = False,
-        _unit: Hist | None = None,
-        _weighted: bool = False,
-        _errors: tuple[Hist, Hist] | None = None,
+        _provenance: Provenance | None = None,
         *,
         stat_errors: tuple[npt.ArrayLike, npt.ArrayLike] | None = None,
     ) -> None:
@@ -257,11 +197,12 @@ class Histogram:
         object.__setattr__(self, "variations", {} if variations is None else variations)
         object.__setattr__(self, "per_object", per_object)
         object.__setattr__(self, "poisson", poisson)
-        object.__setattr__(self, "_unit", _unit)
-        object.__setattr__(self, "_weighted", _weighted)
+        if _provenance is None:
+            _provenance = Provenance()
         if stat_errors is not None:
-            _errors = _error_sides(as_weight_storage(hist), stat_errors, label)
-        object.__setattr__(self, "_errors", _errors)
+            errors = error_sides(as_weight_storage(hist), stat_errors, label)
+            _provenance = replace(_provenance, errors=errors)
+        object.__setattr__(self, "_provenance", _provenance)
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -272,24 +213,26 @@ class Histogram:
         object.__setattr__(self, "variations", FrozenMapping(checked))
         if self.poisson is not True and self.poisson is not False:
             check_cl(self.poisson)  # a confidence level
-        if self._unit is not None:
-            if not same_binning(self._unit, self.hist):
+        provenance = self._provenance
+        if provenance.unit is not None:
+            if not same_binning(provenance.unit, self.hist):
                 msg = f"histogram {self.label!r}: its count scale does not have its binning"
                 raise BinningError(msg)
-        elif not self._weighted and self._count_problem() is None:  # new unit-weight counts
-            object.__setattr__(self, "_unit", _one_count(self.hist))
-        if self._errors is not None:
+        elif self._count_problem() is None:  # new unit-weight counts
+            provenance = replace(provenance, unit=one_count(self.hist))
+            object.__setattr__(self, "_provenance", provenance)
+        if provenance.errors is not None:
             if self.poisson:
                 msg = (
                     f"histogram {self.label!r}: the statistical errors are either given "
                     "(stat_errors) or the Poisson interval (poisson), not both"
                 )
                 raise ValueError(msg)
-            if not all(same_binning(side, self.hist) for side in self._errors):
+            if not all(same_binning(side, self.hist) for side in provenance.errors):
                 msg = f"histogram {self.label!r}: its statistical errors do not have its binning"
                 raise BinningError(msg)
         if self.poisson:
-            if self._unit is None:
+            if provenance.unit is None:
                 msg = (
                     f"histogram {self.label!r} {self._count_problem()}, so it is not known to "
                     "hold counts and gets no Poisson interval; keep poisson=False for sqrt(sum "
@@ -312,14 +255,14 @@ class Histogram:
     def _count_problem(self) -> str | None:
         """Say why the contents are not unit-weight counts, or return ``None``."""
         problem = count_problem(self.values(flow=True), self.variances(flow=True))
-        if problem is None and self._weighted:  # sums of no entries look like counts
+        if problem is None and self._provenance.weighted:  # sums of no entries look like counts
             return "was filled with weights or scaled"
         return problem
 
     def _factors(self, *, flow: bool) -> FloatArray:
-        """Return the factor of a count in every cell (see :meth:`counts`); needs ``_unit``."""
-        assert self._unit is not None
-        unit = self._unit
+        """Return the factor of a count in every cell (see :meth:`counts`); needs known counts."""
+        unit = self._provenance.unit
+        assert unit is not None
         return count_scale(unit.values(flow=flow), np.asarray(unit.variances(flow=flow)))
 
     def _checked_variations(
@@ -404,8 +347,9 @@ class Histogram:
         """
         if self.poisson:
             return poisson_errors(self.values(flow=flow), self._factors(flow=flow), self._cl)
-        if self._errors is not None:
-            down, up = (np.sqrt(np.asarray(side.variances(flow=flow))) for side in self._errors)
+        if self._provenance.errors is not None:
+            sides = self._provenance.errors
+            down, up = (np.sqrt(np.asarray(side.variances(flow=flow))) for side in sides)
             return np.asarray(down, dtype=float), np.asarray(up, dtype=float)
         sigma = np.asarray(np.sqrt(self.variances(flow=flow)), dtype=float)
         return sigma, sigma.copy()
@@ -424,7 +368,7 @@ class Histogram:
             For anything else, since sums of weights cannot say whether they are
             counts, and for counts scaled by a negative factor.
         """
-        if self._unit is None:
+        if self._provenance.unit is None:
             msg = f"histogram {self.label!r} {self._count_problem()}, so it holds no known counts"
             raise ValueError(msg)
         values = self.values(flow=flow)
@@ -496,11 +440,9 @@ class Histogram:
         about the counts.
         """
         if "hist" in changes:
-            changes.setdefault("_unit", None)
-            changes.setdefault("_weighted", False)
-            changes.setdefault("_errors", None)
-        if changes.get("poisson"):
-            changes.setdefault("_errors", None)  # one model of the errors at a time
+            changes.setdefault("_provenance", Provenance())
+        if changes.get("poisson"):  # one model of the errors at a time
+            changes.setdefault("_provenance", replace(self._provenance, errors=None))
         return replace(self, **changes)
 
     def map_hists(self, transform: Callable[[Hist], Hist], *, linear: bool = False) -> Histogram:
@@ -520,25 +462,10 @@ class Histogram:
         }
         hist_ = transform(self.hist)
         if not linear:
-            return replace(
-                self,
-                hist=hist_,
-                variations=variations,
-                poisson=False,
-                _unit=None,
-                _weighted=True,
-                _errors=None,
-            )
-        unit = None if self._unit is None else transform(self._unit)
-        errors = (
-            None
-            if self._errors is None
-            else (
-                transform(self._errors[0]),
-                transform(self._errors[1]),
-            )
-        )
-        return replace(self, hist=hist_, variations=variations, _unit=unit, _errors=errors)
+            lost = Provenance(weighted=True)
+            return replace(self, hist=hist_, variations=variations, poisson=False, _provenance=lost)
+        provenance = self._provenance.through(transform)
+        return replace(self, hist=hist_, variations=variations, _provenance=provenance)
 
     def scaled(self, factor: float) -> Histogram:
         """Return a copy multiplied by ``factor``.
@@ -556,12 +483,18 @@ class Histogram:
                 sum_weights=stats.sum_weights * factor,
                 _sum_w2=stats._sum_w2 * factor**2,
             )
-        scaled = self.map_hists(lambda h: h * factor, linear=True)
-        errors = scaled._errors
-        if errors is not None and factor < 0:
-            errors = (errors[1], errors[0])
+
+        def scale(h: Hist) -> Hist:
+            return h * factor
+
+        variations = {
+            name: (scale(up), scale(down)) for name, (up, down) in self.variations.items()
+        }
+        provenance = self._provenance.through(scale, factor=factor)
+        if factor != 1.0:
+            provenance = replace(provenance, weighted=True)
         return replace(
-            scaled, stats=stats, _weighted=self._weighted or factor != 1.0, _errors=errors
+            self, hist=scale(self.hist), variations=variations, stats=stats, _provenance=provenance
         )
 
     def rebinned(self, factor: int | Sequence[int]) -> Histogram:
@@ -828,7 +761,7 @@ def from_sample(
         histtype=sample.histtype,
         variations=variations,
         per_object=per_object,
-        _weighted=weighted,
+        _provenance=Provenance(weighted=weighted),
     )
 
 

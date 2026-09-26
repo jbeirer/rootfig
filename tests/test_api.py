@@ -3613,7 +3613,7 @@ class TestDataErrorPrecedence:
         for mode, level in (("poisson", True), (0.9, 0.9)):
             drawn = self._drawn(fit, mode)  # the contents are counts: the Poisson interval
             assert drawn.poisson == level
-            assert drawn._errors is None
+            assert drawn._provenance.errors is None
         np.testing.assert_allclose(self._drawn(fit, "poisson").errors()[1], high - self.COUNTS)
 
     def test_errors_of_its_own_on_contents_that_are_not_counts(self) -> None:

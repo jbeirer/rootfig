@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import functools
 import warnings
+from dataclasses import replace
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
 
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning, SystematicError
-from rootfig.histograms.build import Histogram, _error_sides, as_weight_storage
+from rootfig.histograms.build import Histogram, as_weight_storage
+from rootfig.histograms.provenance import Provenance, error_sides
 from rootfig.histograms.shape import shape_bounds, shape_covariance_matrix, shape_variances
 
 __all__ = [
@@ -228,7 +230,7 @@ def shape_covariance(histogram: Histogram | Hist, spec: NormalizeSpec = True) ->
     mode = _mode(spec)
     _check_uncertainty("shape", mode)
     assert mode is not None
-    if isinstance(histogram, Histogram) and histogram._errors is not None:
+    if isinstance(histogram, Histogram) and histogram._provenance.errors is not None:
         msg = (
             f"histogram {histogram.label!r} has statistical errors of its own (stat_errors), "
             "which no covariance matrix describes"
@@ -261,7 +263,7 @@ def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | f
     result = normalized.hist.copy()
     view: Any = result.view(flow=True)
     view.variance = variances
-    shaped = normalized.replace(hist=result, poisson=False, _weighted=True)
+    shaped = normalized.replace(hist=result, poisson=False, _provenance=Provenance(weighted=True))
     if not original.poisson:
         return shaped
     factor = original._factors(flow=True)
@@ -274,7 +276,8 @@ def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | f
         return shaped
     flow = np.sqrt(variances)  # a flow cell is no fraction of the visible total
     sides = (np.where(visible, bounds[0], flow), np.where(visible, bounds[1], flow))
-    return shaped.replace(_errors=_error_sides(result, sides, shaped.label))
+    given = Provenance(weighted=True, errors=error_sides(result, sides, shaped.label))
+    return shaped.replace(_provenance=given)
 
 
 def normalize(
@@ -303,7 +306,7 @@ def normalize(
     """
     mode = _mode(spec)
     _check_uncertainty(uncertainty, mode)
-    if uncertainty == "shape" and histogram._errors is not None:
+    if uncertainty == "shape" and histogram._provenance.errors is not None:
         msg = (
             f"histogram {histogram.label!r} has statistical errors of its own (stat_errors), "
             "whose sides the fluctuating total mixes with opposite signs; normalise it with "
@@ -314,13 +317,7 @@ def normalize(
         return histogram
     result, applied, factor = _normalize_hist(histogram.hist, spec)
     if not applied:
-        return histogram.replace(
-            hist=result,
-            normalization=None,
-            _unit=histogram._unit,
-            _weighted=histogram._weighted,
-            _errors=histogram._errors,
-        )
+        return histogram.replace(normalization=None)
     label = normalization_label(spec)
     variations = {}
     for name, pair in histogram.variations.items():
@@ -335,21 +332,15 @@ def normalize(
                 raise SystematicError(msg)
             normalized.append(shifted)
         variations[name] = (normalized[0], normalized[1])
-    # the record of counts and the given errors follow the nominal's factor
-    unit = histogram._unit
-    if unit is not None:
-        unit = _normalize_hist(unit, spec, factor=factor)[0]
-    errors = histogram._errors
-    if errors is not None:
-        down, up = (_normalize_hist(side, spec, factor=factor)[0] for side in errors)
-        errors = (up, down) if factor < 0 else (down, up)  # a negative total turns them over
+    # the record behind the errors follows the nominal's factor
+    provenance = histogram._provenance.through(
+        lambda h: _normalize_hist(h, spec, factor=factor)[0], factor=factor
+    )
     rescaled = histogram.replace(
         hist=result,
         normalization=label,
         variations=variations,
-        _unit=unit,
-        _weighted=True,
-        _errors=errors,
+        _provenance=replace(provenance, weighted=True),
     )
     if uncertainty == "shape":
         assert mode is not None

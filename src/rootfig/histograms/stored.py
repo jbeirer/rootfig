@@ -360,7 +360,7 @@ def with_saved_errors(histogram: Histogram, stored: Hist) -> Histogram:
     keep ``sqrt(sum w^2)``, as ROOT falls back to it for a weighted histogram.
     """
     level = {"poisson": True, "poisson2": 0.95}.get(stored_error_option(stored), False)
-    if not level or histogram._unit is None:
+    if not level or histogram._provenance.unit is None:
         return histogram
     return histogram.replace(poisson=level)
 

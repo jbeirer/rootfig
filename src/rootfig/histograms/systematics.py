@@ -22,6 +22,7 @@ from rootfig._storage import add_hists
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
+from rootfig.histograms.provenance import Provenance
 
 __all__ = ["Uncertainty", "sum_histograms", "uncertainty"]
 
@@ -176,14 +177,15 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
             [h.variations[name][1] if name in h.variations else h.hist for h in histograms]
         )
         variations[name] = (up, down)
-    counted = all(h._unit is not None for h in histograms) and all(
+    counted = all(h._provenance.unit is not None for h in histograms) and all(
         np.allclose(h._factors(flow=True), first._factors(flow=True), rtol=1e-12, atol=0)
         for h in histograms[1:]
     )
     same_level = all(h.poisson and h._cl == first._cl for h in histograms)
+    unit = first._provenance.unit
     total = add_hists([h.hist for h in histograms])
     errors: tuple[FloatArray, FloatArray] | None = None
-    if any(h._errors is not None for h in histograms):  # then not every input is Poisson
+    if any(h._provenance.errors is not None for h in histograms):  # then not all are Poisson
         # given errors add in quadrature side by side, every input with its own (down, up)
         sides = [h.errors(flow=True) for h in histograms]
         errors = (
@@ -200,7 +202,8 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
         per_object=any(h.per_object for h in histograms),
         is_data=all(h.is_data for h in histograms),
         poisson=first.poisson if counted and same_level else False,
-        _unit=first._unit.copy() if counted and first._unit is not None else None,
-        _weighted=not counted,
+        _provenance=Provenance(
+            unit.copy() if counted and unit is not None else None, weighted=not counted
+        ),
         stat_errors=errors,
     )

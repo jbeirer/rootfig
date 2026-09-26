@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from rootfig.errors import RootfigWarning, SourceError
@@ -115,15 +116,17 @@ def with_data_errors(histograms: Sequence[Histogram], mode: DataErrors | None) -
         raise ValueError(msg)
     result = []
     for histogram_ in histograms:
-        own = bool(histogram_.poisson) or histogram_._errors is not None
-        if mode is None or not histogram_.is_data:
+        provenance = histogram_._provenance
+        own = bool(histogram_.poisson) or provenance.errors is not None
+        if mode is None or not histogram_.is_data or (mode == "sumw2" and not own):
             result.append(histogram_)
         elif mode == "sumw2":
-            result.append(histogram_.replace(poisson=False, _errors=None) if own else histogram_)
+            plain = replace(provenance, errors=None)
+            result.append(histogram_.replace(poisson=False, _provenance=plain))
         elif mode == "auto":
             unit_counts = not own and histogram_._count_problem() is None
             result.append(histogram_.replace(poisson=True) if unit_counts else histogram_)
-        elif histogram_._unit is not None:  # "poisson" or a level, for known counts
+        elif provenance.unit is not None:  # "poisson" or a level, for known counts
             result.append(histogram_.replace(poisson=wanted))
         else:
             msg = (

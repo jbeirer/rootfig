@@ -717,7 +717,7 @@ another of `TEfficiency`'s methods, computed as ROOT computes it:
 | `"normal"` | `ε ± z·σ` clipped to `[0, 1]`, with `σ² = (Σw²_pass (1 − 2ε) + Σw²_all ε²) / (Σw_all)²` (`ε(1 − ε) / n` for counts); no width at 0 and 1 |
 | `"wilson"` | the Wilson score interval of the counts; unweighted entries only. It keeps a width at 0 and 1 |
 | `"jeffreys"`, `"uniform"` | the Bayesian interval of the prior `Beta(0.5, 0.5)` or `Beta(1, 1)`; weighted entries too |
-| `rf.Bayesian(alpha, beta, mode=False, shortest=False)` | any Beta prior; `mode=True` shows the posterior's mode rather than its mean, `shortest=True` the shortest interval rather than the central one (ROOT's `kPosteriorMode` and `kShortestInterval`) |
+| `rf.Bayesian(alpha, beta, mode=False, shortest=None)` | any Beta prior; `mode=True` shows the posterior's mode rather than its mean, `shortest=True` the shortest interval rather than the central one (ROOT's `kPosteriorMode` and `kShortestInterval`). `shortest` follows `mode` unless given, as `TEfficiency::SetPosteriorMode` sets both |
 | `"agresti-coull"` | the normal approximation around the Wilson centre, `(k + z²/2) / (n + z²)`; unweighted entries only |
 | `"wilson-effective"` | rootfig's extension of `"wilson"` to weighted entries: the Wilson interval of the effective entries `n_eff = (Σw)² / Σw²` of the denominator. Entries passing with probability `ε` give a weighted fraction of variance `ε(1 − ε) / n_eff`, and the interval inverts that. An approximation for non-negative weights: convenient, but with no guaranteed coverage for arbitrary weights. The same as `"wilson"` for counts |
 

@@ -22,26 +22,31 @@ class Bayesian:
     entries of the total first (``sum w / sum w^2``), as ROOT's ``TEfficiency``
     does. The efficiency is the posterior mean, or its mode with ``mode=True``,
     and the interval the central one, or the shortest with ``shortest=True``
-    (ROOT's ``kPosteriorMode`` and ``kShortestInterval``). ``interval="jeffreys"``
-    is ``Bayesian(0.5, 0.5)``, ``"uniform"`` is ``Bayesian(1, 1)``.
+    (ROOT's ``kPosteriorMode`` and ``kShortestInterval``). ``shortest`` follows
+    ``mode`` unless given, as ``TEfficiency::SetPosteriorMode`` also sets the
+    shortest interval. ``interval="jeffreys"`` is ``Bayesian(0.5, 0.5)``,
+    ``"uniform"`` is ``Bayesian(1, 1)``.
 
     Raises
     ------
     ValueError
-        Unless ``alpha`` and ``beta`` are positive and finite.
+        Unless ``alpha`` and ``beta`` are positive finite numbers.
     """
 
     alpha: float = 1.0
     beta: float = 1.0
     mode: bool = False
-    shortest: bool = False
+    shortest: bool | None = None
 
     def __post_init__(self) -> None:
         for name in ("alpha", "beta"):
             value = getattr(self, name)
-            if not (isinstance(value, int | float) and 0 < value < np.inf):
+            number = isinstance(value, int | float) and not isinstance(value, bool)
+            if not (number and 0 < value < np.inf):
                 msg = f"Bayesian {name} must be a positive finite number, got {value!r}"
                 raise ValueError(msg)
+        if self.shortest is None:
+            object.__setattr__(self, "shortest", self.mode)
 
 
 def _posterior(

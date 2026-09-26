@@ -217,13 +217,18 @@ def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
 def _flow_content(histogram: Histogram, side: int) -> bool:
     """Return True if the flow bin on ``side`` (0 under, -1 over) holds weight anywhere.
 
-    The nominal histogram and every systematic variation count, and a bin whose
-    weights cancel to zero still has content (its variance is positive).
+    The nominal histogram, every systematic variation and errors given as
+    ``stat_errors`` count, and a bin whose weights cancel to zero still has
+    content (its variance is positive).
     """
     traits = histogram.axis.traits
     if not (traits.underflow if side == 0 else traits.overflow):
         return False
-    hists = [histogram.hist, *(h for pair in histogram.variations.values() for h in pair)]
+    hists = [
+        histogram.hist,
+        *(h for pair in histogram.variations.values() for h in pair),
+        *(histogram._provenance.errors or ()),
+    ]
     return any(
         _has_content(
             float(np.asarray(h.values(flow=True))[side]),

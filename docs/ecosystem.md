@@ -65,6 +65,10 @@ and its Beta priors); `scipy.optimize.brentq` finds the bounds that have no
 closed form (the shortest Bayesian interval). rootfig decides what the
 quantiles are taken of (the counts behind scaled or normalised contents, which
 interval ROOT would choose) and imports SciPy only when it computes one.
+`hist.intervals` holds the same Garwood, Clopper–Pearson and Poisson-ratio
+intervals, and rootfig's tests check that both agree to round-off. rootfig does
+not call it at run time: it imports `scipy.stats`, which takes 0.4 s or more on
+the first interval of every session, for a computation of a few lines.
 
 ## Trees and histogram files
 

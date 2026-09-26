@@ -1715,6 +1715,25 @@ class TestFlowTransformations:
         assert flags == (False, True)
         assert shown[0].variances()[-1] == 2.0
 
+    def test_flow_cell_with_given_errors_only(self) -> None:
+        """An empty underflow cell with an error of its own is shown and folded with it."""
+        from rootfig.plotting import fold_flow_bins
+
+        empty = hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+        empty.view(flow=True).value = [0.0, 4.0, 1.0, 0.0]
+        errors = (np.array([3.0, 1.0, 1.0, 0.0]), np.array([4.0, 2.0, 1.0, 0.0]))
+        h = Histogram(empty, label="A", stat_errors=errors)
+        [shown], flags = show_flow_bins([h])
+        assert flags == (True, False)
+        np.testing.assert_allclose(shown.values(), [0.0, 4.0, 1.0])
+        np.testing.assert_allclose(shown.errors()[0], [3.0, 1.0, 1.0])
+        np.testing.assert_allclose(shown.errors()[1], [4.0, 2.0, 1.0])
+        [folded] = fold_flow_bins([h])
+        np.testing.assert_allclose(folded.values(), [4.0, 1.0])
+        np.testing.assert_allclose(folded.errors()[0], [np.hypot(3.0, 1.0), 1.0])
+        np.testing.assert_allclose(folded.errors()[1], [np.hypot(4.0, 2.0), 1.0])
+        np.testing.assert_allclose(folded.errors(flow=True)[1][0], 0.0)
+
     def test_show_needs_identical_binning(self) -> None:
         from rootfig.errors import BinningError
 
