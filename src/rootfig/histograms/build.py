@@ -240,6 +240,12 @@ class Histogram:
                     "with .scaled()"
                 )
                 raise ValueError(msg)
+            if np.any(self._factors(flow=True) < 0):  # also where the cells are empty
+                msg = (
+                    f"histogram {self.label!r} holds counts scaled by a negative factor, which "
+                    "have no Poisson interval"
+                )
+                raise ValueError(msg)
             if np.any(self.values(flow=True) < 0):
                 msg = (
                     f"histogram {self.label!r} has negative contents, so its uncertainty is "

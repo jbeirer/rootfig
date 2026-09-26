@@ -11,6 +11,7 @@ import hist
 import numpy as np
 import pytest
 
+from helpers import filled, hist_of, symmetric
 from rootfig.errors import (
     RootfigWarning,
 )
@@ -31,7 +32,6 @@ from rootfig.histograms.binomial import (
 )
 from rootfig.histograms.intervals import ONE_SIGMA, count_problem, count_scale, poisson_errors
 from rootfig.model import Sample
-from test_histograms import _contents, _hist, _poisson, _symmetric
 
 # Garwood bounds (count, lower, upper) from scipy.special.gammaincinv, at z = 1 and z = 2
 GARWOOD = {
@@ -132,7 +132,7 @@ class TestRootReference:
     def test_poisson_errors_are_th1_kpoisson(self) -> None:
         counts = np.array(list(ROOT_POISSON), dtype=float)
         down, up = (np.array(side) for side in zip(*ROOT_POISSON.values(), strict=True))
-        ours = Histogram(_poisson(list(counts)), label="Data", is_data=True, poisson=True)
+        ours = Histogram(hist_of(list(counts)), label="Data", is_data=True, poisson=True)
         # exact at every count; ROOT's coverage is the truncated 1 - 0.682689492
         for mine, root in zip(ours.errors(), (down, up), strict=True):
             np.testing.assert_array_less(np.abs(mine - root) / np.maximum(root, 1.0), 1e-9)
@@ -178,7 +178,7 @@ class TestRootReference:
         from rootfig.histograms import efficiency
 
         weights = [1.0 + delta] * 4
-        eff = efficiency(_hist([0.5] * 3, weights[:3]), _hist([0.5] * 4, weights))
+        eff = efficiency(filled([0.5] * 3, weights[:3]), filled([0.5] * 4, weights))
         assert eff.lower[0] == pytest.approx(lower, abs=1e-9)
 
     @pytest.mark.parametrize("case", sorted(ROOT_TEFFICIENCY))
@@ -188,20 +188,20 @@ class TestRootReference:
         entries, (value, lower, upper) = ROOT_TEFFICIENCY[case]
         weights = np.array([w for w, _ in entries])
         passes = np.array([ok for _, ok in entries])
-        total = _hist([0.5] * len(entries), list(weights))
-        passed = _hist([0.5] * int(passes.sum()), list(weights[passes]))
+        total = filled([0.5] * len(entries), list(weights))
+        passed = filled([0.5] * int(passes.sum()), list(weights[passes]))
         eff = efficiency(passed, total)
         assert (eff.values[0], eff.lower[0], eff.upper[0]) == pytest.approx(
             (value, lower, upper), rel=1e-12, abs=1e-15
         )
 
     def test_a_propagated_ratio_is_th1_divide(self) -> None:
-        a = Histogram(_contents([3.0, 3.0, 0.5], [5.0, 3.0, 0.25]), label="A")
-        b = Histogram(_contents([2.0, 3.0, 4.0], [2.0, 9.0, 6.0]), label="B")
+        a = Histogram(hist_of([3.0, 3.0, 0.5], [5.0, 3.0, 0.25]), label="A")
+        b = Histogram(hist_of([2.0, 3.0, 4.0], [2.0, 9.0, 6.0]), label="B")
         ratio = compare(a, b, uncertainty="propagate")
         np.testing.assert_allclose(ratio.values, [1.5, 1.0, 0.125])
         root = [1.541103500742244, 1.1547005383792515, 0.14657549249448218]
-        np.testing.assert_allclose(_symmetric(ratio.errors), root, rtol=1e-12)
+        np.testing.assert_allclose(symmetric(ratio.errors), root, rtol=1e-12)
 
 
 class TestPoissonIntervals:
@@ -316,9 +316,9 @@ class TestEfficiencyIntervals:
         # (with a warning); an explicit choice here never silently changes
         for method in ("clopper-pearson", "wilson"):
             with pytest.raises(ValueError, match=f"'{method}' needs unweighted"):
-                efficiency(_hist([0.5], [2.0]), _hist([0.5, 0.5], [2.0, 2.0]), interval=method)
+                efficiency(filled([0.5], [2.0]), filled([0.5, 0.5], [2.0, 2.0]), interval=method)
         with pytest.raises(ValueError, match="interval must be"):
-            efficiency(_hist([0.5]), _hist([0.5]), interval="bayes")  # type: ignore[arg-type]
+            efficiency(filled([0.5]), filled([0.5]), interval="bayes")  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="interval must be"):
             Cutflow("s", (), interval="exact")  # type: ignore[arg-type]
         weighted = CutflowStep(label="", expression="", events=2, yield_=3.0, error=np.sqrt(5.0))
@@ -351,8 +351,8 @@ class TestEfficiencyIntervals:
         assert (lower[0], upper[0]) == (1.0, 1.0)
         from rootfig.histograms import efficiency
 
-        passed = _hist([0.5] * 2, [5.0, 5.0])  # 10 of variance 50, from a total of variance 20
-        total = _hist([0.5] * 5, [2.0] * 5)
+        passed = filled([0.5] * 2, [5.0, 5.0])  # 10 of variance 50, from a total of variance 20
+        total = filled([0.5] * 5, [2.0] * 5)
         with pytest.warns(RootfigWarning, match="passed variance too large"):
             eff = efficiency(passed, total)
         assert eff.values[0] == 1.0
@@ -505,8 +505,8 @@ class TestMoreEfficiencyIntervals:
         # ROOT 6.40, TEfficiency with weights 2, 2, 2 passing, 1 failing, 3 passing: the sums
         # scaled to the total's effective entries, sum w / sum w^2 = 10 / 22
         weights, passes = [2.0, 2.0, 2.0, 1.0, 3.0], [True, True, True, False, True]
-        total = _hist([0.5] * 5, weights)
-        passed = _hist([0.5] * 4, [w for w, ok in zip(weights, passes, strict=True) if ok])
+        total = filled([0.5] * 5, weights)
+        passed = filled([0.5] * 4, [w for w, ok in zip(weights, passes, strict=True) if ok])
         eff = efficiency(passed, total, interval=prior)
         down, up = eff.errors
         np.testing.assert_allclose([eff.values[0], down[0], up[0]], expected, atol=2e-9)
@@ -519,14 +519,16 @@ class TestMoreEfficiencyIntervals:
         assert resolve_interval("uniform", True) == Bayesian(1.0, 1.0)
         custom = Bayesian(2.0, 3.0, shortest=True)
         assert resolve_interval(custom, False) is custom
-        passed, total = _hist([0.5] * 3), _hist([0.5] * 10)
+        passed, total = filled([0.5] * 3), filled([0.5] * 10)
         jeffreys = efficiency(passed, total, interval="jeffreys")
         assert jeffreys.values[0] == pytest.approx(0.3181818181818182)  # the posterior mean
         with pytest.raises(ValueError, match="'agresti-coull' needs unweighted"):
-            efficiency(_hist([0.5], [2.0]), _hist([0.5, 0.5], [2.0, 2.0]), interval="agresti-coull")
+            efficiency(
+                filled([0.5], [2.0]), filled([0.5, 0.5], [2.0, 2.0]), interval="agresti-coull"
+            )
         for removed in ("feldman-cousins", "mid-p"):  # ROOT's, left out of rootfig
             with pytest.raises(ValueError, match="interval must be"):
-                efficiency(_hist([0.5]), _hist([0.5, 0.5]), interval=removed)  # type: ignore[arg-type]
+                efficiency(filled([0.5]), filled([0.5, 0.5]), interval=removed)  # type: ignore[arg-type]
         for bad in ({"alpha": 0.0}, {"beta": -1.0}, {"alpha": np.inf}, {"alpha": True}):
             with pytest.raises(ValueError, match="positive finite"):
                 Bayesian(**bad)
@@ -538,7 +540,7 @@ class TestMoreEfficiencyIntervals:
         assert Bayesian(mode=True) == Bayesian(mode=True, shortest=True)
         assert Bayesian(mode=True, shortest=False).shortest is False
         # ROOT 6.40, TEfficiency (kBUniform) of 0 of 10 after SetPosteriorMode(): 0 +0.0991
-        eff = efficiency(_hist([]), _hist([0.5] * 10), interval=Bayesian(1, 1, mode=True))
+        eff = efficiency(filled([]), filled([0.5] * 10), interval=Bayesian(1, 1, mode=True))
         down, up = eff.errors
         assert (eff.values[0], down[0]) == (0.0, 0.0)
         assert up[0] == pytest.approx(0.0990920798975024, abs=2e-9)
@@ -548,7 +550,7 @@ class TestMoreEfficiencyIntervals:
 
         # no passing entry: the posterior's mode is 0, below its central interval
         central = Bayesian(1, 1, mode=True, shortest=False)
-        eff = efficiency(_hist([]), _hist([0.5] * 10), interval=central)
+        eff = efficiency(filled([]), filled([0.5] * 10), interval=central)
         down, up = eff.errors
         assert eff.values[0] == 0.0
         assert down[0] == 0.0  # not negative, where ROOT reports -0.0156
@@ -558,7 +560,7 @@ class TestMoreEfficiencyIntervals:
         from rootfig.histograms import efficiency
 
         # ROOT 6.40, TGraphAsymmErrors::Divide of 2 of 3 and an empty bin: (value, down, up)
-        passed, total = _hist([0.5, 0.5]), _hist([0.5, 0.5, 0.5])
+        passed, total = filled([0.5, 0.5]), filled([0.5, 0.5, 0.5])
         hidden = efficiency(passed, total)
         assert np.isnan([hidden.values[1], hidden.lower[1], hidden.upper[1]]).all()
         shown = efficiency(passed, total, show_empty=True)  # "e0"
@@ -583,8 +585,8 @@ class TestMoreEfficiencyIntervals:
         # bin 0: weights +1 and -1, a total of 0 with a variance of 2: entries whose weights
         # cancel, so no efficiency (ROOT 6.40 has none either: TEfficiency 0 with nan errors,
         # Divide "e0" 0 +- 0); bin 2: no entries at all, the only empty bin
-        total = _hist([0.5, 0.5, 1.5, 1.5], [1.0, -1.0, 1.0, 1.0])
-        passed = _hist([1.5], [1.0])
+        total = filled([0.5, 0.5, 1.5, 1.5], [1.0, -1.0, 1.0, 1.0])
+        passed = filled([1.5], [1.0])
         for interval in ("auto", "uniform", "wilson-effective"):
             eff = efficiency(passed, total, interval=interval, show_empty=True)  # type: ignore[arg-type]
             assert np.isnan([eff.values[0], eff.lower[0], eff.upper[0]]).all()
@@ -597,7 +599,7 @@ class TestMoreEfficiencyIntervals:
         # ROOT 6.40, TGraphAsymmErrors::Divide(..., "e0") of weights 2, 2 passing and 1 failing,
         # beside empty bins: the normal approximation ("", "n", "cp" and "w" alike for weighted
         # histograms) draws an empty bin at 0 +- 0, a Bayesian interval draws no point there
-        total, passed = _hist([1.5] * 3, [2.0, 2.0, 1.0]), _hist([1.5] * 2, [2.0, 2.0])
+        total, passed = filled([1.5] * 3, [2.0, 2.0, 1.0]), filled([1.5] * 2, [2.0, 2.0])
         normal = efficiency(passed, total, show_empty=True)
         assert (normal.values[0], normal.lower[0], normal.upper[0]) == (0.0, 0.0, 0.0)
         np.testing.assert_allclose(
@@ -617,7 +619,7 @@ class TestMoreEfficiencyIntervals:
     def test_a_confidence_level(self) -> None:
         from rootfig.histograms import efficiency
 
-        eff = efficiency(_hist([0.5] * 3), _hist([0.5] * 10), cl=0.95)
+        eff = efficiency(filled([0.5] * 3), filled([0.5] * 10), cl=0.95)
         np.testing.assert_allclose(
             [eff.lower[0], eff.upper[0]], np.ravel(clopper_pearson([3.0], [10.0], 0.95))
         )
@@ -713,8 +715,8 @@ class TestUpstreamIntervals:
 
         n = np.array([0.0, 1.0, 3.0, 7.0, 40.0, 0.0])
         d = np.array([1.0, 1.0, 5.0, 2.0, 35.0, 0.0])
-        a = Histogram(_contents(n.tolist(), n.tolist()), label="A")
-        b = Histogram(_contents(d.tolist(), d.tolist()), label="B")
+        a = Histogram(hist_of(n.tolist(), n.tolist()), label="A")
+        b = Histogram(hist_of(d.tolist(), d.tolist()), label="B")
         errors = compare(a, b, uncertainty="poisson-ratio").errors
         expected = upstream(n[:-1], d[:-1], uncertainty_type="poisson-ratio")
         np.testing.assert_allclose(np.asarray(errors)[:, :-1], expected, rtol=1e-12)

@@ -9,6 +9,7 @@ import hist
 import numpy as np
 import pytest
 
+from helpers import hist_of
 from rootfig.histograms import (
     Histogram,
     compare,
@@ -19,7 +20,6 @@ from rootfig.histograms import (
 from rootfig.histograms.binomial import (
     clopper_pearson,
 )
-from test_histograms import _contents, _poisson
 
 
 class TestNormalisedUncertainties:
@@ -101,7 +101,7 @@ class TestShapeUncertainty:
         np.testing.assert_allclose(shape_covariance(histogram, 4.0), 16 * expected)
 
     def test_counts_are_binomial_fractions(self) -> None:
-        counts = Histogram(_poisson([1.0, 3.0, 6.0]), label="Data", is_data=True)
+        counts = Histogram(hist_of([1.0, 3.0, 6.0]), label="Data", is_data=True)
         plain = normalize(counts, True, uncertainty="shape")
         fraction = np.array([0.1, 0.3, 0.6])
         np.testing.assert_allclose(plain.variances(), fraction * (1 - fraction) / 10)
@@ -118,7 +118,7 @@ class TestShapeUncertainty:
         np.testing.assert_allclose(density.errors()[1], (upper - fraction) / [1, 2, 1])
 
     def test_it_needs_a_normalisation_to_the_own_total(self) -> None:
-        counts = Histogram(_poisson([1.0, 3.0]), label="C")
+        counts = Histogram(hist_of([1.0, 3.0]), label="C")
         for spec in ("width", None, False):
             with pytest.raises(ValueError, match="own total"):
                 normalize(counts, spec, uncertainty="shape")
@@ -133,7 +133,7 @@ class TestShapeEdges:
         # the total enters every bin with the opposite sign, so a bin's lower error takes the
         # others' upper ones: no side-by-side propagation, refused like shape_covariance
         given = Histogram(
-            _contents([1.0, 3.0], [1.0, 3.0]), label="G", stat_errors=([0.5, 1.0], [1.0, 2.0])
+            hist_of([1.0, 3.0], [1.0, 3.0]), label="G", stat_errors=([0.5, 1.0], [1.0, 2.0])
         )
         with pytest.raises(ValueError, match=r"stat_errors.*normalize_uncertainty='scale'"):
             normalize(given, True, uncertainty="shape")
@@ -156,11 +156,11 @@ class TestShapeEdges:
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
                 with pytest.raises(ValueError, match="no shape to normalise to"):
-                    shape_covariance(Histogram(_contents(values, variances), label="H"))
+                    shape_covariance(Histogram(hist_of(values, variances), label="H"))
                 with pytest.raises(ValueError, match="no shape to normalise to"):
-                    shape_covariance(_contents(values, variances), "density")
+                    shape_covariance(hist_of(values, variances), "density")
         given = Histogram(
-            _contents([1.0, 3.0], [1.0, 3.0]), label="G", stat_errors=([0.5, 1.0], [1.0, 2.0])
+            hist_of([1.0, 3.0], [1.0, 3.0]), label="G", stat_errors=([0.5, 1.0], [1.0, 2.0])
         )
         with pytest.raises(ValueError, match="stat_errors"):
             shape_covariance(given)

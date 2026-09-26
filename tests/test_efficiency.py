@@ -10,6 +10,7 @@ import hist
 import numpy as np
 import pytest
 
+from helpers import filled, hist_of
 from rootfig.errors import (
     BinningError,
     RootfigWarning,
@@ -23,15 +24,14 @@ from rootfig.histograms.binomial import (
     wilson_interval,
 )
 from rootfig.model import Cut, Sample
-from test_histograms import _contents, _hist
 
 
 class TestEfficiency:
     def test_wilson_interval(self) -> None:
         from rootfig.histograms import efficiency
 
-        total = _hist([0.5] * 10 + [1.5] * 4)
-        passed = _hist([0.5] * 5 + [1.5] * 4)
+        total = filled([0.5] * 10 + [1.5] * 4)
+        passed = filled([0.5] * 5 + [1.5] * 4)
         eff = efficiency(passed, total, label="tight", interval="wilson")
         assert eff.label == "tight"
         assert eff.values[0] == pytest.approx(0.5)
@@ -60,7 +60,7 @@ class TestEfficiency:
         )
         with pytest.warns(RootfigWarning, match="without a variance"):
             eff = efficiency(
-                _contents([5.0], [0.0]), _contents([10.0], [0.0]), interval="wilson-effective"
+                hist_of([5.0], [0.0]), hist_of([10.0], [0.0]), interval="wilson-effective"
             )
         assert eff.values[0] == 0.5
         assert np.isnan([eff.lower[0], eff.upper[0]]).all()
@@ -68,26 +68,26 @@ class TestEfficiency:
     def test_weights_use_effective_entries(self) -> None:
         from rootfig.histograms import efficiency
 
-        unweighted = efficiency(_hist([0.5] * 5), _hist([0.5] * 10), interval="wilson")
+        unweighted = efficiency(filled([0.5] * 5), filled([0.5] * 10), interval="wilson")
         weighted = efficiency(
-            _hist([0.5] * 5, [2.0] * 5),
-            _hist([0.5] * 10, [2.0] * 10),
+            filled([0.5] * 5, [2.0] * 5),
+            filled([0.5] * 10, [2.0] * 10),
             interval="wilson-effective",
         )
         assert weighted.values[0] == pytest.approx(unweighted.values[0])
         assert weighted.lower[0] == pytest.approx(unweighted.lower[0])  # same n_eff = 10
         # all of weights 1, 2 and 3 pass: n_eff = 36 / 14, and the interval keeps a width,
         # where ROOT's weighted normal approximation (the default) gives [1, 1]
-        all_pass = _hist([0.5] * 3, [1.0, 2.0, 3.0])
+        all_pass = filled([0.5] * 3, [1.0, 2.0, 3.0])
         n_eff = 36 / 14
         wilson = efficiency(all_pass, all_pass, interval="wilson-effective")
         assert wilson.lower[0] == pytest.approx(n_eff / (n_eff + 1))
-        counts = efficiency(_hist([0.5] * 5), _hist([0.5] * 10), interval="wilson-effective")
+        counts = efficiency(filled([0.5] * 5), filled([0.5] * 10), interval="wilson-effective")
         np.testing.assert_array_equal(counts.lower, unweighted.lower)  # the same for counts
         assert efficiency(all_pass, all_pass).lower[0] == 1.0
         with pytest.raises(BinningError):
             efficiency(
-                _hist([0.5]), hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
+                filled([0.5]), hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
             )
 
 

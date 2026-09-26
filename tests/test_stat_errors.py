@@ -9,6 +9,7 @@ import hist
 import numpy as np
 import pytest
 
+from helpers import filled, hist_of, symmetric, with_errors
 from rootfig.errors import (
     BinningError,
     RootfigWarning,
@@ -28,7 +29,6 @@ from rootfig.histograms.normalize import normalize_hist
 from rootfig.histograms.provenance import Provenance
 from rootfig.model import Sample, Variable
 from rootfig.plotting import fold_flow_bins, show_flow_bins
-from test_histograms import _contents, _hist, _poisson, _symmetric, _with_errors
 
 
 class TestAsymmetricErrors:
@@ -40,7 +40,7 @@ class TestAsymmetricErrors:
     VD = [1.5, 4.0, 3.0, 20.0]
 
     def _sides(self) -> tuple[hist.Hist, hist.Hist]:
-        return _contents(self.N, self.VN), _contents(self.D, self.VD)
+        return hist_of(self.N, self.VN), hist_of(self.D, self.VD)
 
     @staticmethod
     def _closed_form(kind: str, n: Any, d: Any, vn: Any, vd: Any) -> Any:
@@ -67,7 +67,7 @@ class TestAsymmetricErrors:
             expected = self._closed_form(kind, n, d, vn, vd)
             result = compare(*self._sides(), kind=kind)
         defined = np.isfinite(result.values)
-        errors = _symmetric(result.errors)
+        errors = symmetric(result.errors)
         np.testing.assert_allclose(errors[defined], expected[defined], rtol=1e-13)
         assert np.isnan(errors[~defined]).all()
         if kind == "pull":
@@ -76,15 +76,13 @@ class TestAsymmetricErrors:
             split = compare(*self._sides(), kind=kind, uncertainty="numerator")
             assert split.band is not None
             scale = np.abs(d) if kind == "ratio" else 1.0
-            np.testing.assert_allclose(_symmetric(split.errors), np.sqrt(vn) / scale, rtol=1e-13)
-            np.testing.assert_allclose(_symmetric(split.band), np.sqrt(vd) / scale, rtol=1e-13)
+            np.testing.assert_allclose(symmetric(split.errors), np.sqrt(vn) / scale, rtol=1e-13)
+            np.testing.assert_allclose(symmetric(split.band), np.sqrt(vd) / scale, rtol=1e-13)
 
     def test_a_ratio_takes_the_side_that_moves_it(self) -> None:
         # n = 4 with errors (1, 3); d = 2 with errors (0.5, 1), and d = -2 in bin 1
-        num = _with_errors(Histogram(_contents([4.0, 4.0], [4.0, 4.0]), "N"), [1, 1], [3, 3])
-        ref = _with_errors(
-            Histogram(_contents([2.0, -2.0], [1.0, 1.0]), "D"), [0.5, 0.5], [1.0, 1.0]
-        )
+        num = with_errors(Histogram(hist_of([4.0, 4.0], [4.0, 4.0]), "N"), [1, 1], [3, 3])
+        ref = with_errors(Histogram(hist_of([2.0, -2.0], [1.0, 1.0]), "D"), [0.5, 0.5], [1.0, 1.0])
         split = compare(num, ref, uncertainty="numerator")
         # n / d falls with n where d > 0 and rises with it where d < 0
         np.testing.assert_allclose(split.errors[0], [1 / 2, 3 / 2])
@@ -98,8 +96,8 @@ class TestAsymmetricErrors:
         np.testing.assert_allclose(both.errors[1][0], np.hypot(3 / 2, 4 * 0.5 / 4))
 
     def test_a_difference_and_a_pull_face_the_reference(self) -> None:
-        num = _with_errors(Histogram(_contents([5.0, 1.0], [5.0, 1.0]), "N"), [2, 0.8], [3, 2.3])
-        ref = _with_errors(Histogram(_contents([3.0, 3.0], [3.0, 3.0]), "D"), [1, 1], [1.5, 1.5])
+        num = with_errors(Histogram(hist_of([5.0, 1.0], [5.0, 1.0]), "N"), [2, 0.8], [3, 2.3])
+        ref = with_errors(Histogram(hist_of([3.0, 3.0], [3.0, 3.0]), "D"), [1, 1], [1.5, 1.5])
         difference = compare(num, ref, kind="difference")
         np.testing.assert_allclose(difference.errors[0], np.hypot([2, 0.8], [1.5, 1.5]))
         np.testing.assert_allclose(difference.errors[1], np.hypot([3, 2.3], [1, 1]))
@@ -112,12 +110,12 @@ class TestAsymmetricErrors:
         np.testing.assert_allclose(
             pull.values, [2 / np.hypot(2, 1.5), -2 / np.hypot(2.3, 1)], rtol=1e-13
         )
-        np.testing.assert_array_equal(_symmetric(pull.errors), [1.0, 1.0])
+        np.testing.assert_array_equal(symmetric(pull.errors), [1.0, 1.0])
 
     def test_uncertainty_adds_each_statistical_side_to_its_systematic_side(self) -> None:
-        nominal = _contents([10.0, 10.0], [10.0, 10.0])
+        nominal = hist_of([10.0, 10.0], [10.0, 10.0])
         varied = Histogram(nominal, "A", variations={"s": (nominal * 1.3, nominal * 0.8)})
-        u = uncertainty(_with_errors(varied, [2.0, 1.0], [4.0, 5.0]))
+        u = uncertainty(with_errors(varied, [2.0, 1.0], [4.0, 5.0]))
         np.testing.assert_allclose(u.stat_down, [2.0, 1.0])
         np.testing.assert_allclose(u.stat_up, [4.0, 5.0])
         np.testing.assert_allclose(u.total_down, np.hypot([2.0, 1.0], 2.0))
@@ -158,7 +156,7 @@ class TestPoissonHistograms:
         np.testing.assert_allclose(squared.errors()[1], np.sqrt(squared.variances()))
 
     def _data(self, counts: list[float], **kwargs: Any) -> Histogram:
-        return Histogram(_poisson(counts), label="Data", is_data=True, poisson=True, **kwargs)
+        return Histogram(hist_of(counts), label="Data", is_data=True, poisson=True, **kwargs)
 
     def test_errors_are_the_interval_of_the_counts(self) -> None:
         data = self._data([0.0, 1.0, 4.0])
@@ -170,8 +168,8 @@ class TestPoissonHistograms:
         u = uncertainty(data)
         np.testing.assert_array_equal(u.stat_up, up)
         np.testing.assert_array_equal(u.total_down, down)
-        plain = Histogram(_poisson([0.0, 1.0, 4.0]), label="Data", is_data=True)
-        np.testing.assert_array_equal(_symmetric(plain.errors()), [0.0, 1.0, 2.0])
+        plain = Histogram(hist_of([0.0, 1.0, 4.0]), label="Data", is_data=True)
+        np.testing.assert_array_equal(symmetric(plain.errors()), [0.0, 1.0, 2.0])
 
     def test_the_flag_survives_display_transformations(self) -> None:
         data = self._data([2.0, 6.0])
@@ -192,7 +190,7 @@ class TestPoissonHistograms:
         density = normalize(data, "density")  # also divided by the total, 10
         np.testing.assert_allclose(density.errors()[1], [0.184102164, ten / 100])
         with pytest.raises(BinningError, match="count scale"):
-            data.replace(hist=_poisson([1.0, 2.0, 3.0]), _provenance=data._provenance)
+            data.replace(hist=hist_of([1.0, 2.0, 3.0]), _provenance=data._provenance)
 
     def test_an_empty_histogram_keeps_its_scale(self) -> None:
         h = hist.Hist(hist.axis.Variable([0.0, 1.0, 11.0]), storage=hist.storage.Weight())
@@ -218,14 +216,14 @@ class TestPoissonHistograms:
         total = sum_histograms([a, b])
         assert total.poisson
         assert total.is_data  # two data periods add up to data
-        assert not sum_histograms([a, Histogram(_poisson([0.0, 2.0, 0.0]), label="MC")]).is_data
+        assert not sum_histograms([a, Histogram(hist_of([0.0, 2.0, 0.0]), label="MC")]).is_data
         low, high = poisson_interval([0.0, 3.0, 4.0])
         np.testing.assert_allclose(total.errors()[0], [0.0, 3.0, 4.0] - low)
         np.testing.assert_allclose(total.errors()[1], high - [0.0, 3.0, 4.0])
         empty_scaled = sum_histograms([a.scaled(2.0), b.scaled(2.0)])
         assert empty_scaled.errors()[1][0] == pytest.approx(2 * 1.8410216450)
         # a plain input, or counts scaled differently, are no longer counts of one scale
-        plain = Histogram(_poisson([0.0, 2.0, 0.0]), label="MC")
+        plain = Histogram(hist_of([0.0, 2.0, 0.0]), label="MC")
         assert not sum_histograms([a, plain]).poisson
         assert not sum_histograms([a, b.scaled(2.0)]).poisson
 
@@ -273,11 +271,21 @@ class TestPoissonHistograms:
         np.testing.assert_array_equal(total.errors()[1], 0.0)
         assert not sum_histograms([zero, data]).poisson  # different count scales
 
+    def test_counts_scaled_by_a_negative_factor_have_no_interval(self) -> None:
+        # the empty one keeps its contents at zero: only the record of counts knows the sign
+        for data in (self._data([0.0, 0.0, 0.0]), self._data([0.0, 1.0, 4.0])):
+            with pytest.raises(ValueError, match="scaled by a negative factor"):
+                data.scaled(-1.0)
+            flipped = data.replace(poisson=False).scaled(-1.0)  # sqrt(sum w^2) stays possible
+            np.testing.assert_array_equal(flipped.errors()[1], np.sqrt(data.values()))
+            with pytest.raises(ValueError, match="scaled by a negative factor"):
+                flipped.replace(poisson=True)
+
     def test_a_new_hist_brings_its_own_count_scale(self) -> None:
         # counts [0, 1, 2] scaled by 10, then replaced by the counts with the same binning:
         # the empty bin takes 1.84, not the old 10 x 1.84
-        old = Histogram(_contents([0.0, 1.0, 2.0], [0.0, 1.0, 2.0]), "D", poisson=True).scaled(10)
-        new = old.replace(hist=_contents([0.0, 1.0, 2.0], [0.0, 1.0, 2.0]))
+        old = Histogram(hist_of([0.0, 1.0, 2.0], [0.0, 1.0, 2.0]), "D", poisson=True).scaled(10)
+        new = old.replace(hist=hist_of([0.0, 1.0, 2.0], [0.0, 1.0, 2.0]))
         assert new.errors()[1][0] == pytest.approx(1.8410216450)
         assert old.errors()[1][0] == pytest.approx(10 * 1.8410216450)
         with pytest.raises(ValueError, match="not known to hold counts"):
@@ -321,13 +329,13 @@ class TestPoissonHistograms:
         self, values: list[float], variances: list[float], problem: str
     ) -> None:
         with pytest.raises(ValueError, match=problem):
-            Histogram(_contents(values, variances), label="Data", poisson=True)
+            Histogram(hist_of(values, variances), label="Data", poisson=True)
         with pytest.raises(ValueError, match="negative"):
             self._data([1.0, 2.0]).scaled(-1.0)
 
     def test_a_ratio_to_data_counts_takes_its_interval(self) -> None:
         data = self._data([0.0, 1.0, 9.0])
-        mc = Histogram(_poisson([2.0, 2.0, 8.0]), label="MC")
+        mc = Histogram(hist_of([2.0, 2.0, 8.0]), label="MC")
         low, high = poisson_interval([0.0, 1.0, 9.0])
         split = compare(data, mc, uncertainty="numerator")
         np.testing.assert_allclose(split.values, [0.0, 0.5, 9 / 8])
@@ -356,33 +364,33 @@ ERROR_OPTIONS = Path(__file__).parent / "data" / "error_options.root"
 
 class TestPoissonLevels:
     def test_kpoisson2_on_a_histogram(self) -> None:
-        data = Histogram(_poisson([0.0, 1.0, 4.0]), label="Data", is_data=True, poisson=0.95)
+        data = Histogram(hist_of([0.0, 1.0, 4.0]), label="Data", is_data=True, poisson=0.95)
         down, up = data.errors()
         # ROOT 6.40, TH1::kPoisson2
         np.testing.assert_allclose(down, [0.0, 0.9746821920157102, 2.910134626373674], atol=1e-12)
         np.testing.assert_allclose(up, [3.688879454113936, 4.571643390938899, 6.241588675403699])
         np.testing.assert_allclose(data.scaled(2.0).errors()[1], 2 * up)
         with pytest.raises(ValueError, match="confidence level"):
-            Histogram(_poisson([1.0]), label="Data", poisson=1.5)
-        one_sigma = Histogram(_poisson([0.0, 1.0, 4.0]), label="Data", poisson=True)
+            Histogram(hist_of([1.0]), label="Data", poisson=1.5)
+        one_sigma = Histogram(hist_of([0.0, 1.0, 4.0]), label="Data", poisson=True)
         assert not sum_histograms([data, one_sigma]).poisson  # different levels
         assert sum_histograms([data, data]).poisson == 0.95
 
     def test_counts_behind_the_contents(self) -> None:
-        counts, factor = Histogram(_poisson([0.0, 3.0]), label="A").counts()
+        counts, factor = Histogram(hist_of([0.0, 3.0]), label="A").counts()
         np.testing.assert_array_equal(counts, [0.0, 3.0])
         np.testing.assert_array_equal(factor, [1.0, 1.0])
-        scaled = Histogram(_poisson([0.0, 3.0]), label="A", poisson=True).scaled(2.5)
+        scaled = Histogram(hist_of([0.0, 3.0]), label="A", poisson=True).scaled(2.5)
         counts, factor = scaled.counts()
         np.testing.assert_array_equal(counts, [0.0, 3.0])
         np.testing.assert_allclose(factor, [2.5, 2.5])
         with pytest.raises(ValueError, match="holds no known counts"):
-            Histogram(_contents([2.0], [4.0]), label="W").counts()
+            Histogram(hist_of([2.0], [4.0]), label="W").counts()
         with pytest.raises(ValueError, match="negative factor"):
-            Histogram(_poisson([0.0, 3.0]), label="A").scaled(-1.0).counts()
-        wrong = Provenance(errors=(_poisson([1.0]), _poisson([1.0])))
+            Histogram(hist_of([0.0, 3.0]), label="A").scaled(-1.0).counts()
+        wrong = Provenance(errors=(hist_of([1.0]), hist_of([1.0])))
         with pytest.raises(BinningError, match="statistical errors do not have its binning"):
-            Histogram(_poisson([0.0, 3.0]), label="A", _provenance=wrong)
+            Histogram(hist_of([0.0, 3.0]), label="A", _provenance=wrong)
 
 
 class TestStatErrors:
@@ -390,7 +398,7 @@ class TestStatErrors:
 
     def _given(self, **kwargs: Any) -> Histogram:
         return Histogram(
-            _contents([4.0, 9.0, 1.0, 1.0], [4.0, 9.0, 1.0, 1.0]),
+            hist_of([4.0, 9.0, 1.0, 1.0], [4.0, 9.0, 1.0, 1.0]),
             label="Fit",
             stat_errors=([1.0, 2.0, 0.5, 0.5], [3.0, 4.0, 1.0, 1.0]),
             **kwargs,
@@ -407,7 +415,7 @@ class TestStatErrors:
         np.testing.assert_allclose(flipped[1], [2.0, 4.0, 1.0, 1.0])
         np.testing.assert_array_equal(given.scaled(-1.0).scaled(-1.0).errors(), given.errors())
         negative = Histogram(
-            _contents([-4.0, -9.0, -1.0, -1.0], [4.0, 9.0, 1.0, 1.0]),
+            hist_of([-4.0, -9.0, -1.0, -1.0], [4.0, 9.0, 1.0, 1.0]),
             label="N",
             stat_errors=([1.0, 2.0, 0.5, 0.5], [3.0, 4.0, 1.0, 1.0]),
         )
@@ -425,10 +433,10 @@ class TestStatErrors:
         assert given.replace(label="B")._provenance.errors is not None
 
     def test_they_add_in_quadrature_in_a_sum_and_enter_comparisons(self) -> None:
-        given, plain = self._given(), Histogram(_contents([1.0] * 4, [4.0] * 4), label="P")
+        given, plain = self._given(), Histogram(hist_of([1.0] * 4, [4.0] * 4), label="P")
         total = sum_histograms([given, plain])
         np.testing.assert_allclose(total.errors()[1], np.hypot([3.0, 4.0, 1.0, 1.0], 2.0))
-        ratio = compare(given, Histogram(_contents([2.0] * 4, [0.0] * 4), label="R"))
+        ratio = compare(given, Histogram(hist_of([2.0] * 4, [0.0] * 4), label="R"))
         np.testing.assert_allclose(ratio.errors[1], np.array([3.0, 4.0, 1.0, 1.0]) / 2.0)
 
     @pytest.mark.parametrize(
@@ -442,12 +450,12 @@ class TestStatErrors:
     )
     def test_bad_errors_are_refused(self, errors: Any, match: str) -> None:
         with pytest.raises(ValueError, match=match):
-            Histogram(_contents([4.0] * 4, [4.0] * 4), label="Fit", stat_errors=errors)
+            Histogram(hist_of([4.0] * 4, [4.0] * 4), label="Fit", stat_errors=errors)
 
     def test_one_model_at_a_time(self) -> None:
         with pytest.raises(ValueError, match="not both"):
             self._given(poisson=True)
-        counts = Histogram(_poisson([1.0, 2.0]), label="C", stat_errors=([0.5, 0.5], [1.0, 1.0]))
+        counts = Histogram(hist_of([1.0, 2.0]), label="C", stat_errors=([0.5, 0.5], [1.0, 1.0]))
         assert (
             counts.replace(poisson=True)._provenance.errors is None
         )  # the Poisson interval replaces them
@@ -463,7 +471,7 @@ class TestPoissonRatio:
     ]
 
     def test_the_ratio_of_two_poisson_means_is_divide_pois(self) -> None:
-        a, b = Histogram(_poisson(self.A), label="A"), Histogram(_poisson(self.B), label="B")
+        a, b = Histogram(hist_of(self.A), label="A"), Histogram(hist_of(self.B), label="B")
         ratio = compare(a, b, uncertainty="poisson-ratio")
         np.testing.assert_allclose(ratio.values[:3], [r for r, _, _ in self.ROOT])
         np.testing.assert_allclose(ratio.errors[0][:3], [d for _, d, _ in self.ROOT], atol=1e-12)
@@ -477,15 +485,15 @@ class TestPoissonRatio:
 
     def test_the_level_belongs_to_the_ratio(self) -> None:
         # drawing a side with a 95 % Poisson interval does not change the ratio's interval
-        a, b = Histogram(_poisson(self.A), label="A"), Histogram(_poisson(self.B), label="B")
+        a, b = Histogram(hist_of(self.A), label="A"), Histogram(hist_of(self.B), label="B")
         plain = compare(a, b, uncertainty="poisson-ratio")
         for sides in ((a.replace(poisson=0.95), b), (a, b.replace(poisson=0.95))):
             wide = compare(*sides, uncertainty="poisson-ratio")
             np.testing.assert_array_equal(wide.errors, plain.errors)
 
     def test_it_needs_counts_and_a_ratio(self) -> None:
-        a = Histogram(_poisson(self.A), label="A")
-        weighted = Histogram(_contents([1.0] * 4, [2.0] * 4), label="W")
+        a = Histogram(hist_of(self.A), label="A")
+        weighted = Histogram(hist_of([1.0] * 4, [2.0] * 4), label="W")
         with pytest.raises(ValueError, match="holds no known counts"):
             compare(a, weighted, uncertainty="poisson-ratio")
         with pytest.raises(ValueError, match="interval of a ratio"):
@@ -497,7 +505,7 @@ class TestPoissonRatio:
 def efficiency_of_counts() -> Efficiency:
     from rootfig.histograms import efficiency
 
-    return efficiency(_hist([0.5]), _hist([0.5, 0.5]))
+    return efficiency(filled([0.5]), filled([0.5, 0.5]))
 
 
 class TestSavedErrorOptions:
