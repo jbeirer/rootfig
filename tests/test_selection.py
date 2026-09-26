@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from itertools import pairwise
-from typing import Any
+from typing import Any, ClassVar
 
 import awkward as ak
 import numpy as np
@@ -431,6 +431,45 @@ class TestScaleAndConstants:
         ]
         regular = boolean_mask("x > 1", {"x": ak.Array(np.arange(4.0).reshape(2, 2))})
         assert regular.tolist() == [[False, False], [True, True]]
+
+
+class TestUnitWeights:
+    """Weights of 0 and 1 fill counts, as without weights; judged before the selection."""
+
+    ARRAYS: ClassVar[dict[str, ak.Array]] = {
+        "x": ak.Array([1.0, 2.0, 3.0, 4.0]),
+        "w": ak.Array([1.0, 0.0, 1.0, 1.0]),
+        "half": ak.Array([0.5, 0.5, 0.5, 0.5]),
+        "pt": ak.Array([[1.0, 2.0], [], None, [3.0]]),
+        "ow": ak.Array([[1.0, 0.0], [], None, [1.0]]),
+    }
+
+    @pytest.mark.parametrize(
+        ("weight", "options", "weighted"),
+        [
+            (None, {}, False),
+            ("1", {}, False),
+            ("w", {}, False),
+            ("x > 2", {}, False),  # a boolean weight
+            ("half", {}, True),
+            ("w", {"scale": 2.0}, True),
+            (None, {"scale": 2.0}, True),
+            ("half", {"selection": "x > 10"}, True),  # nothing selected: still its weights
+            ("w", {"selection": "x > 10"}, False),
+        ],
+    )
+    def test_event_weights(self, weight: str | None, options: Any, weighted: bool) -> None:
+        cols = prepare(self.ARRAYS, "x", weight=weight, **options)
+        assert cols.weighted is weighted
+
+    def test_object_weights_and_chunks(self) -> None:
+        assert not prepare(self.ARRAYS, "pt", weight="ow").weighted
+        assert prepare(self.ARRAYS, "pt", weight="ow * 3").weighted
+        halves = [
+            prepare({"x": ak.Array([1.0]), "w": ak.Array([w])}, "x", weight="w") for w in (1.0, 0.5)
+        ]
+        assert Columns.concatenate(halves).weighted
+        assert not Columns.concatenate([halves[0], halves[0]]).weighted
 
 
 class TestEventWeightsPolicy:

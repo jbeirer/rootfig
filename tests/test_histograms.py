@@ -4379,6 +4379,8 @@ class TestMoreEfficiencyIntervals:
         assert np.isnan([hidden.values[1], hidden.lower[1], hidden.upper[1]]).all()
         shown = efficiency(passed, total, show_empty=True)  # "e0"
         assert (shown.values[1], shown.lower[1], shown.upper[1]) == (0.0, 0.0, 1.0)
+        normal = efficiency(passed, total, interval="normal", show_empty=True)  # "e0 n"
+        assert (normal.values[1], normal.lower[1], normal.upper[1]) == (0.0, 0.0, 1.0)
         for prior, bins in (
             ("uniform", [(0.6, 0.21840242550392025, 0.21469889387251606), (0.5, 0.3413447460685)]),
             (
@@ -4399,12 +4401,34 @@ class TestMoreEfficiencyIntervals:
         # Divide "e0" 0 +- 0); bin 2: no entries at all, the only empty bin
         total = _hist([0.5, 0.5, 1.5, 1.5], [1.0, -1.0, 1.0, 1.0])
         passed = _hist([1.5], [1.0])
-        for interval in ("auto", "uniform"):
+        for interval in ("auto", "uniform", "wilson-effective"):
             eff = efficiency(passed, total, interval=interval, show_empty=True)  # type: ignore[arg-type]
             assert np.isnan([eff.values[0], eff.lower[0], eff.upper[0]]).all()
-            assert np.isfinite([eff.values[2], eff.lower[2], eff.upper[2]]).all()
+        normal = efficiency(passed, total, show_empty=True)  # weighted: see below
+        assert (normal.values[2], normal.lower[2], normal.upper[2]) == (0.0, 0.0, 0.0)
+
+    def test_empty_bins_of_weighted_histograms_are_shown_as_root_does(self) -> None:
+        from rootfig.histograms import efficiency
+
+        # ROOT 6.40, TGraphAsymmErrors::Divide(..., "e0") of weights 2, 2 passing and 1 failing,
+        # beside empty bins: the normal approximation ("", "n", "cp" and "w" alike for weighted
+        # histograms) draws an empty bin at 0 +- 0, a Bayesian interval draws no point there
+        total, passed = _hist([1.5] * 3, [2.0, 2.0, 1.0]), _hist([1.5] * 2, [2.0, 2.0])
         normal = efficiency(passed, total, show_empty=True)
-        assert (normal.values[2], normal.lower[2], normal.upper[2]) == (0.0, 0.0, 1.0)
+        assert (normal.values[0], normal.lower[0], normal.upper[0]) == (0.0, 0.0, 0.0)
+        np.testing.assert_allclose(
+            [normal.values[1], *(side[1] for side in normal.errors)], [0.8, 0.196, 0.196], atol=5e-5
+        )
+        bayes = efficiency(passed, total, interval="uniform", show_empty=True)
+        assert np.isnan([bayes.values[0], bayes.lower[0], bayes.upper[0]]).all()
+        np.testing.assert_allclose(
+            [bayes.values[1], *(side[1] for side in bayes.errors)],
+            [0.6744, 0.2121, 0.2049],
+            atol=5e-5,
+        )
+        # the Wilson interval of effective entries is rootfig's own: nothing is known, [0, 1]
+        effective = efficiency(passed, total, interval="wilson-effective", show_empty=True)
+        assert (effective.values[0], effective.lower[0], effective.upper[0]) == (0.0, 0.0, 1.0)
 
     def test_a_confidence_level(self) -> None:
         from rootfig.histograms import efficiency
@@ -4565,6 +4589,8 @@ class TestShapeUncertainty:
         np.testing.assert_allclose(plain.variances(), fraction * (1 - fraction) / 10)
         exact = normalize(counts.replace(poisson=True), True, uncertainty="shape")
         assert not exact.poisson
+        # the hist carries the shape's first-order variances, the errors the exact interval
+        np.testing.assert_allclose(exact.variances(), fraction * (1 - fraction) / 10)
         lower, upper = clopper_pearson([1.0, 3.0, 6.0], 10.0)
         np.testing.assert_allclose(exact.errors()[0], fraction - lower)
         np.testing.assert_allclose(exact.errors()[1], upper - fraction)

@@ -248,30 +248,33 @@ def shape_covariance(histogram: Histogram | Hist, spec: NormalizeSpec = True) ->
 
 
 def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | float) -> Histogram:
-    """Give ``normalized`` the uncertainty of a shape (see :data:`NormalizeUncertainty`)."""
+    """Give ``normalized`` the uncertainty of a shape (see :data:`NormalizeUncertainty`).
+
+    The variances become the first-order shape variances in every case, so the
+    ``hist.Hist`` carries them too; counts with a Poisson interval also get the
+    exact Clopper-Pearson interval of their fractions as the errors drawn.
+    """
     values = original.values(flow=True)
     visible = _visible(original.hist)
     gain = np.broadcast_to(_gain(original.hist, mode, flow=True), values.shape)
-    if original.poisson:
-        factor = original._factors(flow=True)
-        known = factor[visible]
-        if known.size and np.all(known > 0) and np.allclose(known, known.flat[0], rtol=1e-12):
-            counts = np.rint(np.where(factor > 0, values / np.where(factor > 0, factor, 1.0), 0.0))
-            bounds = shape_bounds(counts, gain, visible, original._cl)
-            if bounds is not None:
-                flow = np.sqrt(
-                    shape_variances(values, original.variances(flow=True), gain, visible)
-                )
-                sides = (np.where(visible, bounds[0], flow), np.where(visible, bounds[1], flow))
-                return normalized.replace(
-                    poisson=False,
-                    _unit=None,
-                    _errors=_error_sides(normalized.hist, sides, normalized.label),
-                )
+    variances = shape_variances(values, original.variances(flow=True), gain, visible)
     result = normalized.hist.copy()
     view: Any = result.view(flow=True)
-    view.variance = shape_variances(values, original.variances(flow=True), gain, visible)
-    return normalized.replace(hist=result, poisson=False, _weighted=True)
+    view.variance = variances
+    shaped = normalized.replace(hist=result, poisson=False, _weighted=True)
+    if not original.poisson:
+        return shaped
+    factor = original._factors(flow=True)
+    known = factor[visible]
+    if not (known.size and np.all(known > 0) and np.allclose(known, known.flat[0], rtol=1e-12)):
+        return shaped
+    counts = np.rint(np.where(factor > 0, values / np.where(factor > 0, factor, 1.0), 0.0))
+    bounds = shape_bounds(counts, gain, visible, original._cl)
+    if bounds is None:
+        return shaped
+    flow = np.sqrt(variances)  # a flow cell is no fraction of the visible total
+    sides = (np.where(visible, bounds[0], flow), np.where(visible, bounds[1], flow))
+    return shaped.replace(_errors=_error_sides(result, sides, shaped.label))
 
 
 def normalize(

@@ -243,7 +243,9 @@ def plot(
         ``"scale"`` keeps every bin's relative uncertainty, as ``TH1::Scale``;
         ``"shape"`` lets the total fluctuate with the bins (the uncertainty of
         a shape: a binomial fraction, Clopper-Pearson for counts; see
-        :data:`~rootfig.histograms.normalize.NormalizeUncertainty`).
+        :data:`~rootfig.histograms.normalize.NormalizeUncertainty`). ``"shape"``
+        cannot be combined with ``flow="sum"``, whose flow bins lie outside the
+        total.
     stack
         ``True`` stacks every non-data histogram, ``False`` or ``[]`` overlays
         all. A legend label or sequence of labels stacks every histogram carrying
@@ -605,6 +607,16 @@ def draw_plot(
             "so the stack would not add up to a normalised total; compare shapes with "
             "stack=False, draw a combination as one histogram with rf.Group, "
             "or use normalize='width'"
+        )
+        raise ValueError(msg)
+    if normalize_uncertainty == "shape" and flow == "sum":
+        # the shape's cells share its fluctuating total, so the flow and edge cells are
+        # correlated; adding them after normalising would count them as independent
+        msg = (
+            "normalize_uncertainty='shape' cannot be combined with flow='sum': the flow bins "
+            "are not part of the total the shape is normalised to, and adding them to the "
+            "edge bins afterwards would ignore the correlation the shared total brings; use "
+            "flow='show', 'hint' or 'none', or a range that holds the tails"
         )
         raise ValueError(msg)
     histograms_ = with_data_errors(histograms_, data_errors)

@@ -3491,6 +3491,30 @@ class TestStatisticalOptions:
             self._counts(), "x", bins=(4, 0, 4), normalize=True, normalize_uncertainty="shape"
         )
         np.testing.assert_allclose(shape.variances(), fraction * (1 - fraction) / 14)
+        # a stored kPoisson TH1 (counts 0, 1, 4): the plain Hist returned has the shape's
+        # variances, not those of a constant factor ([0, 0.04, 0.16])
+        stored = rf.histogram(
+            ERROR_OPTIONS, "poisson", normalize=True, normalize_uncertainty="shape"
+        )
+        np.testing.assert_allclose(stored.variances(), [0.0, 0.032, 0.032])
+
+    def test_a_shape_keeps_its_flow_bins_apart(self) -> None:
+        figures = plt.get_fignums()
+        with pytest.raises(ValueError, match="flow='sum'"):
+            rf.plot(
+                self._counts(),
+                "x",
+                bins=(3, 0, 3),
+                normalize=True,
+                normalize_uncertainty="shape",
+                flow="sum",
+            )
+        assert plt.get_fignums() == figures  # refused before a figure exists
+        shown = rf.plot(
+            self._counts(), "x", bins=(3, 0, 3), normalize=True, normalize_uncertainty="shape",
+            flow="show",
+        )  # fmt: skip
+        shown.close()
 
     def test_poisson_ratio_panel(self) -> None:
         data = self._counts(is_data=True)
@@ -3538,6 +3562,26 @@ class TestStatisticalOptions:
         p.close()
         table = rf.cutflow(sample, ["ok == 1"], interval="wilson", cl=0.95)
         assert table.get("S").cl == 0.95
+
+
+def test_weights_of_zero_and_one_fill_counts() -> None:
+    # as ROOT, whose TH1 counts as unweighted when its sum of weights equals the sum of their
+    # squares: weight="1" or a 0/1 flag gives counts, a common factor does not
+    values = np.repeat([0.5, 1.5, 2.5], [1, 4, 2])
+    columns = {"x": values, "flag": (np.arange(values.size) % 3 != 0).astype(float)}
+    mc = rf.Sample({"x": np.linspace(0.1, 2.9, 40)}, label="MC")
+    for options, poisson in (
+        ({}, True),
+        ({"weight": "1"}, True),
+        ({"weight": "flag"}, True),
+        ({"weight": "flag", "scale": 2.0}, False),
+        ({"weight": "0.5 * flag"}, False),
+        ({"weight": "flag", "selection": "x > 10"}, True),  # empty, but its weights were 0 or 1
+    ):
+        data = rf.Sample(columns, label="Data", is_data=True, **options)
+        p = rf.plot(mc, "x", bins=(3, 0, 3), observed=data, data_errors="auto")
+        assert p.histograms[-1].poisson is poisson, options
+        p.close()
 
 
 class TestDataErrorPrecedence:

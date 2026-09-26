@@ -173,9 +173,9 @@ def efficiency(
     ]
     # the numerators returned in Plot.histograms are yields, with the factor like any histogram
     passes = [
-        from_sample(
-            s, h, stats=summarize(c), per_object=c.per_object, weighted=c.weights is not None
-        ).scaled(s.scale * s.lumi_scale(lumi))
+        from_sample(s, h, stats=summarize(c), per_object=c.per_object, weighted=c.weighted).scaled(
+            s.scale * s.lumi_scale(lumi)
+        )
         for s, h, c in zip(samples, pass_hists, passing, strict=True)
     ]
     plan = resolve_points(

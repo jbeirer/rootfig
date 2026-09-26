@@ -14,6 +14,7 @@ from rootfig.errors import BinningError, RootfigWarning
 from rootfig.histograms.bayesian import Bayesian, bayesian_interval
 from rootfig.histograms.binomial import (
     EfficiencyInterval,
+    Method,
     efficiency_interval,
     is_unweighted,
     resolve_interval,
@@ -101,10 +102,14 @@ def efficiency(
     mean or mode as the efficiency, as ``TEfficiency`` does.
 
     An empty bin has no efficiency; ``show_empty=True`` shows it as ROOT's
-    ``TGraphAsymmErrors::Divide`` does with ``"e0"``: 0 in ``[0, 1]``, or the
-    prior's mean and interval for a Bayesian interval. Only a bin without
-    entries is empty (no sum of weights and no sum of squared weights): one
-    whose signed weights cancel holds entries and stays undefined.
+    ``TGraphAsymmErrors::Divide`` does with ``"e0"``: for unweighted
+    histograms 0 in ``[0, 1]``, or the prior's mean and interval for a Bayesian
+    interval; for weighted ones 0 without a width for the normal
+    approximation, and no point for a Bayesian interval, whose effective
+    entries of nothing are undefined (``"wilson-effective"`` gives ``[0, 1]``).
+    Only a bin without entries is empty (no sum of weights and no sum of
+    squared weights): one whose signed weights cancel holds entries and stays
+    undefined.
 
     The intervals other than ``"normal"`` are binomial, so they need
     non-negative weights. A bin gets ``nan`` bounds from them and a
@@ -172,12 +177,8 @@ def efficiency(
     p, lower, upper = (np.where(ok, a, np.nan) for a in (p, lower, upper))
     # no entries at all, not weights that cancel: those leave the efficiency undefined
     empty = (n == 0) & (vn == 0)
-    if show_empty and empty.any():
-        if isinstance(method, Bayesian):  # the prior: the posterior of no entries
-            prior = bayesian_interval(method, np.zeros(1), np.zeros(1), cl=cl)
-            fill = [float(side[0]) for side in prior]
-        else:
-            fill = [0.0, 0.0, 1.0]
+    fill = _empty_bin(method, unweighted, cl) if show_empty and empty.any() else None
+    if fill is not None:
         p, lower, upper = (
             np.where(empty, f, a) for f, a in zip(fill, (p, lower, upper), strict=True)
         )
@@ -188,6 +189,24 @@ def efficiency(
         edges=np.asarray(total.axes[0].edges, dtype=float),
         label=label,
     )
+
+
+def _empty_bin(method: Method, unweighted: bool, cl: float) -> list[float] | None:
+    """Return ``[value, lower, upper]`` of an empty bin, as ``Divide(..., "e0")``, or ``None``.
+
+    0 in ``[0, 1]`` for counts, the prior for a Bayesian interval. Weighted
+    histograms, as ROOT sees them, show the normal approximation at 0 without a
+    width and no Bayesian point at all: no effective entries scale nothing. The
+    Wilson interval of effective entries, rootfig's own, spans ``[0, 1]``.
+    """
+    if isinstance(method, Bayesian):
+        if not unweighted:
+            return None
+        prior = bayesian_interval(method, np.zeros(1), np.zeros(1), cl=cl)
+        return [float(side[0]) for side in prior]
+    if method == "normal" and not unweighted:
+        return [0.0, 0.0, 0.0]
+    return [0.0, 0.0, 1.0]
 
 
 def _signed(total: FloatArray, squares: FloatArray, scale: FloatArray, spread: FloatArray) -> Any:
