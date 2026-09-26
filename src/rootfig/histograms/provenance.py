@@ -13,6 +13,8 @@ from rootfig._typing import Hist
 
 __all__ = ["Provenance", "error_sides", "one_count"]
 
+_GOLDEN = (np.sqrt(5.0) - 1.0) / 2.0  # multiples of it are distinct modulo 1
+
 
 @dataclass(frozen=True)
 class Provenance:
@@ -25,7 +27,8 @@ class Provenance:
         through every transformation of the contents, a cell holds ``m c`` and
         ``m c**2`` for ``m`` merged counts of factor ``c``, so every cell's
         factor is known, empty cells included (see
-        :func:`~rootfig.histograms.intervals.count_scale`).
+        :func:`~rootfig.histograms.intervals.count_scale`). Dropped once a
+        cell merges counts of different factors.
     weighted
         The contents were filled with weights, scaled or transformed, so they
         are never unit-weight counts, however they look.
@@ -45,12 +48,38 @@ class Provenance:
         ``factor`` is the transformation's overall factor, where it has one: a
         negative factor turns an interval over, so the given sides swap.
         """
-        unit = None if self.unit is None else transform(self.unit)
+        unit, weighted = self.unit, self.weighted
+        if unit is not None:
+            moved = transform(unit)
+            unit = None if _mixes_factors(unit, moved, transform) else moved
+            weighted |= unit is None  # no longer counts times one factor per cell
         errors = self.errors
         if errors is not None:
             down, up = transform(errors[0]), transform(errors[1])
             errors = (up, down) if factor < 0 else (down, up)
-        return Provenance(unit, self.weighted, errors)
+        return Provenance(unit, weighted, errors)
+
+
+def _mixes_factors(unit: Hist, moved: Hist, transform: Callable[[Hist], Hist]) -> bool:
+    """Say whether ``transform`` merged counts of different factors into one cell of ``unit``.
+
+    A cell merging counts ``m_k`` of factors ``c_k`` holds ``sum m c`` and
+    ``sum m c**2``. Weighting the cells before the merge by distinct positive
+    numbers keeps the factor ``sum m c**2 / sum m c`` if every ``c_k`` is the
+    same and, barring coincidences of the weights, only then.
+    """
+    probe = unit.copy()
+    view: Any = probe.view(flow=True)
+    weights = 1.0 + np.modf(np.arange(view.value.size) * _GOLDEN)[0].reshape(view.value.shape)
+    view.value = view.value * weights
+    view.variance = view.variance * weights
+    probe = transform(probe)
+    return not np.allclose(
+        probe.variances(flow=True) * moved.values(flow=True),
+        probe.values(flow=True) * moved.variances(flow=True),
+        rtol=1e-9,
+        atol=0.0,
+    )
 
 
 def one_count(histogram: Hist) -> Hist:

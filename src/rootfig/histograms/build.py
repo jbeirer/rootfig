@@ -461,7 +461,9 @@ class Histogram:
         scaling by a positive factor do (:meth:`scaled` handles a negative one,
         which turns intervals over). The record of counts and the given errors
         then go through it too, which holds only while every cell stays counts
-        times factors that do not depend on the contents.
+        times factors that do not depend on the contents: merging counts of
+        different factors, e.g. bins divided by unequal widths, drops the
+        counts (and raises with :attr:`poisson`).
         """
         variations = {
             name: (transform(up), transform(down)) for name, (up, down) in self.variations.items()

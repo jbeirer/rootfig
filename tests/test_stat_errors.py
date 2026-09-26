@@ -247,16 +247,37 @@ class TestPoissonHistograms:
         np.testing.assert_allclose(total.errors()[1], high - [4.0, 2.0])
 
     def test_sums_compare_the_factor_of_a_count(self) -> None:
-        # merged pairs of factors (1, 0.5) and (0.75, 0.75) record one count per bin as
-        # 1.5 alike, but 1.25 and 1.125 as its square: factors of 5/6 and 3/4 per count
+        # two merged counts of factor 0.75 and one of factor 1.5 record one count per bin
+        # as 1.5 alike, but 1.125 and 2.25 as its square
         h = hist.Hist(hist.axis.Variable([0.0, 1.0, 3.0, 4.0, 6.0]), storage=hist.storage.Weight())
         h.fill([0.5, 2.0, 2.0, 5.0])
         data = Histogram(h, label="Data", is_data=True, poisson=True)
-        wide = data.map_hists(lambda h: normalize_hist(h, "width")[:: hist.rebin(2)], linear=True)
         flat = data.scaled(0.75).rebinned(2)
-        np.testing.assert_allclose(wide._provenance.unit.values(), flat._provenance.unit.values())  # type: ignore[union-attr]
-        assert not sum_histograms([wide, flat]).poisson
+        single = Histogram(h[:: hist.rebin(2)], label="Data", is_data=True, poisson=True)
+        scaled = single.scaled(1.5)
+        np.testing.assert_allclose(scaled._provenance.unit.values(), flat._provenance.unit.values())  # type: ignore[union-attr]
+        assert not sum_histograms([scaled, flat]).poisson
         assert sum_histograms([flat, flat]).poisson
+
+    def test_merging_counts_of_different_factors_drops_them(self) -> None:
+        # widths (1, 2) give factors (1, 0.5): 1 + 2 counts merge into contents 2, which are
+        # no whole count times one factor
+        h = hist.Hist(hist.axis.Variable([0.0, 1.0, 3.0]), storage=hist.storage.Weight())
+        h.fill([0.5, 2.0, 2.0])
+        data = Histogram(h, label="Data", is_data=True)
+
+        def merge(h: hist.Hist) -> hist.Hist:
+            return normalize_hist(h, "width")[:: hist.rebin(2)]
+
+        merged = data.map_hists(merge, linear=True)
+        with pytest.raises(ValueError, match="no known counts"):
+            merged.counts()
+        with pytest.raises(ValueError, match="not known to hold counts"):
+            data.replace(poisson=True).map_hists(merge, linear=True)
+        # merging counts of one factor keeps them
+        even = data.map_hists(lambda h: (h * 0.5)[:: hist.rebin(2)], linear=True)
+        np.testing.assert_array_equal(even.counts()[0], [3.0])
+        np.testing.assert_allclose(even.counts()[1], [0.5])
 
     def test_zero_scaled_poisson_has_zero_errors(self) -> None:
         data = self._data([0.0, 1.0, 4.0])
