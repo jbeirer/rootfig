@@ -75,8 +75,8 @@ def _mixes_factors(unit: Hist, moved: Hist, transform: Callable[[Hist], Hist]) -
     view.variance = view.variance * weights
     probe = transform(probe)
     return not np.allclose(
-        probe.variances(flow=True) * moved.values(flow=True),
-        probe.values(flow=True) * moved.variances(flow=True),
+        np.asarray(probe.variances(flow=True), dtype=float) * moved.values(flow=True),
+        probe.values(flow=True) * np.asarray(moved.variances(flow=True), dtype=float),
         rtol=1e-9,
         atol=0.0,
     )
