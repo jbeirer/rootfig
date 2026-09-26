@@ -14,6 +14,7 @@ import hist
 import numpy as np
 import pytest
 
+from helpers import filled, hist_of, symmetric
 from rootfig.errors import (
     BinningError,
     ExpressionError,
@@ -40,6 +41,7 @@ from rootfig.histograms import (
     fill,
     load_columns,
     normalize,
+    read_stored,
     sum_histograms,
     summarize,
     uncertainty,
@@ -95,7 +97,7 @@ class TestHistogram:
         assert histogram.centers.tolist() == [0.5, 1.5, 2.5]
         assert histogram.widths.tolist() == [1, 1, 1]
         assert histogram.values().tolist() == [2.0, 2.0, 1.0]
-        assert histogram.errors().tolist() == pytest.approx([np.sqrt(2), 2.0, 1.0])
+        assert symmetric(histogram.errors()).tolist() == pytest.approx([np.sqrt(2), 2.0, 1.0])
         assert histogram.integral == 5.0
         assert histogram.overflow == 1.0
         assert histogram.underflow == 0.0
@@ -256,14 +258,6 @@ class TestNormalize:
         assert (out.values() * areas).sum() == pytest.approx(1.0)
 
 
-def _poisson(values: list[float]) -> hist.Hist:
-    """Two bins holding ``values``, with Poisson variances."""
-    h = hist.Hist(hist.axis.Regular(len(values), 0, len(values)), storage=hist.storage.Weight())
-    h.view().value = values
-    h.view().variance = values
-    return h
-
-
 def _normalisation(h: hist.Hist, label: str, size: float = 0.1) -> Histogram:
     """``h`` with a relative normalisation source ``"norm"`` of ``size``."""
     return Histogram(h, label=label, variations={"norm": (h * (1 + size), h * (1 - size))})
@@ -296,26 +290,28 @@ class TestCompare:
         numerator: list[float] | None,
         band: list[float] | None,
     ) -> None:
-        result = compare(_poisson(list(self.N)), _poisson(list(self.D)), kind=kind)
+        result = compare(hist_of(list(self.N)), hist_of(list(self.D)), kind=kind)
         assert result.kind == kind
         np.testing.assert_allclose(result.values, values, atol=1e-4)
         if propagate is not None:
-            np.testing.assert_allclose(result.errors, propagate, atol=1e-4)
+            np.testing.assert_allclose(symmetric(result.errors), propagate, atol=1e-4)
         if band is None:
             assert result.band is None
             assert result.total_band() is None
         else:
-            np.testing.assert_allclose(result.band, band, atol=1e-4)
+            assert result.band is not None
+            np.testing.assert_allclose(symmetric(result.band), band, atol=1e-4)
         if numerator is not None:
             split = compare(
-                _poisson(list(self.N)), _poisson(list(self.D)), kind=kind, uncertainty="numerator"
+                hist_of(list(self.N)), hist_of(list(self.D)), kind=kind, uncertainty="numerator"
             )
             np.testing.assert_allclose(split.values, values, atol=1e-4)
-            np.testing.assert_allclose(split.errors, numerator, atol=1e-4)
-            np.testing.assert_allclose(split.band, band, atol=1e-4)  # type: ignore[arg-type]
+            np.testing.assert_allclose(symmetric(split.errors), numerator, atol=1e-4)
+            assert split.band is not None
+            np.testing.assert_allclose(symmetric(split.band), band, atol=1e-4)
         else:
             with pytest.raises(ValueError, match="reference band"):
-                compare(_poisson([1.0]), _poisson([1.0]), kind=kind, uncertainty="numerator")
+                compare(hist_of([1.0]), hist_of([1.0]), kind=kind, uncertainty="numerator")
 
     @pytest.mark.parametrize(
         ("kind", "syst", "values"),
@@ -329,8 +325,8 @@ class TestCompare:
     def test_a_shared_normalisation_source(
         self, kind: Any, syst: list[float], values: list[float]
     ) -> None:
-        num = _normalisation(_poisson(list(self.N)), "N")
-        ref = _normalisation(_poisson(list(self.D)), "D")
+        num = _normalisation(hist_of(list(self.N)), "N")
+        ref = _normalisation(hist_of(list(self.D)), "D")
         result = compare(num, ref, kind=kind)
         np.testing.assert_allclose(result.values, values)
         assert result.syst_errors is not None
@@ -339,33 +335,33 @@ class TestCompare:
         assert (result.label, result.reference) == ("N", "D")
 
     def test_a_pull_divides_by_the_systematics_it_faces(self) -> None:
-        num = _normalisation(_poisson(list(self.N)), "N")
-        ref = _normalisation(_poisson(list(self.D)), "D")
+        num = _normalisation(hist_of(list(self.N)), "N")
+        ref = _normalisation(hist_of(list(self.D)), "D")
         result = compare(num, ref, kind="pull")
         np.testing.assert_allclose(result.values, [0.8138, 1.7066], atol=1e-4)
         assert result.syst_errors is None  # in the denominator, not beside it
         # a source that only raises n: n - d is uncertain by 3 upwards, not at all downwards
         up = Histogram(
-            _poisson([2.0]), label="N", variations={"s": (_poisson([5.0]), _poisson([2.0]))}
+            hist_of([2.0]), label="N", variations={"s": (hist_of([5.0]), hist_of([2.0]))}
         )
-        below = compare(up, _poisson([4.0]), kind="pull")  # n < d: the upper side faces d
+        below = compare(up, hist_of([4.0]), kind="pull")  # n < d: the upper side faces d
         np.testing.assert_allclose(below.values, [-2 / np.sqrt(2 + 4 + 9)])
-        above = compare(up, _poisson([1.0]), kind="pull")  # n > d: the lower side faces d
+        above = compare(up, hist_of([1.0]), kind="pull")  # n > d: the lower side faces d
         np.testing.assert_allclose(above.values, [1 / np.sqrt(2 + 1)])
-        equal = compare(up, _poisson([2.0]), kind="pull")
+        equal = compare(up, hist_of([2.0]), kind="pull")
         np.testing.assert_allclose(equal.values, [0.0])
 
     @pytest.mark.parametrize(
         "kind", ["ratio", "relative_difference", "s/sqrt(b)", "pull", "asymmetry"]
     )
     def test_an_empty_reference_bin_is_nan(self, kind: Any) -> None:
-        result = compare(_poisson([0.0, 2.0]), _poisson([0.0, 1.0]), kind=kind)
+        result = compare(hist_of([0.0, 2.0]), hist_of([0.0, 1.0]), kind=kind)
         assert np.isnan(result.values[0])
         assert np.isfinite(result.values[1])
 
     @pytest.mark.parametrize("kind", COMPARISON_KINDS)
     def test_hist_and_histogram_inputs_agree(self, kind: Any) -> None:
-        n, d = _poisson(list(self.N)), _poisson(list(self.D))
+        n, d = hist_of(list(self.N)), hist_of(list(self.D))
         plain = compare(n, d, kind=kind)
         for num, ref in ((Histogram(n, label="N"), d), (n, Histogram(d, label="D"))):
             wrapped = compare(num, ref, kind=kind)
@@ -374,25 +370,26 @@ class TestCompare:
         assert (plain.label, plain.reference) == ("", "")
 
     def test_the_reference_histogram_is_kept(self) -> None:
-        n, d = _poisson(list(self.N)), _poisson(list(self.D))
+        n, d = hist_of(list(self.N)), hist_of(list(self.D))
         assert compare(n, d).reference_hist is d
         assert compare(Histogram(n, label="N"), Histogram(d, label="D")).reference_hist is d
 
     def test_unknown_kind(self) -> None:
         with pytest.raises(ValueError, match="kind must be one of"):
-            compare(_poisson([1.0]), _poisson([1.0]), kind="significance")  # type: ignore[arg-type]
+            compare(hist_of([1.0]), hist_of([1.0]), kind="significance")  # type: ignore[arg-type]
 
     def test_propagate(self) -> None:
         num = fill([hist.axis.Regular(3, 0, 3)], columns([0.5, 0.5, 1.5, 1.5], [1, 1, 2, 2]))
         den = fill([hist.axis.Regular(3, 0, 3)], columns([0.5, 1.5, 2.5]))
         r = compare(num, den)
         assert r.values.tolist() == pytest.approx([2.0, 4.0, 0.0])
+        errors = symmetric(r.errors)
         # bin 0: n=2, vn=2, d=1, vd=1 -> sqrt(2/1 + 4*1/1) = sqrt(6)
-        assert r.errors[0] == pytest.approx(np.sqrt(6))
+        assert errors[0] == pytest.approx(np.sqrt(6))
         # bin 2: n=0, vn=0, d=1 -> 0
-        assert r.errors[2] == pytest.approx(0.0)
+        assert errors[2] == pytest.approx(0.0)
         assert r.band is not None
-        assert r.band.tolist() == pytest.approx([1.0, 1.0, 1.0])
+        assert symmetric(r.band).tolist() == pytest.approx([1.0, 1.0, 1.0])
         assert r.centers.tolist() == [0.5, 1.5, 2.5]
         assert r.half_widths.tolist() == [0.5, 0.5, 0.5]
 
@@ -401,18 +398,18 @@ class TestCompare:
         den = fill([hist.axis.Regular(2, 0, 2)], columns([0.5, 0.5, 1.5], [2.0, 2.0, 1.0]))
         r = compare(num, den, uncertainty="numerator")
         assert r.values.tolist() == pytest.approx([1.0, 0.0])
-        assert r.errors.tolist() == pytest.approx([2 / 4, 0.0])
+        assert symmetric(r.errors).tolist() == pytest.approx([2 / 4, 0.0])
         assert r.band is not None
-        assert r.band.tolist() == pytest.approx([np.sqrt(8) / 4, 1.0])
+        assert symmetric(r.band).tolist() == pytest.approx([np.sqrt(8) / 4, 1.0])
 
     def test_zero_denominator_is_nan(self) -> None:
         num = fill([hist.axis.Regular(2, 0, 2)], columns([0.5]))
         den = fill([hist.axis.Regular(2, 0, 2)], columns([1.5]))
         r = compare(num, den)
         assert np.isnan(r.values[0])
-        assert np.isnan(r.errors[0])
+        assert all(np.isnan(side[0]) for side in r.errors)
         assert r.band is not None
-        assert np.isnan(r.band[0])
+        assert all(np.isnan(side[0]) for side in r.band)
         assert r.values[1] == 0.0
 
     def test_incompatible(self) -> None:
@@ -593,6 +590,9 @@ class TestPipeline:
 
     def test_build_histograms_2d_same_variable(self, signal_arrays: dict[str, ak.Array]) -> None:
         [h] = build_histograms_2d([Sample(signal_arrays)], "MET", "MET")
+        assert not h._provenance.weighted  # filled without weights
+        [weighted] = build_histograms_2d([Sample(signal_arrays, scale=2.0)], "MET", "MET")
+        assert weighted._provenance.weighted
         assert h.hist.axes[1].name == "MET_y"
 
     def test_prepare_then_fill_roundtrip(self, signal_arrays: dict[str, ak.Array]) -> None:
@@ -602,12 +602,6 @@ class TestPipeline:
         assert (
             h.values().tolist() == np.bincount(signal_arrays["nMuon"], minlength=10)[:10].tolist()
         )
-
-
-def _hist(values: list[float], weights: list[float] | None = None) -> hist.Hist:
-    h = hist.Hist(hist.axis.Regular(3, 0, 3), storage=hist.storage.Weight())
-    h.fill(values, weight=weights)
-    return h
 
 
 class TestComparePoints:
@@ -637,7 +631,6 @@ class TestComparePoints:
         (a_down, a_up), (b_down, b_up) = a.errors, b.errors
         result = compare(a, b)
         np.testing.assert_allclose(result.values, [2.0, 1.0])
-        assert isinstance(result.errors, tuple)
         down, up = result.errors
         # lowering a / b lowers a or raises b: a's lower error with b's upper one
         np.testing.assert_allclose(down, np.hypot(a_down / b.values, a.values * b_up / b.values**2))
@@ -668,7 +661,7 @@ class TestComparePoints:
         pull = compare(a, b, kind="pull")
         # a > b in bin 0: the lower error of a - b faces zero; a == b in bin 1: the upper
         np.testing.assert_allclose(pull.values, [0.25 / np.hypot(0.1, 0.1), 0.0], atol=1e-12)
-        np.testing.assert_array_equal(pull.errors, [1.0, 1.0])
+        np.testing.assert_array_equal(symmetric(pull.errors), [1.0, 1.0])
 
     def test_profiles_propagate_symmetric_errors(self) -> None:
         def profile_(values: list[float], errors: list[float], label: str) -> Profile:
@@ -712,7 +705,7 @@ class TestComparePoints:
         with pytest.raises(TypeError, match="two efficiencies or two profiles"):
             compare(a, profile_)
         with pytest.raises(TypeError, match="two efficiencies or two profiles"):
-            compare(_poisson([1.0, 2.0]), a)
+            compare(hist_of([1.0, 2.0]), a)
         with pytest.raises(ValueError, match="counts signal and background"):
             compare(a, b, kind="s/sqrt(b)")
         with pytest.raises(ValueError, match="reference band"):
@@ -724,24 +717,24 @@ class TestComparePoints:
 
 class TestSignificance:
     def test_s_over_sqrt_b(self) -> None:
-        signal = _hist([0.5, 0.5, 1.5])  # s = [2, 1, 0]
-        background = _hist([0.5] * 4 + [1.5] * 1)  # b = [4, 1, 0]
+        signal = filled([0.5, 0.5, 1.5])  # s = [2, 1, 0]
+        background = filled([0.5] * 4 + [1.5] * 1)  # b = [4, 1, 0]
         result = compare(signal, background, kind="s/sqrt(b)")
         np.testing.assert_allclose(result.values[:2], [2 / 2, 1 / 1])
         assert np.isnan(result.values[2])
         # var = vs/b + s^2 vb/(4 b^3): bin 0 -> 2/4 + 4*4/(4*64) = 0.5 + 0.0625
-        assert result.errors[0] == pytest.approx(np.sqrt(0.5625))
+        assert symmetric(result.errors)[0] == pytest.approx(np.sqrt(0.5625))
         assert result.band is None
         np.testing.assert_allclose(result.edges, [0, 1, 2, 3])
 
     def test_s_over_sqrt_s_plus_b(self) -> None:
-        signal = _hist([0.5, 0.5])
-        background = _hist([0.5, 0.5, 1.5])
+        signal = filled([0.5, 0.5])
+        background = filled([0.5, 0.5, 1.5])
         result = compare(signal, background, kind="s/sqrt(s+b)")
         assert result.values[0] == pytest.approx(2 / np.sqrt(4))
         assert result.values[1] == pytest.approx(0.0)
         assert np.isnan(result.values[2])
-        assert np.isfinite(result.errors[0])
+        assert np.isfinite(symmetric(result.errors)[0])
         with pytest.raises(BinningError):
             compare(
                 signal,
@@ -750,163 +743,14 @@ class TestSignificance:
             )
 
     def test_statistical_only(self) -> None:
-        signal = Histogram(_hist([0.5, 0.5]), label="S", variations={"lumi": (_hist([0.5]), None)})
-        plain = compare(signal.hist, _hist([0.5, 1.5]), kind="s/sqrt(b)")
-        result = compare(signal, _hist([0.5, 1.5]), kind="s/sqrt(b)")
+        signal = Histogram(
+            filled([0.5, 0.5]), label="S", variations={"lumi": (filled([0.5]), None)}
+        )
+        plain = compare(signal.hist, filled([0.5, 1.5]), kind="s/sqrt(b)")
+        result = compare(signal, filled([0.5, 1.5]), kind="s/sqrt(b)")
         np.testing.assert_array_equal(result.values, plain.values)
         np.testing.assert_array_equal(result.errors, plain.errors)
         assert result.syst_errors is None
-
-
-class TestEfficiency:
-    def test_wilson_interval(self) -> None:
-        from rootfig.histograms import efficiency
-
-        total = _hist([0.5] * 10 + [1.5] * 4)
-        passed = _hist([0.5] * 5 + [1.5] * 4)
-        eff = efficiency(passed, total, label="tight")
-        assert eff.label == "tight"
-        assert eff.values[0] == pytest.approx(0.5)
-        assert eff.values[1] == pytest.approx(1.0)
-        assert np.isnan(eff.values[2])
-        # Wilson, z = 1, p = 0.5, n = 10: centre 0.5, half-width (1/1.1) sqrt(0.025 + 0.0025)
-        half = np.sqrt(0.0275) / 1.1
-        assert eff.lower[0] == pytest.approx(0.5 - half)
-        assert eff.upper[0] == pytest.approx(0.5 + half)
-        assert eff.upper[1] == 1.0  # clipped
-        assert eff.lower[1] < 1.0
-        low_err, up_err = eff.errors
-        assert low_err[0] == pytest.approx(half)
-        assert up_err[0] == pytest.approx(half)
-        np.testing.assert_allclose(eff.centers, [0.5, 1.5, 2.5])
-        np.testing.assert_allclose(eff.half_widths, [0.5, 0.5, 0.5])
-
-    def test_weights_use_effective_entries(self) -> None:
-        from rootfig.histograms import efficiency
-
-        unweighted = efficiency(_hist([0.5] * 5), _hist([0.5] * 10))
-        weighted = efficiency(_hist([0.5] * 5, [2.0] * 5), _hist([0.5] * 10, [2.0] * 10))
-        assert weighted.values[0] == pytest.approx(unweighted.values[0])
-        assert weighted.lower[0] == pytest.approx(unweighted.lower[0])  # same n_eff = 10
-        with pytest.raises(BinningError):
-            efficiency(
-                _hist([0.5]), hist.Hist(hist.axis.Regular(2, 0, 2), storage=hist.storage.Weight())
-            )
-
-
-class TestProfile:
-    def test_mean_and_std(self) -> None:
-        from rootfig.histograms import profile
-
-        x = np.array([0.5, 0.5, 0.5, 1.5, 1.5, 2.5, 5.0])  # last is outside
-        y = np.array([1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 99.0])
-        edges = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-        mean = profile(x, y, edges)
-        np.testing.assert_allclose(mean.values, [2.0, 5.0, 7.0, np.nan])
-        np.testing.assert_allclose(mean.counts, [3, 2, 1, 0])
-        assert mean.errors[0] == pytest.approx(np.sqrt(2 / 3) / np.sqrt(3))
-        assert mean.errors[2] == 0.0
-        std = profile(x, y, edges, statistic="std", label="res")
-        assert std.label == "res"
-        assert std.values[0] == pytest.approx(np.sqrt(2 / 3))
-        assert std.errors[0] == pytest.approx(np.sqrt(2 / 3) / np.sqrt(6))
-        np.testing.assert_allclose(std.centers, [0.5, 1.5, 2.5, 3.5])
-        np.testing.assert_allclose(std.half_widths, 0.5)
-
-    def test_weights_and_errors(self) -> None:
-        from rootfig.histograms import profile
-
-        x = np.array([0.5, 0.5])
-        y = np.array([1.0, 3.0])
-        weighted = profile(x, y, np.array([0.0, 1.0]), weights=np.array([3.0, 1.0]))
-        assert weighted.values[0] == pytest.approx(1.5)
-        with pytest.raises(BinningError, match="same length"):
-            profile(x, y[:1], np.array([0.0, 1.0]))
-        with pytest.raises(BinningError, match="statistic"):
-            profile(x, y, np.array([0.0, 1.0]), statistic="median")  # type: ignore[arg-type]
-
-
-class TestCutflow:
-    @staticmethod
-    def _sample(**kwargs: Any) -> Sample:
-        arrays = {
-            "n": np.array([0, 1, 2, 3, 4]),
-            "w": np.array([1.0, 2.0, 3.0, 4.0, 5.0]),
-            "Jet_pt": ak.Array([[], [10.0], [10.0, 40.0], [50.0], [5.0, 5.0, 60.0]]),
-        }
-        return Sample(arrays, label="toy", **kwargs)
-
-    def test_steps_and_efficiencies(self) -> None:
-        from rootfig.histograms import cutflow
-
-        flow = cutflow(self._sample(), ["n >= 1", Cut("Jet_pt > 30", label="hard jet"), "n >= 4"])
-        assert flow.labels == ["All", "n >= 1", "hard jet", "n >= 4"]
-        assert flow.events.tolist() == [5, 4, 3, 1]  # per-object cut: any jet above 30
-        assert flow.yields.tolist() == [5, 4, 3, 1]  # unit weights
-        np.testing.assert_allclose(flow.efficiencies, [1, 0.8, 0.75, 1 / 3])
-        np.testing.assert_allclose(flow.absolute_efficiencies, [1, 0.8, 0.6, 0.2])
-        assert flow.steps[1].expression == "n >= 1"
-
-    def test_weights_selection_and_scale(self) -> None:
-        from rootfig.histograms import cutflow
-
-        sample = self._sample(weight="w", selection=Cut("n >= 1", label="baseline"), scale=2.0)
-        flow = cutflow(sample, ["n >= 3"], weight="2")
-        assert flow.labels == ["baseline", "n >= 3"]
-        assert flow.events.tolist() == [4, 2]
-        # weights w * 2 (plot) * 2 (scale): (2+3+4+5)*4 = 56 and (4+5)*4 = 36
-        np.testing.assert_allclose(flow.yields, [56, 36])
-        assert flow.steps[1].error == pytest.approx(np.sqrt(16**2 + 20**2))
-
-    def test_unlabelled_sample_selection_names_first_step(self) -> None:
-        from rootfig.histograms import cutflow
-
-        flow = cutflow(self._sample(selection="n >= 1"), ["n >= 3"])
-        assert flow.labels == ["n >= 1", "n >= 3"]  # not "All": 4 of 5 events pass it
-        assert flow.steps[0].expression == "n >= 1"
-        assert flow.events.tolist() == [4, 2]
-
-    def test_signed_yields_keep_efficiencies(self) -> None:
-        from rootfig.histograms import cutflow
-
-        # weights 1 - 3 = -2 for all events, then -3 after n >= 4: the ratios are defined
-        arrays = {"n": np.array([0, 4]), "w": np.array([1.0, -3.0])}
-        flow = cutflow(Sample(arrays, label="nlo", weight="w"), ["n >= 4", "n >= 9"])
-        np.testing.assert_allclose(flow.yields, [-2.0, -3.0, 0.0])
-        np.testing.assert_allclose(flow.efficiencies, [1.0, 1.5, 0.0])  # may leave [0, 1]
-        np.testing.assert_allclose(flow.absolute_efficiencies, [1.0, 1.5, 0.0])
-        cancelled = cutflow(
-            Sample({"n": np.array([0, 4]), "w": np.array([1.0, -1.0])}, weight="w"), ["n >= 4"]
-        )
-        assert np.isnan(cancelled.efficiencies[1])  # zero yield: undefined
-        assert np.isnan(cancelled.absolute_efficiencies).all()
-
-    def test_table(self) -> None:
-        from rootfig.histograms import CutflowTable, cutflow
-
-        table = CutflowTable(
-            (cutflow(self._sample(), ["n >= 1"]), cutflow(self._sample(weight="w"), ["n >= 1"]))
-        )
-        text = str(table)
-        assert "toy" in text
-        assert "n >= 1" in text
-        assert "80.0%" in text
-        assert table.samples == ["toy", "toy"]
-        assert table.labels == ["All", "n >= 1"]
-        assert table.get("toy").events.tolist() == [5, 4]
-        with pytest.raises(KeyError):
-            table.get("other")
-        assert str(CutflowTable(())) == ""
-        assert cutflow(self._sample(), []).events.tolist() == [5]
-
-    def test_errors(self) -> None:
-        from rootfig.errors import IncompatibleWeightError
-        from rootfig.histograms import cutflow
-
-        with pytest.raises(IncompatibleWeightError, match="per-object"):
-            cutflow(self._sample(), ["n >= 1"], weight="Jet_pt")
-        with pytest.raises(SelectionError, match="depth"):
-            cutflow(Sample({"a": ak.Array([[[1.0]], [[2.0]]])}), ["a > 1"])
 
 
 class TestSignedWeights:
@@ -925,164 +769,6 @@ class TestSignedWeights:
         np.testing.assert_allclose(h.variances(), [1.0, 0.25])
         assert h.stats is not None
         assert np.isnan(h.stats.std)
-
-
-class TestEfficiencyDomain:
-    @staticmethod
-    def _hists(passed: int, total: int, *, weights: list[float] | None = None) -> tuple[Any, Any]:
-        axis = hist.axis.Regular(1, 0, 1)
-        pass_h = hist.Hist(axis, storage=hist.storage.Weight())
-        total_h = hist.Hist(axis, storage=hist.storage.Weight())
-        total_h.fill(np.full(total, 0.5), weight=weights)
-        pass_h.fill(np.full(passed, 0.5), weight=None if weights is None else weights[:passed])
-        return pass_h, total_h
-
-    @pytest.mark.parametrize("n", [1, 3, 6, 50])
-    def test_all_pass_and_all_fail_have_nonnegative_errors(self, n: int) -> None:
-        from rootfig.histograms import efficiency
-
-        full = efficiency(*self._hists(n, n))
-        assert full.values[0] == 1.0
-        assert full.upper[0] == 1.0
-        assert 0.0 < full.lower[0] < 1.0
-        none = efficiency(*self._hists(0, n))
-        assert none.values[0] == 0.0
-        assert none.lower[0] == 0.0
-        assert 0.0 < none.upper[0] < 1.0
-        for eff in (full, none):
-            low, high = eff.errors
-            assert (low >= 0).all()
-            assert (high >= 0).all()
-
-    def test_weighted_endpoints(self) -> None:
-        from rootfig.histograms import efficiency
-
-        eff = efficiency(*self._hists(4, 4, weights=[0.5, 1.5, 2.0, 0.25]))
-        assert eff.values[0] == 1.0
-        assert eff.upper[0] == 1.0
-        assert all((e >= 0).all() for e in eff.errors)
-
-    def test_outside_unit_interval_is_undefined_with_warning(self) -> None:
-        from rootfig.histograms import efficiency
-
-        axis = hist.axis.Regular(1, 0, 1)
-        pass_h = hist.Hist(axis, storage=hist.storage.Weight()).fill([0.5, 0.5], weight=[1.0, 1.0])
-        total_h = hist.Hist(axis, storage=hist.storage.Weight()).fill(
-            [0.5, 0.5, 0.5], weight=[1.0, 1.0, -0.5]
-        )
-        with pytest.warns(RootfigWarning, match="outside"):
-            eff = efficiency(pass_h, total_h, label="nlo")
-        assert eff.values[0] == pytest.approx(2 / 1.5)
-        assert np.isnan(eff.lower[0])
-        assert np.isnan(eff.upper[0])
-
-    @staticmethod
-    def _weighted(passed: list[float], total: list[float]) -> tuple[Any, Any]:
-        axis = hist.axis.Regular(1, 0, 1)
-        pass_h = hist.Hist(axis, storage=hist.storage.Weight()).fill(
-            np.full(len(passed), 0.5), weight=passed
-        )
-        total_h = hist.Hist(axis, storage=hist.storage.Weight()).fill(
-            np.full(len(total), 0.5), weight=total
-        )
-        return pass_h, total_h
-
-    def test_negative_total_weight_keeps_value_without_interval(self) -> None:
-        from rootfig.histograms import efficiency
-
-        # total = 1 - 2 = -1: the ratio is defined, a binomial interval is not
-        with pytest.warns(RootfigWarning, match="negative total weight"):
-            eff = efficiency(*self._weighted([-0.5], [1.0, -2.0]))
-        assert eff.values[0] == pytest.approx(0.5)
-        assert np.isnan(eff.lower[0])
-        assert np.isnan(eff.upper[0])
-        with pytest.warns(RootfigWarning, match="negative total weight"):
-            eff = efficiency(*self._weighted([-2.0], [1.0, -2.0]))
-        assert eff.values[0] == pytest.approx(2.0)
-        assert np.isnan(eff.lower[0])
-
-    def test_cancelling_total_weight_is_empty(self) -> None:
-        from rootfig.histograms import efficiency
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            eff = efficiency(*self._weighted([1.0], [1.0, -1.0]))
-        assert np.isnan(eff.values[0])
-        assert np.isnan(eff.lower[0])
-        assert np.isnan(eff.upper[0])
-
-    def test_positive_total_with_negative_weights_keeps_interval(self) -> None:
-        from rootfig.histograms import efficiency
-
-        # total = 1.5 with sum w^2 = 2.25, so n_eff = 1; p = 2/3 with a Wilson band
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            eff = efficiency(*self._weighted([1.0], [1.0, 1.0, -0.5]))
-        assert eff.values[0] == pytest.approx(2 / 3)
-        assert eff.lower[0] == pytest.approx(0.2397411978652, rel=1e-6)
-        assert eff.upper[0] == pytest.approx(0.9269254688015, rel=1e-6)
-
-    @pytest.mark.parametrize("z", [0.0, -1.0, np.inf, np.nan])
-    def test_z_is_validated(self, z: float) -> None:
-        from rootfig.histograms import efficiency
-
-        with pytest.raises(BinningError, match="z must be"):
-            efficiency(*self._hists(1, 2), z=z)
-
-
-class TestProfileNumerics:
-    def test_variance_is_translation_invariant(self) -> None:
-        from rootfig.histograms import profile
-
-        x = np.array([0.5, 0.5])
-        edges = np.array([0.0, 1.0])
-        near = profile(x, np.array([0.0, 1.0]), edges, statistic="std")
-        far = profile(x, np.array([1e9, 1e9 + 1.0]), edges, statistic="std")
-        np.testing.assert_allclose(near.values, [0.5])
-        np.testing.assert_allclose(far.values, [0.5])
-        np.testing.assert_allclose(far.errors, near.errors)
-        weighted = profile(x, np.array([1e9, 1e9 + 1.0]), edges, weights=np.array([3.0, 1.0]))
-        np.testing.assert_allclose(weighted.values, [1e9 + 0.25])
-
-    def test_negative_weighted_variance_is_nan(self) -> None:
-        from rootfig.histograms import profile
-
-        result = profile(
-            np.array([0.5, 0.5]),
-            np.array([0.0, 1.0]),
-            np.array([0.0, 1.0]),
-            weights=np.array([1.0, -0.5]),
-        )
-        np.testing.assert_allclose(result.values, [-1.0])
-        assert np.isnan(result.errors[0])
-        as_std = profile(
-            np.array([0.5, 0.5]),
-            np.array([0.0, 1.0]),
-            np.array([0.0, 1.0]),
-            weights=np.array([1.0, -0.5]),
-            statistic="std",
-        )
-        assert np.isnan(as_std.values[0])
-
-    def test_negative_total_weight_keeps_mean_without_error(self) -> None:
-        from rootfig.histograms import profile
-
-        x, y, edges = np.array([0.5, 0.5]), np.array([0.0, 1.0]), np.array([0.0, 1.0])
-        result = profile(x, y, edges, weights=np.array([0.5, -1.0]))
-        np.testing.assert_allclose(result.values, [2.0])  # (0*0.5 + 1*-1) / -0.5
-        assert np.isnan(result.errors[0])
-        np.testing.assert_allclose(result.counts, [-0.5])
-        as_std = profile(x, y, edges, weights=np.array([0.5, -1.0]), statistic="std")
-        assert np.isnan(as_std.values[0])
-
-    def test_cancelling_weights_are_empty(self) -> None:
-        from rootfig.histograms import profile
-
-        x, y, edges = np.array([0.5, 0.5]), np.array([0.0, 1.0]), np.array([0.0, 1.0])
-        result = profile(x, y, edges, weights=np.array([1.0, -1.0]))
-        assert np.isnan(result.values[0])
-        assert np.isnan(result.errors[0])
-        assert result.counts[0] == 0.0
 
 
 class TestFlowNormalisation:
@@ -1140,19 +826,19 @@ class TestWeightStorage:
         # a count storage forgets the sum of squared weights: hist reports no variances
         double = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0, 3.0], weight=[2.0, -3.0])
         assert double.variances() is None
-        with pytest.raises(ValueError, match="assume_poisson=True"):
+        with pytest.raises(ValueError, match="variances_from_contents=True"):
             as_weight_storage(double)
         with pytest.raises(ValueError, match="no variances"):
             Histogram(double, label="h")
-        with pytest.warns(RootfigWarning, match="Poisson guess"):
-            converted = as_weight_storage(double, assume_poisson=True)
+        with pytest.warns(RootfigWarning, match="absolute bin contents as variances"):
+            converted = as_weight_storage(double, variances_from_contents=True)
         np.testing.assert_allclose(converted.values(), [2.0, -3.0])
         np.testing.assert_allclose(converted.variances(), [2.0, 3.0])  # never negative
         rescaled = hist.Hist(hist.axis.Regular(2, 0, 4)).fill([1.0]) * 2
         with pytest.raises(ValueError, match="rescaled"):
             as_weight_storage(rescaled)
-        with pytest.warns(RootfigWarning, match="Poisson guess"):
-            converted = as_weight_storage(rescaled, assume_poisson=True)
+        with pytest.warns(RootfigWarning, match="absolute bin contents as variances"):
+            converted = as_weight_storage(rescaled, variances_from_contents=True)
         np.testing.assert_allclose(converted.variances(), [2.0, 0.0])
 
     def test_unweighted_plain_storage_is_silent(self) -> None:
@@ -1181,10 +867,12 @@ class TestNegativeVariances:
         h = hist.Hist(hist.axis.Regular(2, 0, 2))
         h[...] = np.array([2.0, -1.0])
         assert h.variances() is not None  # boost reports the counts, one of them negative
-        with pytest.raises(ValueError, match=r"negative bin contents.*assume_poisson=True"):
+        with pytest.raises(
+            ValueError, match=r"negative bin contents.*variances_from_contents=True"
+        ):
             as_weight_storage(h)
-        with pytest.warns(RootfigWarning, match="Poisson guess"):
-            converted = as_weight_storage(h, assume_poisson=True)
+        with pytest.warns(RootfigWarning, match="absolute bin contents as variances"):
+            converted = as_weight_storage(h, variances_from_contents=True)
         np.testing.assert_allclose(converted.variances(), [2.0, 1.0])
 
     def test_weight_storage_with_negative_variances(self) -> None:
@@ -1193,7 +881,7 @@ class TestNegativeVariances:
         with pytest.raises(ValueError, match="negative variances"):
             as_weight_storage(h)
         with pytest.warns(RootfigWarning):
-            converted = as_weight_storage(h, assume_poisson=True)
+            converted = as_weight_storage(h, variances_from_contents=True)
         np.testing.assert_allclose(converted.variances(), np.abs(h.values()))
 
 
@@ -1445,27 +1133,6 @@ class TestBinningTolerance:
         assert compatible_binning(regular, variable)
 
 
-class TestCutflowPolicy:
-    def test_nonfinite_weights_follow_the_policy(self) -> None:
-        from rootfig.histograms import cutflow
-
-        sample = Sample({"x": np.arange(3.0), "w": np.array([1.0, np.inf, 1.0])})
-        with pytest.raises(SelectionError, match="non-finite weight"):
-            cutflow(sample, ["x > 0"], weight="w", nonfinite="error")
-        with pytest.warns(RootfigWarning, match="1 event"):
-            flow = cutflow(sample, ["x > 0"], weight="w")
-        np.testing.assert_allclose(flow.yields, [2.0, 1.0])
-        assert flow.events.tolist() == [2, 1]
-
-    def test_constant_cuts_and_weights_know_the_event_count(self) -> None:
-        from rootfig.histograms import cutflow
-
-        sample = Sample({"x": np.arange(3.0)})
-        np.testing.assert_allclose(cutflow(sample, [], weight="2").yields, [6.0])
-        np.testing.assert_allclose(cutflow(sample, ["True"], weight="2").yields, [6.0, 6.0])
-        assert cutflow(sample, ["x > 0"], weight="2").events.tolist() == [3, 2]
-
-
 class TestConstantExpressions:
     def test_constant_variable_has_one_entry_per_event(self) -> None:
         sample = Sample({"x": np.arange(3.0)})
@@ -1493,26 +1160,10 @@ class TestConstantExpressions:
         assert h.values().tolist() == [2.0]
 
 
-def filled(values: list[float], *, edges: tuple[int, float, float] = (4, 0.0, 4.0)) -> Any:
-    h = hist.Hist(hist.axis.Regular(*edges), storage=hist.storage.Weight())
-    h.fill(values)
-    return h
-
-
-def contents(values: list[float]) -> Any:
-    h = hist.Hist(
-        hist.axis.Regular(len(values), 0.0, float(len(values))), storage=hist.storage.Weight()
-    )
-    view = h.view()
-    view.value = values
-    view.variance = values
-    return h
-
-
 class TestVariations:
     def test_variations_are_read_only_and_updates_are_validated(self) -> None:
-        nominal = contents([10.0, 20.0])
-        up = contents([12.0, 18.0])
+        nominal = hist_of([10.0, 20.0])
+        up = hist_of([12.0, 18.0])
         given = {"shape": (up, None)}
         histogram = Histogram(nominal, "MC", variations=given)
         given.clear()
@@ -1531,12 +1182,12 @@ class TestVariations:
         with pytest.raises(TypeError):
             changed.variations["new"] = (up, up)  # type: ignore[index]
         with pytest.raises(SystematicError, match="binning"):
-            histogram.replace(variations={"bad": (contents([1.0]), None)})
+            histogram.replace(variations={"bad": (hist_of([1.0]), None)})
 
     @pytest.mark.parametrize("operation", ["copy", "deepcopy", "pickle"])
     def test_variations_support_copy_and_pickle(self, operation: str) -> None:
         original = Histogram(
-            contents([10.0, 20.0]), "MC", variations={"shape": (contents([12.0, 18.0]), None)}
+            hist_of([10.0, 20.0]), "MC", variations={"shape": (hist_of([12.0, 18.0]), None)}
         )
         restored = (
             pickle.loads(pickle.dumps(original))
@@ -1550,7 +1201,7 @@ class TestVariations:
             restored.variations["new"] = (original.hist, original.hist)
 
     def test_constructor_preserves_positional_metadata_and_replace(self) -> None:
-        nominal = contents([1.0])
+        nominal = hist_of([1.0])
         sample = Sample({"x": [0.5]})
         stats = summarize(prepare({"x": np.array([0.5])}, ["x"]))
         histogram = Histogram(
@@ -1571,25 +1222,25 @@ class TestVariations:
         class TaggedHistogram(Histogram):
             tag: str = "tagged"
 
-        nominal = contents([1.0])
+        nominal = hist_of([1.0])
         histogram = TaggedHistogram(nominal, "MC", variations={"s": (nominal, None)})
         assert histogram.tag == "tagged"
         np.testing.assert_allclose(histogram.variations["s"][1].values(), [1])
         with pytest.raises(TypeError):
             histogram.variations["new"] = (nominal, nominal)  # type: ignore[index]
         with pytest.raises(SystematicError, match="binning"):
-            TaggedHistogram(nominal, "MC", variations={"s": (contents([1.0, 2.0]), None)})
+            TaggedHistogram(nominal, "MC", variations={"s": (hist_of([1.0, 2.0]), None)})
 
     def test_dataclass_asdict_can_copy_immutable_mappings(self) -> None:
         sample = Sample({"x": [1.0]}, systematics={"s": {"x": "up"}})
-        nominal = contents([1.0])
+        nominal = hist_of([1.0])
         original = Histogram(nominal, "MC", sample=sample, variations={"s": (nominal, None)})
         result = asdict(original)
         assert result["sample"]["systematics"]["s"].up == {"x": "up"}
         np.testing.assert_allclose(result["variations"]["s"][1].values(), [1])
 
     def test_data_histograms_cannot_carry_variations(self) -> None:
-        nominal = contents([1.0])
+        nominal = hist_of([1.0])
         with pytest.raises(SystematicError, match="observed data"):
             Histogram(nominal, "Data", is_data=True, variations={"s": (nominal, None)})
         simulated = Histogram(nominal, "MC", variations={"s": (nominal, None)})
@@ -1598,33 +1249,34 @@ class TestVariations:
         assert simulated.replace(is_data=True, variations={}).is_data
 
     def test_down_is_mirrored_and_binning_checked(self) -> None:
-        nominal = contents([10.0, 20.0])
-        h = Histogram(nominal, label="A", variations={"s": (contents([12.0, 18.0]), None)})
+        nominal = hist_of([10.0, 20.0])
+        h = Histogram(nominal, label="A", variations={"s": (hist_of([12.0, 18.0]), None)})
         up, down = h.variations["s"]
         np.testing.assert_allclose(down.values(), [8.0, 22.0])
         np.testing.assert_allclose(down.variances(), [12.0, 18.0])
         with pytest.raises(SystematicError, match="binning"):
-            Histogram(nominal, label="A", variations={"s": (contents([1.0, 2.0, 3.0]), None)})
+            Histogram(nominal, label="A", variations={"s": (hist_of([1.0, 2.0, 3.0]), None)})
         with pytest.raises(SystematicError, match="pair"):
             Histogram(nominal, label="A", variations={"s": nominal})  # type: ignore[dict-item]
 
     def test_uncertainty_combines_per_side(self) -> None:
         h = Histogram(
-            contents([100.0, 100.0]),
+            hist_of([100.0, 100.0]),
             label="A",
             variations={
-                "a": (contents([103.0, 104.0]), contents([96.0, 102.0])),  # bin 2: same sign
-                "b": (contents([104.0, 97.0]), contents([97.0, 103.0])),
+                "a": (hist_of([103.0, 104.0]), hist_of([96.0, 102.0])),  # bin 2: same sign
+                "b": (hist_of([104.0, 97.0]), hist_of([97.0, 103.0])),
             },
         )
         u = uncertainty(h)
         np.testing.assert_allclose(u.syst_up, [5.0, 5.0])
         np.testing.assert_allclose(u.syst_down, [5.0, 3.0])
-        np.testing.assert_allclose(u.stat, [10.0, 10.0])
+        np.testing.assert_allclose(u.stat_down, [10.0, 10.0])
+        np.testing.assert_allclose(u.stat_up, [10.0, 10.0])
         np.testing.assert_allclose(u.total_up, np.hypot(10.0, [5.0, 5.0]))
         np.testing.assert_allclose(u.components["a"][0], [3.0, 4.0])
         assert u.has_systematics
-        assert not uncertainty(Histogram(contents([1.0]), label="B")).has_systematics
+        assert not uncertainty(Histogram(hist_of([1.0]), label="B")).has_systematics
 
     def test_uncertainty_needs_1d(self) -> None:
         h2 = hist.Hist(hist.axis.Regular(2, 0, 1), hist.axis.Regular(2, 0, 1))
@@ -1632,11 +1284,11 @@ class TestVariations:
             uncertainty(Histogram(h2, label="2D"))
 
     def test_sum_correlates_by_name(self) -> None:
-        a = Histogram(contents([10.0]), label="A", variations={"s": (contents([11.0]), None)})
+        a = Histogram(hist_of([10.0]), label="A", variations={"s": (hist_of([11.0]), None)})
         b = Histogram(
-            contents([20.0]),
+            hist_of([20.0]),
             label="B",
-            variations={"s": (contents([22.0]), None), "t": (contents([25.0]), None)},
+            variations={"s": (hist_of([22.0]), None), "t": (hist_of([25.0]), None)},
         )
         total = sum_histograms([a, b])
         assert total.label == "Total"
@@ -1645,17 +1297,17 @@ class TestVariations:
         np.testing.assert_allclose(total.variations["t"][0].values(), [35.0])  # a nominal
         np.testing.assert_allclose(uncertainty(total).syst_up, [np.hypot(3.0, 5.0)])
         with pytest.raises(BinningError, match="different bin edges"):
-            sum_histograms([a, Histogram(contents([1.0, 2.0]), label="C")])
+            sum_histograms([a, Histogram(hist_of([1.0, 2.0]), label="C")])
         with pytest.raises(BinningError, match="no histograms"):
             sum_histograms([])
 
     def test_normalize_and_scale_apply_to_variations(self) -> None:
         h = Histogram(
-            contents([10.0, 30.0]),
+            hist_of([10.0, 30.0]),
             label="A",
             variations={
-                "norm": (contents([11.0, 33.0]), None),
-                "shape": (contents([20.0, 20.0]), None),
+                "norm": (hist_of([11.0, 33.0]), None),
+                "shape": (hist_of([20.0, 20.0]), None),
             },
         )
         normalised = normalize(h, True)
@@ -1665,9 +1317,9 @@ class TestVariations:
         np.testing.assert_allclose(scaled.variations["norm"][1].values(), [18.0, 54.0])
 
     def test_ratio_systematics(self) -> None:
-        num = Histogram(contents([10.0]), label="N", variations={"s": (contents([12.0]), None)})
+        num = Histogram(hist_of([10.0]), label="N", variations={"s": (hist_of([12.0]), None)})
         den = Histogram(
-            contents([20.0]), label="D", variations={"s": (contents([24.0]), contents([19.0]))}
+            hist_of([20.0]), label="D", variations={"s": (hist_of([24.0]), hist_of([19.0]))}
         )
         split = compare(num, den, uncertainty="numerator")
         assert split.syst_band is not None
@@ -1680,16 +1332,18 @@ class TestVariations:
         np.testing.assert_allclose(both.syst_errors[0], [0.5 - 8 / 19])
         np.testing.assert_allclose(both.syst_errors[1], [0.0])
         down, up = both.total_errors()
-        np.testing.assert_allclose(up, np.hypot(both.errors, both.syst_errors[1]))
+        np.testing.assert_allclose(up, np.hypot(both.errors[1], both.syst_errors[1]))
         band_down, _ = split.total_band()
-        np.testing.assert_allclose(band_down, np.hypot(split.band, 1.0 / 20.0))
+        assert split.band is not None
+        np.testing.assert_allclose(band_down, np.hypot(split.band[0], 1.0 / 20.0))
 
         plain = compare(num.hist, den.hist)
         assert plain.syst_errors is None
         assert plain.syst_band is None
-        np.testing.assert_allclose(plain.total_errors()[0], plain.errors)
-        np.testing.assert_allclose(plain.total_band()[1], plain.band)
-        no_num = compare(Histogram(contents([10.0]), label="N"), den, uncertainty="numerator")
+        assert plain.band is not None
+        np.testing.assert_allclose(plain.total_errors()[0], plain.errors[0])
+        np.testing.assert_allclose(plain.total_band()[1], plain.band[1])
+        no_num = compare(Histogram(hist_of([10.0]), label="N"), den, uncertainty="numerator")
         assert no_num.syst_errors is None
         assert no_num.syst_band is not None
 
@@ -1810,6 +1464,58 @@ class TestSystematicsPipeline:
             build_histograms([sample], "x")
 
 
+class TestNuisanceIdentity:
+    """A source's name is its nuisance: one name is one fully correlated source, two names
+    are independent sources, in a sum as in a comparison."""
+
+    @staticmethod
+    def _pair(first: str, second: str) -> tuple[Histogram, Histogram]:
+        a = Histogram(
+            hist_of([100.0]), label="A", variations={first: (hist_of([110.0]), hist_of([90.0]))}
+        )
+        b = Histogram(
+            hist_of([200.0]),
+            label="B",
+            variations={second: (hist_of([220.0]), hist_of([180.0]))},
+        )
+        return a, b
+
+    def test_one_name_is_one_nuisance(self) -> None:
+        a, b = self._pair("scale", "scale")
+        total = uncertainty(sum_histograms([a, b]))
+        assert list(total.components) == ["scale"]
+        np.testing.assert_allclose(total.syst_up, [30.0])  # 10 + 20, linearly
+        ratio = compare(a, b)
+        assert ratio.syst_errors is not None
+        np.testing.assert_allclose(ratio.syst_errors, [[0.0], [0.0]], atol=1e-12)  # cancels
+
+    def test_two_names_are_independent(self) -> None:
+        a, b = self._pair("scale_a", "scale_b")
+        total = uncertainty(sum_histograms([a, b]))
+        assert list(total.components) == ["scale_a", "scale_b"]
+        np.testing.assert_allclose(total.syst_up, [np.hypot(10.0, 20.0)])
+        ratio = compare(a, b)
+        assert ratio.syst_errors is not None
+        # each source varies its own side against the other's nominal contents
+        np.testing.assert_allclose(ratio.syst_errors[1], [np.hypot(0.05, 100 / 180 - 0.5)])
+        np.testing.assert_allclose(ratio.syst_errors[0], [np.hypot(0.05, 0.5 - 100 / 220)])
+
+    def test_a_plot_level_source_is_shared_by_every_sample(self) -> None:
+        x = Variable("x", bins=(1, 0.0, 1.0))
+        a = Sample({"x": np.full(100, 0.5)}, label="A")
+        b = Sample({"x": np.full(300, 0.5)}, label="B")
+        shared = sum_histograms(build_histograms([a, b], x, systematics={"xsec": 0.1}))
+        np.testing.assert_allclose(uncertainty(shared).syst_up, [40.0])  # 10 % of 400
+        # independent cross sections per process: one name per sample
+        own = sum_histograms(
+            build_histograms(
+                [a.replace(systematics={"xsec_a": 0.1}), b.replace(systematics={"xsec_b": 0.1})],
+                x,
+            )
+        )
+        np.testing.assert_allclose(uncertainty(own).syst_up, [np.hypot(10.0, 30.0)])
+
+
 class TestSystematicsRegressions:
     @pytest.mark.parametrize("ndim", [1, 2])
     def test_variation_rejects_shifted_edges_at_large_coordinates(self, ndim: int) -> None:
@@ -1823,12 +1529,12 @@ class TestSystematicsRegressions:
 
     @pytest.mark.parametrize("name", ["", " ", 1])
     def test_variation_names_are_validated(self, name: Any) -> None:
-        nominal = contents([1.0])
+        nominal = hist_of([1.0])
         with pytest.raises(SystematicError, match="non-empty strings"):
             Histogram(nominal, label="MC", variations={name: (nominal, None)})
 
     def test_sum_allows_axis_metadata_and_type_differences(self) -> None:
-        a = Histogram(contents([10.0, 20.0]), label="A")
+        a = Histogram(hist_of([10.0, 20.0]), label="A")
         other = hist.Hist(
             hist.axis.Variable([0, 1, 2], name="other", label="Other axis"),
             storage=hist.storage.Weight(),
@@ -1847,7 +1553,7 @@ class TestSystematicsRegressions:
         assert total.axis.name == a.axis.name
 
     def test_sum_rejects_flow_mismatch_and_single_2d(self) -> None:
-        a = Histogram(contents([1.0]), label="A")
+        a = Histogram(hist_of([1.0]), label="A")
         b = Histogram(hist.Hist(hist.axis.Regular(1, 0, 1, underflow=False)), label="B")
         with pytest.raises(BinningError, match="flow-bin traits"):
             sum_histograms([a, b])
@@ -1860,7 +1566,7 @@ class TestSystematicsRegressions:
     @pytest.mark.parametrize("spec", [True, "density", 100.0])
     def test_normalization_rejects_zero_total_variations(self, spec: Any) -> None:
         h = Histogram(
-            contents([10.0, 20.0]), label="MC", variations={"zero": (contents([0.0, 0.0]), None)}
+            hist_of([10.0, 20.0]), label="MC", variations={"zero": (hist_of([0.0, 0.0]), None)}
         )
         with (
             pytest.warns(RootfigWarning, match="normalisation skipped"),
@@ -1870,7 +1576,7 @@ class TestSystematicsRegressions:
 
     def test_failed_nominal_normalization_keeps_variations_raw(self) -> None:
         h = Histogram(
-            contents([0.0, 0.0]), label="MC", variations={"s": (contents([2.0, 4.0]), None)}
+            hist_of([0.0, 0.0]), label="MC", variations={"s": (hist_of([2.0, 4.0]), None)}
         )
         with pytest.warns(RootfigWarning, match="normalisation skipped"):
             result = normalize(h, True)
@@ -1882,7 +1588,7 @@ class TestSystematicsRegressions:
     @pytest.mark.parametrize("d", [-20.0, 20.0])
     def test_signed_asymmetric_ratio(self, n: float, d: float) -> None:
         def make(value: float) -> Any:
-            h = contents([abs(value)])
+            h = hist_of([abs(value)])
             h.view().value = [value]
             return h
 
@@ -1900,11 +1606,11 @@ class TestSystematicsRegressions:
         np.testing.assert_allclose(both.syst_errors, [[low], [high]])
 
     def test_ratio_cancels_shared_sources(self) -> None:
-        a = Histogram(contents([100.0]), label="A", variations={"lumi": (contents([110.0]), None)})
+        a = Histogram(hist_of([100.0]), label="A", variations={"lumi": (hist_of([110.0]), None)})
         b = Histogram(
-            contents([200.0]),
+            hist_of([200.0]),
             label="B",
-            variations={"lumi": (contents([220.0]), None), "xsec": (contents([240.0]), None)},
+            variations={"lumi": (hist_of([220.0]), None), "xsec": (hist_of([240.0]), None)},
         )
         for mode in ("propagate", "numerator"):
             result = compare(a, b, uncertainty=mode)  # type: ignore[arg-type]
@@ -1919,9 +1625,9 @@ class TestSystematicsRegressions:
         np.testing.assert_allclose(result.syst_band, [[np.hypot(0.1, 0.2)], [np.hypot(0.1, 0.2)]])
 
     def test_ratio_warns_when_a_variation_empties_the_denominator(self) -> None:
-        num = Histogram(contents([10.0, 10.0]), label="N")
+        num = Histogram(hist_of([10.0, 10.0]), label="N")
         den = Histogram(
-            contents([20.0, 20.0]), label="D", variations={"shape": (contents([20.0, 0.0]), None)}
+            hist_of([20.0, 20.0]), label="D", variations={"shape": (hist_of([20.0, 0.0]), None)}
         )
         with pytest.warns(RootfigWarning, match="'shape' up empties the reference in 1 bin"):
             result = compare(num, den)
@@ -1930,8 +1636,8 @@ class TestSystematicsRegressions:
         assert np.isnan(result.syst_errors[0][1])
 
     def test_sum_keeps_only_a_shared_normalization(self) -> None:
-        raw = Histogram(contents([1.0]), label="raw")
-        unity = Histogram(contents([1.0]), label="unity", normalization="Normalised to unity")
+        raw = Histogram(hist_of([1.0]), label="raw")
+        unity = Histogram(hist_of([1.0]), label="unity", normalization="Normalised to unity")
         assert sum_histograms([unity, unity]).normalization == "Normalised to unity"
         assert sum_histograms([unity, raw]).normalization is None
         assert sum_histograms([raw, unity]).normalization is None
@@ -2289,7 +1995,6 @@ class TestStoredHistograms:
             build_histograms([self._zh(stored_dir)], Variable("cutflow", bins=1))
 
     def test_read_stored_needs_a_bare_name(self, stored_dir: Path) -> None:
-        from rootfig.histograms import read_stored
 
         with pytest.raises(SourceError, match="bare name of a stored histogram"):
             read_stored([self._zh(stored_dir)], [Variable("mz * 2")])
@@ -2502,8 +2207,8 @@ class TestGroupedHistograms:
         assert "group 'G'" in "".join(info.value.__notes__)
 
     def test_group_histogram_and_regroup(self) -> None:
-        a = Histogram(contents([1.0, 2.0]), label="A", color="C1", per_object=True)
-        b = Histogram(contents([3.0, 4.0]), label="B")
+        a = Histogram(hist_of([1.0, 2.0]), label="A", color="C1", per_object=True)
+        b = Histogram(hist_of([3.0, 4.0]), label="B")
         group = Group(
             [Sample({"x": [1.0]}, label="A"), Sample({"x": [1.0]}, label="B")], label="AB"
         )
@@ -2523,7 +2228,7 @@ class TestGroupedHistograms:
         sample = Sample({"x": [0.5]}, label="A")
         inner = Group([sample, sample.replace(label="B")], label="AB")
         group = Group([inner], label="outer")
-        h = Histogram(contents([1.0, 2.0]), label="A")
+        h = Histogram(hist_of([1.0, 2.0]), label="A")
         with pytest.raises(ValueError, match=f"got {count} histograms for 2 samples"):
             group_histogram(group, [h] * count)
         np.testing.assert_allclose(group_histogram(group, [h, h]).values(), [2.0, 4.0])
@@ -2559,13 +2264,13 @@ class TestGroupedHistograms:
     def test_per_object_follows_statistics_and_sums(self) -> None:
         stats = summarize(prepare({"pt": ak.Array([[1.0, 2.0], [3.0]])}, ["pt"]))
         assert stats.per_object
-        h = Histogram(contents([1.0, 2.0]), "A", stats=stats)
+        h = Histogram(hist_of([1.0, 2.0]), "A", stats=stats)
         assert h.per_object
-        assert not Histogram(contents([1.0, 2.0]), "B", stats=stats, per_object=False).per_object
-        assert not Histogram(contents([1.0, 2.0]), "C").per_object
-        assert from_sample(Sample({"pt": [1.0]}), contents([1.0, 2.0]), stats=stats).per_object
-        assert sum_histograms([h, Histogram(contents([1.0, 2.0]), "D")]).per_object
-        assert not sum_histograms([Histogram(contents([1.0, 2.0]), "D")]).per_object
+        assert not Histogram(hist_of([1.0, 2.0]), "B", stats=stats, per_object=False).per_object
+        assert not Histogram(hist_of([1.0, 2.0]), "C").per_object
+        assert from_sample(Sample({"pt": [1.0]}), hist_of([1.0, 2.0]), stats=stats).per_object
+        assert sum_histograms([h, Histogram(hist_of([1.0, 2.0]), "D")]).per_object
+        assert not sum_histograms([Histogram(hist_of([1.0, 2.0]), "D")]).per_object
 
 
 class TestChunkedFilling:

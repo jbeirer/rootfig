@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from rootfig.errors import RootfigWarning, SourceError
-from rootfig.histograms import Histogram, NormalizeSpec
+from rootfig.histograms import (
+    DataErrors,
+    Histogram,
+    NormalizeSpec,
+    NormalizeUncertainty,
+    check_cl,
+)
 from rootfig.histograms import normalize as normalize_histogram
 from rootfig.model import (
     Group,
@@ -62,7 +69,9 @@ def style_for(
     return resolved.replace(text=[*existing, *extra])
 
 
-def normalize_for_plot(histogram_: Histogram, spec: NormalizeSpec) -> Histogram:
+def normalize_for_plot(
+    histogram_: Histogram, spec: NormalizeSpec, uncertainty: NormalizeUncertainty = "scale"
+) -> Histogram:
     if histogram_.normalization is not None:
         warnings.warn(
             f"histogram {histogram_.label!r} is already normalised ({histogram_.normalization}); "
@@ -70,4 +79,61 @@ def normalize_for_plot(histogram_: Histogram, spec: NormalizeSpec) -> Histogram:
             RootfigWarning,
             stacklevel=3,
         )
-    return normalize_histogram(histogram_, spec)
+    return normalize_histogram(histogram_, spec, uncertainty=uncertainty)
+
+
+def with_data_errors(histograms: Sequence[Histogram], mode: DataErrors | None) -> list[Histogram]:
+    """Give the observed histograms the error model ``mode`` asks for (``plot(data_errors=)``).
+
+    Decided on the histograms as filled or read, before normalisation or flow
+    bins change their contents, so the model does not depend on how they are
+    drawn. ``None`` keeps every histogram's own model. ``"auto"`` keeps a model
+    of its own too (a Poisson interval or ``stat_errors``) and otherwise gives
+    the Poisson interval to unit-weight counts. The explicit choices replace
+    whatever model a data histogram carries: ``"sumw2"`` by ``sqrt(sum w^2)``,
+    ``"poisson"`` by the one-sigma Poisson interval and a confidence level by
+    the interval at that level. Non-data histograms are returned as they are.
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``mode``, or ``"poisson"`` or a confidence level for a
+        histogram not known to hold counts.
+    """
+    wanted: bool | float = True
+    if isinstance(mode, int | float) and not isinstance(mode, bool):
+        try:
+            check_cl(mode)
+        except ValueError:
+            msg = f"data_errors as a number is a confidence level between 0 and 1, got {mode!r}"
+            raise ValueError(msg) from None
+        wanted = float(mode)
+    elif mode not in (None, "sumw2", "poisson", "auto"):
+        msg = (
+            "data_errors must be None, 'sumw2', 'poisson', 'auto' or a confidence level such "
+            f"as 0.95, got {mode!r}"
+        )
+        raise ValueError(msg)
+    result = []
+    for histogram_ in histograms:
+        provenance = histogram_._provenance
+        own = bool(histogram_.poisson) or provenance.errors is not None
+        if mode is None or not histogram_.is_data or (mode == "sumw2" and not own):
+            result.append(histogram_)
+        elif mode == "sumw2":
+            plain = replace(provenance, errors=None)
+            result.append(histogram_.replace(poisson=False, _provenance=plain))
+        elif mode == "auto":
+            unit_counts = not own and histogram_._count_problem() is None
+            result.append(histogram_.replace(poisson=True) if unit_counts else histogram_)
+        elif provenance.unit is not None:  # "poisson" or a level, for known counts
+            result.append(histogram_.replace(poisson=wanted))
+        else:
+            msg = (
+                f"data_errors={mode!r} draws the Poisson interval of counts, but "
+                f"{histogram_.label!r} {histogram_._count_problem()}; use data_errors='sumw2' "
+                "(or leave it unset) for sqrt(sum of squared weights), or 'auto' to keep that "
+                "where data is not counts"
+            )
+            raise ValueError(msg)
+    return result

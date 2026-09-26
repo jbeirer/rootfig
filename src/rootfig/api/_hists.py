@@ -9,7 +9,7 @@ from typing import Any
 import hist
 
 from rootfig._typing import Hist
-from rootfig.histograms import Histogram, as_weight_storage
+from rootfig.histograms import Histogram, as_weight_storage, with_saved_errors
 from rootfig.model.binning import Bins, RangeSpec
 
 _UNIT_SUFFIX = re.compile(r"\[([^\[\]]+)\]\s*$")
@@ -35,14 +35,16 @@ def wrap_histograms(
     items: Sequence[Histogram | Hist],
     labels: str | Sequence[str] | None = None,
     *,
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
     is_data: bool = False,
 ) -> list[Histogram]:
     """Turn histogram objects into :class:`~rootfig.histograms.Histogram` objects.
 
     Plain ``hist.Hist`` objects are labelled from ``labels`` (or after their
     first axis, or numbered) and converted to ``Weight`` storage;
-    ``assume_poisson`` accepts a count storage that lost its variances.
+    ``variances_from_contents`` accepts a count storage that lost its variances. One
+    read from a file with rootfig keeps the errors its ``TH1`` was saved with
+    (:func:`~rootfig.histograms.with_saved_errors`).
     ``labels`` also relabels ``Histogram`` objects; ``is_data`` marks every
     result as observed data.
     """
@@ -60,8 +62,8 @@ def wrap_histograms(
             else:
                 axis_name = item.axes[0].name if item.ndim == 1 else ""
                 label = axis_name or f"hist {index + 1}"
-            converted = as_weight_storage(item, assume_poisson=assume_poisson)
-            histogram_ = Histogram(converted, label=str(label))
+            converted = as_weight_storage(item, variances_from_contents=variances_from_contents)
+            histogram_ = with_saved_errors(Histogram(converted, label=str(label)), item)
         if is_data and not histogram_.is_data:
             histogram_ = histogram_.replace(is_data=True)
         wrapped.append(histogram_)

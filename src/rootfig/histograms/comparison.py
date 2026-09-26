@@ -12,8 +12,10 @@ import numpy as np
 from rootfig._storage import same_edges
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError, RootfigWarning
+from rootfig.histograms.binomial import clopper_pearson
 from rootfig.histograms.build import Histogram, compatible_binning
 from rootfig.histograms.efficiency import Efficiency, Profile
+from rootfig.histograms.intervals import ONE_SIGMA
 from rootfig.histograms.systematics import Uncertainty
 
 __all__ = [
@@ -46,7 +48,7 @@ BAND_KINDS: tuple[ComparisonKind, ...] = ("ratio", "relative_difference", "diffe
 SIGNIFICANCE_KINDS: tuple[ComparisonKind, ...] = ("s/sqrt(b)", "s/sqrt(s+b)")
 """The kinds comparing a signal with its background, statistical only."""
 
-UncertaintyMode: TypeAlias = Literal["propagate", "numerator"]
+UncertaintyMode: TypeAlias = Literal["propagate", "numerator", "poisson-ratio"]
 """How the uncertainties of a ratio, relative difference or difference enter its error bars.
 
 * ``"propagate"`` - the statistical uncertainties of both sides, uncorrelated,
@@ -54,6 +56,13 @@ UncertaintyMode: TypeAlias = Literal["propagate", "numerator"]
   source shared by both sides cancels where the comparison allows.
 * ``"numerator"`` - only the numerator's; the reference's uncertainty is the
   :attr:`Comparison.band` (the usual data/MC convention, mplhep's ``split_ratio``).
+* ``"poisson-ratio"`` - the exact interval of the ratio of two independent
+  Poisson means, for two histograms of counts (a ratio or a relative difference
+  only): the one-sigma Clopper-Pearson interval of ``n / (n + d)`` turned into
+  one of ``n / d``, as ROOT's ``TGraphAsymmErrors::Divide(..., "pois")``. Both
+  sides must hold known counts (:meth:`~rootfig.histograms.Histogram.counts`):
+  weighted histograms are refused rather than approximated. Scaled counts keep
+  it, scaled like the contents; systematics enter as with ``"propagate"``.
 """
 
 _Variations: TypeAlias = Mapping[str, tuple[Hist, Hist]]
@@ -75,15 +84,15 @@ class Comparison:
         The comparison per bin; ``nan`` where it is undefined (an empty
         reference for a ratio, a zero uncertainty for a pull).
     errors
-        Statistical uncertainty on ``values`` (see :data:`UncertaintyMode`); 1
-        for a pull, whose uncertainty is its unit. A ``(down, up)`` pair for
-        efficiencies, whose intervals are asymmetric.
+        Statistical uncertainty on ``values`` as ``(down, up)`` (matplotlib's
+        ``yerr`` order; see :data:`UncertaintyMode`), ``nan`` where ``values``
+        is; 1 on both sides for a pull, whose uncertainty is its unit.
     edges
         Bin edges shared by both histograms.
     band
-        The reference's statistical uncertainty, drawn around the baseline: relative
-        for a ratio and a relative difference, absolute for a difference;
-        ``None`` for a pull and a significance.
+        The reference's statistical uncertainty as ``(down, up)``, drawn around
+        the baseline: relative for a ratio and a relative difference, absolute
+        for a difference; ``None`` for a pull, an asymmetry and a significance.
     syst_errors
         Systematic uncertainty on ``values`` as ``(down, up)`` (matplotlib's
         ``yerr`` order), following :data:`UncertaintyMode`; ``None`` without
@@ -107,9 +116,9 @@ class Comparison:
     label: str
     reference: str
     values: FloatArray
-    errors: FloatArray | _Errors
+    errors: _Errors
     edges: FloatArray
-    band: FloatArray | None = None
+    band: _Errors | None = None
     syst_errors: tuple[FloatArray, FloatArray] | None = None
     syst_band: tuple[FloatArray, FloatArray] | None = None
     uncertainty: UncertaintyMode = "propagate"
@@ -128,20 +137,20 @@ class Comparison:
 
     def total_errors(self) -> _Errors:
         """Statistical and systematic uncertainty on ``values`` in quadrature, ``(down, up)``."""
-        down, up = self.errors if isinstance(self.errors, tuple) else (self.errors, self.errors)
-        if self.syst_errors is None:
-            return down, up
-        syst_down, syst_up = self.syst_errors
-        return np.hypot(down, syst_down), np.hypot(up, syst_up)
+        return _in_quadrature(self.errors, self.syst_errors)
 
-    def total_band(self) -> tuple[FloatArray, FloatArray] | None:
+    def total_band(self) -> _Errors | None:
         """Return the reference's total uncertainty, ``(down, up)``; ``None`` without a band."""
         if self.band is None:
             return None
-        if self.syst_band is None:
-            return self.band, self.band
-        down, up = self.syst_band
-        return np.hypot(self.band, down), np.hypot(self.band, up)
+        return _in_quadrature(self.band, self.syst_band)
+
+
+def _in_quadrature(stat: _Errors, syst: _Errors | None) -> _Errors:
+    """Add statistical and systematic ``(down, up)`` uncertainties in quadrature, side by side."""
+    if syst is None:
+        return stat
+    return np.hypot(stat[0], syst[0]), np.hypot(stat[1], syst[1])
 
 
 def compare(
@@ -160,11 +169,19 @@ def compare(
     * ``"asymmetry"`` is ``(n - d) / (n + d)``, both sides propagated;
     * ``"pull"`` is ``(n - d) / sqrt(vn + vd + syst**2)``, where ``syst`` is the
       systematic uncertainty of ``n - d`` on the side facing the reference (the
-      lower one where ``n > d``, the upper one elsewhere);
+      lower one where ``n > d``, the upper one elsewhere): a Gaussian
+      diagnostic of the error bars, not a likelihood (deviance) residual;
     * ``"s/sqrt(b)"`` and ``"s/sqrt(s+b)"`` are per-bin significances of the
       numerator as signal over the reference as background, statistical only.
 
-    Statistical uncertainties of the two sides are uncorrelated. ``Histogram``
+    Statistical uncertainties of the two sides are uncorrelated and propagated
+    to first order from each side's ``(down, up)`` errors
+    (:meth:`Histogram.errors() <rootfig.histograms.Histogram.errors>`; ``sqrt``
+    of the variances for a plain ``hist.Hist``): the lower error of the result
+    takes each side's lower or upper error, whichever lowers it, so
+    asymmetric errors stay asymmetric, and a pull divides by the errors
+    facing the other side. With symmetric errors these are the formulas
+    above. ``Histogram``
     inputs with systematic variations enter source by source through the varied
     comparison itself: a source present on both sides varies both together (a
     shared luminosity uncertainty cancels in a ratio), a source on one side only
@@ -172,18 +189,18 @@ def compare(
     different sources then combine like those of one histogram (see
     :mod:`rootfig.histograms.systematics`). With ``uncertainty="numerator"``
     only the numerator's sources enter the error bars; the reference's are the
-    band. In a ratio or a relative difference, a variation that empties a
-    reference bin leaves that bin's systematic uncertainty ``nan``, with a
-    :class:`~rootfig.errors.RootfigWarning`.
+    band. ``uncertainty="poisson-ratio"`` takes the exact interval of the ratio
+    of two Poisson means instead of the propagated one, for two histograms of
+    counts (see :data:`UncertaintyMode`). In a ratio or a relative difference,
+    a variation that empties a reference bin leaves that bin's systematic
+    uncertainty ``nan``, with a :class:`~rootfig.errors.RootfigWarning`.
 
     Two :class:`~rootfig.histograms.Efficiency` or two
     :class:`~rootfig.histograms.Profile` objects compare their values the same
-    way, with their intervals propagated to first order as independent: the
-    lower error of the result takes each side's lower or upper error, whichever
-    lowers it, so the asymmetric intervals of an efficiency stay asymmetric
-    (``errors`` is then ``(down, up)``). A pull divides by the errors facing the
-    other side. Significances, which count events, and ``"numerator"``, which
-    needs a band, are refused for them.
+    way, their intervals propagated as independent, so the asymmetric intervals
+    of an efficiency stay asymmetric. Significances, which count events, and
+    ``"numerator"``, which needs a band, and ``"poisson-ratio"``, which needs
+    counts, are refused for them.
 
     Raises
     ------
@@ -201,19 +218,24 @@ def compare(
     if kind not in COMPARISON_KINDS:
         msg = f"kind must be one of {COMPARISON_KINDS}, got {kind!r}"
         raise ValueError(msg)
-    if uncertainty not in ("propagate", "numerator"):
-        msg = f"uncertainty must be 'propagate' or 'numerator', got {uncertainty!r}"
+    if uncertainty not in ("propagate", "numerator", "poisson-ratio"):
+        msg = (
+            f"uncertainty must be 'propagate', 'numerator' or 'poisson-ratio', got {uncertainty!r}"
+        )
         raise ValueError(msg)
     if isinstance(numerator, Efficiency | Profile) or isinstance(reference, Efficiency | Profile):
         return _compare_points(numerator, reference, kind=kind, uncertainty=uncertainty)
     if uncertainty == "numerator" and kind not in BAND_KINDS:
         msg = f"uncertainty='numerator' needs a reference band, which kind={kind!r} does not have"
         raise ValueError(msg)
+    if uncertainty == "poisson-ratio" and kind not in ("ratio", "relative_difference"):
+        msg = f"uncertainty='poisson-ratio' is the interval of a ratio, not of kind={kind!r}"
+        raise ValueError(msg)
     num, ref = _Side.of(numerator), _Side.of(reference)
     if not compatible_binning(num.hist, ref.hist):
         msg = "compare requires two one-dimensional histograms with identical bin edges"
         raise BinningError(msg)
-    propagate = uncertainty == "propagate"
+    propagate = uncertainty != "numerator"
     with np.errstate(divide="ignore", invalid="ignore"):
         match kind:
             case "ratio" | "relative_difference":
@@ -228,6 +250,9 @@ def compare(
                 fields = _asymmetry(num, ref)
             case _:
                 fields = _significance(num, ref, kind)
+        if uncertainty == "poisson-ratio":
+            ratio = fields["values"] + (1.0 if kind == "relative_difference" else 0.0)
+            fields["errors"] = _poisson_ratio_errors(numerator, reference, ratio)
     return Comparison(
         kind=kind,
         label=num.label,
@@ -239,33 +264,69 @@ def compare(
     )
 
 
+def _poisson_ratio_errors(
+    numerator: Hist | Histogram, reference: Hist | Histogram, ratio: FloatArray
+) -> _Errors:
+    """Return the interval of the ratio of two Poisson means around ``ratio``, ``(down, up)``.
+
+    Given ``n + d`` counts, ``n`` is binomial with ``f = mu_n / (mu_n + mu_d)``;
+    the Clopper-Pearson interval of ``f`` maps to ``f / (1 - f)``, times the
+    ratio of the counts' factors. Undefined (``nan``) where ``d`` is 0. The
+    confidence level is one standard deviation, as ``Divide``'s default: it
+    belongs to the ratio, never to the error bars either side is drawn with.
+
+    Raises
+    ------
+    ValueError
+        If a side does not hold known counts (see :meth:`Histogram.counts`).
+    """
+    sides = [
+        h if isinstance(h, Histogram) else Histogram(h, label="") for h in (numerator, reference)
+    ]
+    (n, n_factor), (d, d_factor) = (h.counts() for h in sides)
+    lower, upper = clopper_pearson(n, n + d, ONE_SIGMA)
+    defined = d > 0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scale = n_factor / d_factor
+        low = lower / (1.0 - lower) * scale
+        high = np.where(upper < 1.0, upper / (1.0 - upper), np.inf) * scale
+        down = np.where(defined, np.maximum(ratio - low, 0.0), np.nan)
+        up = np.where(defined, np.maximum(high - ratio, 0.0), np.nan)
+    return np.asarray(down, dtype=float), np.asarray(up, dtype=float)
+
+
 @dataclass(frozen=True)
 class _Side:
-    """One side of a comparison: its contents, variances and systematic variations."""
+    """One side of a comparison: its contents, ``(down, up)`` errors and systematic variations."""
 
     hist: Hist
     label: str
     values: FloatArray
-    variances: FloatArray
+    errors: _Errors
     variations: _Variations
 
     @classmethod
     def of(cls, histogram: Hist | Histogram) -> _Side:
-        variations: _Variations = {}
-        label = ""
         if isinstance(histogram, Histogram):
-            variations, label, histogram = histogram.variations, histogram.label, histogram.hist
+            return cls(
+                hist=histogram.hist,
+                label=histogram.label,
+                values=histogram.values(),
+                errors=histogram.errors(),
+                variations=histogram.variations,
+            )
+        sigma = np.sqrt(np.asarray(histogram.variances(), dtype=float))
         return cls(
             hist=histogram,
-            label=label,
+            label="",
             values=np.asarray(histogram.values(), dtype=float),
-            variances=np.asarray(histogram.variances(), dtype=float),
-            variations=variations,
+            errors=(sigma, sigma),
+            variations={},
         )
 
     def nominal(self) -> _Side:
         """Return this side without variations, for a mode that leaves its sources out."""
-        return _Side(self.hist, self.label, self.values, self.variances, {})
+        return _Side(self.hist, self.label, self.values, self.errors, {})
 
     def varied(self, name: str, index: int) -> FloatArray:
         """Contents of variation ``name`` (``index`` 0 up, 1 down), or the nominal without it."""
@@ -276,17 +337,18 @@ class _Side:
 
 def _ratio(num: _Side, ref: _Side, *, propagate: bool) -> dict[str, Any]:
     """``n / d``, its error bars and the reference's relative uncertainty as the band."""
-    n, d, vn, vd = num.values, ref.values, num.variances, ref.variances
+    n, d = num.values, ref.values
 
     def divide(top: FloatArray, bottom: FloatArray) -> FloatArray:
         return np.asarray(np.where((d != 0) & (bottom != 0), top / bottom, np.nan))
 
     values = divide(n, d)
+    defined = d != 0
     if propagate:
-        errors = divide(np.sqrt(vn + n**2 * vd / d**2), np.abs(d))
+        errors = _propagated(1 / d, -n / d**2, num.errors, ref.errors)
         varied_ref = ref
     else:
-        errors = divide(np.sqrt(vn), np.abs(d))
+        errors = _propagated(1 / d, 0.0, num.errors, _NONE)
         varied_ref = ref.nominal()  # the reference's sources are the band
     for name in dict.fromkeys([*num.variations, *varied_ref.variations]):
         for index, direction in ((0, "up"), (1, "down")):
@@ -297,8 +359,8 @@ def _ratio(num: _Side, ref: _Side, *, propagate: bool) -> dict[str, Any]:
     }
     return {
         "values": values,
-        "errors": errors,
-        "band": divide(np.sqrt(vd), np.abs(d)),
+        "errors": _where_defined(defined, errors),
+        "band": _where_defined(defined, _propagated(1 / d, 0.0, ref.errors, _NONE)),
         "syst_errors": _combined(values, _source_shifts(divide, values, num, varied_ref)),
         "syst_band": _combined(values, band_shifts),
     }
@@ -306,7 +368,7 @@ def _ratio(num: _Side, ref: _Side, *, propagate: bool) -> dict[str, Any]:
 
 def _difference(num: _Side, ref: _Side, *, propagate: bool) -> dict[str, Any]:
     """``n - d``, its error bars and the reference's absolute uncertainty as the band."""
-    n, d, vn, vd = num.values, ref.values, num.variances, ref.variances
+    n, d = num.values, ref.values
     values = n - d
     varied_ref = ref if propagate else ref.nominal()
     band_shifts = {
@@ -314,8 +376,8 @@ def _difference(num: _Side, ref: _Side, *, propagate: bool) -> dict[str, Any]:
     }
     return {
         "values": values,
-        "errors": np.sqrt(vn + vd) if propagate else np.sqrt(vn),
-        "band": np.sqrt(vd),
+        "errors": _propagated(1.0, -1.0, num.errors, ref.errors) if propagate else num.errors,
+        "band": ref.errors,
         "syst_errors": _combined(values, _source_shifts(np.subtract, values, num, varied_ref)),
         "syst_band": _combined(values, band_shifts),
     }
@@ -324,21 +386,24 @@ def _difference(num: _Side, ref: _Side, *, propagate: bool) -> dict[str, Any]:
 def _pull(num: _Side, ref: _Side) -> dict[str, Any]:
     """``(n - d) / sigma`` with statistical and systematic ``sigma``; ``nan`` where it is zero.
 
-    The systematic part is taken on the side of ``n - d`` facing the other
-    histogram, as mplhep does for Poisson pulls: the lower uncertainty where
-    ``n > d``, the upper one elsewhere.
+    Both parts are taken on the side of ``n - d`` facing the other histogram,
+    as mplhep does for Poisson pulls: the lower uncertainty where ``n > d``,
+    the upper one elsewhere.
     """
     difference = num.values - ref.values
+    above = difference > 0
+    stat = np.where(above, *_propagated(1.0, -1.0, num.errors, ref.errors))
     syst = _combined(difference, _source_shifts(np.subtract, difference, num, ref))
-    facing = np.zeros_like(difference) if syst is None else np.where(difference > 0, *syst)
-    sigma = np.sqrt(num.variances + ref.variances + facing**2)
+    facing = np.zeros_like(difference) if syst is None else np.where(above, *syst)
+    sigma = np.hypot(stat, facing)
     values = np.asarray(np.where(sigma > 0, difference / sigma, np.nan), dtype=float)
-    return {"values": values, "errors": np.where(np.isfinite(values), 1.0, np.nan)}
+    unit = np.where(np.isfinite(values), 1.0, np.nan)
+    return {"values": values, "errors": (unit, unit.copy())}
 
 
 def _asymmetry(num: _Side, ref: _Side) -> dict[str, Any]:
     """``(n - d) / (n + d)`` with both sides propagated; ``nan`` where the sum is zero."""
-    n, d, vn, vd = num.values, ref.values, num.variances, ref.variances
+    n, d = num.values, ref.values
 
     def asymmetry(top: FloatArray, bottom: FloatArray) -> FloatArray:
         total = top + bottom
@@ -347,10 +412,10 @@ def _asymmetry(num: _Side, ref: _Side) -> dict[str, Any]:
     values = asymmetry(n, d)
     total = n + d
     # d/dn = 2d / (n+d)^2, d/dd = -2n / (n+d)^2
-    errors = np.where(total != 0, 2 * np.sqrt(d**2 * vn + n**2 * vd) / total**2, np.nan)
+    errors = _propagated(2 * d / total**2, -2 * n / total**2, num.errors, ref.errors)
     return {
         "values": values,
-        "errors": np.asarray(errors, dtype=float),
+        "errors": _where_defined(total != 0, errors),
         "syst_errors": _combined(values, _source_shifts(asymmetry, values, num, ref)),
     }
 
@@ -360,12 +425,12 @@ def _significance(signal: _Side, background: _Side, kind: ComparisonKind) -> dic
 
     ``nan`` where the background (or, for ``s/sqrt(s+b)``, the total) is not positive.
     """
-    s, b, vs, vb = signal.values, background.values, signal.variances, background.variances
+    s, b = signal.values, background.values
     if kind == "s/sqrt(b)":
         ok = b > 0
         values = np.where(ok, s / np.sqrt(b), np.nan)
         # d/ds = 1/sqrt(b), d/db = -s / (2 b^1.5)
-        errors = np.where(ok, np.sqrt(vs / b + s**2 * vb / (4 * b**3)), np.nan)
+        errors = _propagated(1 / np.sqrt(b), -s / (2 * b**1.5), signal.errors, background.errors)
     else:
         total = s + b
         ok = total > 0
@@ -373,11 +438,23 @@ def _significance(signal: _Side, background: _Side, kind: ComparisonKind) -> dic
         # d/ds = (s + 2b) / (2 (s+b)^1.5), d/db = -s / (2 (s+b)^1.5)
         ds = (s + 2 * b) / (2 * total**1.5)
         db = -s / (2 * total**1.5)
-        errors = np.where(ok, np.sqrt(ds**2 * vs + db**2 * vb), np.nan)
+        errors = _propagated(ds, db, signal.errors, background.errors)
     return {
         "values": np.asarray(values, dtype=float),
-        "errors": np.asarray(errors, dtype=float),
+        "errors": _where_defined(ok, errors),
     }
+
+
+_NONE: _Errors = (np.zeros(1), np.zeros(1))
+"""No uncertainty, for the side of :func:`_propagated` that does not enter."""
+
+
+def _where_defined(defined: np.ndarray, errors: _Errors) -> _Errors:
+    """Return ``errors`` with both sides ``nan`` where the comparison is not ``defined``."""
+    return (
+        np.asarray(np.where(defined, errors[0], np.nan), dtype=float),
+        np.asarray(np.where(defined, errors[1], np.nan), dtype=float),
+    )
 
 
 def _source_shifts(
@@ -419,7 +496,10 @@ def _combined(
     if not shifts:
         return None
     edges = np.arange(len(like) + 1, dtype=float)  # combined bin by bin: the edges do not enter
-    summary = Uncertainty(edges=edges, nominal=like, stat=np.zeros_like(like), components=shifts)
+    zeros = np.zeros_like(like)
+    summary = Uncertainty(
+        edges=edges, nominal=like, stat_down=zeros, stat_up=zeros, components=shifts
+    )
     return summary.syst_down, summary.syst_up
 
 
@@ -447,8 +527,9 @@ def _compare_points(
         msg = f"kind={kind!r} counts signal and background events; compare {pair} as a ratio"
         raise ValueError(msg)
     if uncertainty != "propagate":
+        needs = "counts" if uncertainty == "poisson-ratio" else "a reference band"
         msg = (
-            f"uncertainty={uncertainty!r} needs a reference band, which {pair} do not have: "
+            f"uncertainty={uncertainty!r} needs {needs}, which {pair} do not have: "
             "their intervals are independent and always propagated"
         )
         raise ValueError(msg)
@@ -457,7 +538,7 @@ def _compare_points(
         raise BinningError(msg)
     a, b = num.values, ref.values
     a_err, b_err = _intervals(num), _intervals(ref)
-    errors: FloatArray | _Errors
+    errors: _Errors
     with np.errstate(divide="ignore", invalid="ignore"):
         match kind:
             case "ratio" | "relative_difference":
@@ -476,11 +557,9 @@ def _compare_points(
                 down, up = _propagated(1.0, -1.0, a_err, b_err)
                 sigma = np.where(a > b, down, up)  # the side of a - b facing zero
                 values = np.where(sigma > 0, (a - b) / sigma, np.nan)
-                errors = np.where(np.isfinite(values), 1.0, np.nan)
+                errors = (np.ones_like(values), np.ones_like(values))
     values = np.asarray(values, dtype=float)
-    if isinstance(errors, tuple):
-        undefined = ~np.isfinite(values)
-        errors = (np.where(undefined, np.nan, errors[0]), np.where(undefined, np.nan, errors[1]))
+    errors = _where_defined(np.isfinite(values), errors)
     return Comparison(
         kind=kind,
         label=num.label,
@@ -504,7 +583,8 @@ def _propagated(pa: Any, pb: Any, a_err: _Errors, b_err: _Errors) -> _Errors:
 
     ``f`` goes down with ``a`` where ``pa >= 0`` and up with it elsewhere, so its
     lower error takes ``a``'s lower error there and ``a``'s upper error elsewhere;
-    the same for ``b``. The two sides are independent and add in quadrature.
+    the same for ``b``. The two sides are independent and add in quadrature;
+    with symmetric errors this is the usual ``hypot(pa * a_err, pb * b_err)``.
     """
 
     def moved(partial: Any, err: _Errors) -> _Errors:

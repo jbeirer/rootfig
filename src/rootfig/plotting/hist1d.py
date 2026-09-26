@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
@@ -121,15 +120,15 @@ class Drawn:
 
 
 def _histplot(*args: Any, **kwargs: Any) -> Any:
-    """Call ``mplhep.histplot`` without its scipy-less Poisson-interval warning.
+    """Call ``mplhep.histplot`` with its automatic uncertainties made cheap.
 
-    mplhep evaluates automatic uncertainties even for ``yerr=False`` and warns
-    when scipy is absent; the errors are never drawn in that case, so the
-    warning is noise for rootfig users.
+    rootfig passes every error bar itself (``yerr`` arrays or ``False``), yet
+    mplhep evaluates its own uncertainties even for ``yerr=False``: the Garwood
+    interval of unweighted histograms, which imports ``scipy.stats`` (0.6 s on
+    the first plot). ``w2method="sqrt"`` makes those undrawn errors
+    ``sqrt(w2)``.
     """
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="Integer weights indicate poissonian data")
-        return hep.histplot(*args, **kwargs)
+    return hep.histplot(*args, w2method="sqrt", **kwargs)
 
 
 def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tuple[bool, bool]]:
@@ -180,7 +179,7 @@ def show_flow_bins(histograms: Sequence[Histogram]) -> tuple[list[Histogram], tu
             setattr(view, field, np.r_[low, cells[visible], high])
         return new
 
-    return [h.map_hists(expand) for h in histograms], (under, over)
+    return [h.map_hists(expand, linear=True) for h in histograms], (under, over)
 
 
 def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
@@ -210,20 +209,26 @@ def fold_flow_bins(histograms: Sequence[Histogram]) -> list[Histogram]:
         return new
 
     return [
-        h.map_hists(fold) if _flow_content(h, 0) or _flow_content(h, -1) else h for h in histograms
+        h.map_hists(fold, linear=True) if _flow_content(h, 0) or _flow_content(h, -1) else h
+        for h in histograms
     ]
 
 
 def _flow_content(histogram: Histogram, side: int) -> bool:
     """Return True if the flow bin on ``side`` (0 under, -1 over) holds weight anywhere.
 
-    The nominal histogram and every systematic variation count, and a bin whose
-    weights cancel to zero still has content (its variance is positive).
+    The nominal histogram, every systematic variation and errors given as
+    ``stat_errors`` count, and a bin whose weights cancel to zero still has
+    content (its variance is positive).
     """
     traits = histogram.axis.traits
     if not (traits.underflow if side == 0 else traits.overflow):
         return False
-    hists = [histogram.hist, *(h for pair in histogram.variations.values() for h in pair)]
+    hists = [
+        histogram.hist,
+        *(h for pair in histogram.variations.values() for h in pair),
+        *(histogram._provenance.errors or ()),
+    ]
     return any(
         _has_content(
             float(np.asarray(h.values(flow=True))[side]),
@@ -505,7 +510,7 @@ def _draw_stack(
             total.hist,
             ax=ax,
             histtype="band",
-            yerr=[down, up] if summary.has_systematics else up,
+            yerr=[down, up],
             flow=flow,
             facecolor="none",
             edgecolor=foreground(),
@@ -544,7 +549,7 @@ def _draw_overlay(
         "label": histogram.label,
         "color": color,
         "flow": flow,
-        "yerr": errors if show_errors else False,
+        "yerr": list(errors) if show_errors else False,
     }
     if kind == "fill":
         kwargs["alpha"] = 0.45 if alpha is None else alpha
@@ -597,7 +602,7 @@ def _draw_data(
         histogram.hist,
         ax=ax,
         histtype="errorbar",
-        yerr=errors,
+        yerr=list(errors),
         xerr=False,
         label=histogram.label,
         flow=flow,

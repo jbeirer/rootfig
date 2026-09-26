@@ -240,6 +240,21 @@ def pull(mc: list[rf.Sample], data: rf.Sample, met: rf.Variable, style: rf.Style
 
 
 @example(
+    "poisson_data",
+    "Low counts: Poisson intervals for data",
+    section=SIMULATION_AND_DATA,
+)
+def poisson_data(mc: list[rf.Sample], data: rf.Sample) -> rf.Plot:
+    """``data_errors="poisson"`` draws data with the Garwood (Poisson) 68 % interval of its
+    counts, ROOT's ``TH1::kPoisson``: asymmetric where few events fall into a bin, and with
+    an upper error for an empty one, in the ratio panel as in the main one. By default data
+    gets ``sqrt(N)``, as a ``TH1`` does; ``data_errors="auto"`` takes Poisson intervals
+    wherever data holds unit-weight counts."""
+    met = rf.Variable("MET", bins=(20, 150, 450), label=r"$E_T^{miss}$", unit="GeV")
+    return rf.plot(mc, met, observed=data, stack=True, panel="ratio", data_errors="poisson")
+
+
+@example(
     "selective_stack",
     "Stacked backgrounds with a signal overlaid",
     section=SIMULATION_AND_DATA,
@@ -547,14 +562,16 @@ def correlation(signal: rf.Sample, style: rf.Style) -> rf.Plot:
     )
 
 
-@example("efficiency", "Efficiency versus a variable with binomial intervals", section=BEYOND_1D)
+@example("efficiency", "Efficiency versus a variable with confidence intervals", section=BEYOND_1D)
 def efficiency(signal: rf.Sample, zjets: rf.Sample, pt: rf.Variable, style: rf.Style) -> rf.Plot:
     """``rf.efficiency`` fills the entries passing ``selection`` (all here) and those also
-    passing ``passed`` with one binning, and draws their ratio with Wilson score intervals.
-    The muon identification efficiency versus transverse momentum, for two samples;
-    ``panel="ratio"`` draws the efficiency ratio of the second to the first below, with
-    the intervals propagated asymmetrically (a scale factor when data is compared with
-    simulation)."""
+    passing ``passed`` with one binning, and draws their ratio with the interval ROOT's
+    TEfficiency gives: Clopper-Pearson for unweighted entries, the normal approximation for
+    weighted ones like these, which has no width at 100 % (two Z + jets bins);
+    ``interval="wilson-effective"`` keeps one. The muon identification efficiency versus transverse
+    momentum, for two samples; ``panel="ratio"`` draws the efficiency ratio of the second to
+    the first below, with the intervals propagated asymmetrically (a scale factor when data
+    is compared with simulation)."""
     return rf.efficiency(
         [signal, zjets], pt, passed="Muon_isTight", ylim=(0.5, None), panel="ratio", style=style
     )

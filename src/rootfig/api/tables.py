@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from rootfig.histograms import (
+    ONE_SIGMA,
     CutflowTable,
+    EfficiencyInterval,
     Summary,
     describe_table,
     load_columns_each,
@@ -112,6 +114,8 @@ def cutflow(
     lumi: float | str | None = None,
     label: str | Sequence[str] | None = None,
     nonfinite: NonFinitePolicy = "drop",
+    interval: EfficiencyInterval = "auto",
+    cl: float = ONE_SIGMA,
 ) -> CutflowTable:
     """Count events and weighted yields after each successive cut, per sample.
 
@@ -119,7 +123,15 @@ def cutflow(
     every further row applies one more cut. Per-object cuts pass an event when
     any object passes. ``weight``, ``lumi`` and ``nonfinite`` work as in
     :func:`plot`: events with a ``nan``/``inf`` weight are excluded from all
-    steps with a warning, or raise for ``nonfinite="error"``.
+    steps with a warning, or raise for ``nonfinite="error"``. Yields carry
+    ``sqrt(sum w^2)``; efficiencies carry the confidence interval ``interval``
+    names (:attr:`~rootfig.Cutflow.efficiency_errors`): ``"auto"`` is ROOT's
+    ``TEfficiency`` default for each efficiency, Clopper-Pearson when the event
+    weights of both steps (before the sample's scale and luminosity factor) are
+    unweighted as ROOT decides (their sum equals the sum of their squares:
+    weights of 1, or 0 and 1) and the normal approximation otherwise; the other
+    frequentist methods of :func:`efficiency` can be named, at confidence level
+    ``cl``. Systematics are not propagated.
 
     Examples
     --------
@@ -128,8 +140,14 @@ def cutflow(
     ... )  # doctest: +SKIP
     >>> print(table)  # doctest: +SKIP
     >>> table.get("Signal").efficiencies  # doctest: +SKIP
+    >>> table.get("Signal").efficiency_errors  # (down, up)  # doctest: +SKIP
     """
     samples = as_samples(data, tree=tree, labels=label)
     return CutflowTable(
-        tuple(cutflow_of(s, cuts, weight=weight, lumi=lumi, nonfinite=nonfinite) for s in samples)
+        tuple(
+            cutflow_of(
+                s, cuts, weight=weight, lumi=lumi, nonfinite=nonfinite, interval=interval, cl=cl
+            )
+            for s in samples
+        )
     )

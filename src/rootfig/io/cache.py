@@ -57,24 +57,28 @@ class ReadCache:
             held.update(source.arrays(missing))
         return {name: held[name] for name in branches}
 
-    def histogram(self, source: FileSource, name: str, *, assume_poisson: bool = False) -> Hist:
+    def histogram(
+        self, source: FileSource, name: str, *, variances_from_contents: bool = False
+    ) -> Hist:
         """Return the stored histogram ``name`` of ``source``, summed over its files, read once."""
-        key = (source, name, assume_poisson)
+        key = (source, name, variances_from_contents)
         if key not in self._histograms:
-            self._histograms[key] = source.read_histogram(name, assume_poisson=assume_poisson)
+            self._histograms[key] = source.read_histogram(
+                name, variances_from_contents=variances_from_contents
+            )
         return self._histograms[key]
 
     def histograms(
-        self, source: FileSource, names: Sequence[str], *, assume_poisson: bool = False
+        self, source: FileSource, names: Sequence[str], *, variances_from_contents: bool = False
     ) -> None:
         """Read the stored histograms ``names`` of ``source`` not held yet, one open per file."""
         missing = [
             name
             for name in dict.fromkeys(names)
-            if (source, name, assume_poisson) not in self._histograms
+            if (source, name, variances_from_contents) not in self._histograms
         ]
         if not missing:
             return
-        read = source.read_histograms(missing, assume_poisson=assume_poisson)
+        read = source.read_histograms(missing, variances_from_contents=variances_from_contents)
         for name, histogram in read.items():
-            self._histograms[(source, name, assume_poisson)] = histogram
+            self._histograms[(source, name, variances_from_contents)] = histogram

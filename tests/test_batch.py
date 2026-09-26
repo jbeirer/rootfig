@@ -830,7 +830,14 @@ class TestBatching:
         assert every == batch._PREPARE_KEYWORDS | batch._DRAW_KEYWORDS
         assert batch._PREPARE_KEYWORDS.isdisjoint(batch._DRAW_KEYWORDS)
         prepare = {"selection", "tree", "bins", "range", "weight", "lumi", "observed"}
-        prepare |= {"systematics", "assume_poisson", "nonfinite", "label", "xlabel", "unit"}
+        prepare |= {
+            "systematics",
+            "variances_from_contents",
+            "nonfinite",
+            "label",
+            "xlabel",
+            "unit",
+        }
         assert prepare <= batch._PREPARE_KEYWORDS
         draw = {"logy", "logx", "normalize", "stack", "style", "text", "stats"}
         draw |= {"panel", "reference", "panel_ylim", "panel_label", "panel_uncertainty"}
@@ -1019,18 +1026,18 @@ class TestBatching:
         for task, result in results:
             assert_same_plot(result, rf.plot(vv, task.variable))
 
-    def test_assume_poisson_warns_once_per_batch(self, stored_dir: Path) -> None:
+    def test_variances_from_contents_warns_once_per_batch(self, stored_dir: Path) -> None:
         sample = rf.Sample(stored_dir / "negative.root", label="N")
         book = rf.PlotBook(
             sample,
             ["mz"],
             variants={"plain": {}, "titled": {"title": "signed"}},
-            plot_kwargs={"assume_poisson": True},
+            plot_kwargs={"variances_from_contents": True},
         )
-        with pytest.warns(rf.RootfigWarning, match="Poisson guess"):
+        with pytest.warns(rf.RootfigWarning, match="absolute bin contents as variances"):
             results = list(book.plots())
         for task, result in results:
-            with pytest.warns(rf.RootfigWarning, match="Poisson guess"):
+            with pytest.warns(rf.RootfigWarning, match="absolute bin contents as variances"):
                 direct = rf.plot(sample, "mz", **task.kwargs)
             assert_same_plot(result, direct)
 

@@ -28,6 +28,8 @@
 ::: rootfig.Cut
 ::: rootfig.Style
 ::: rootfig.Systematic
+::: rootfig.Bayesian
+::: rootfig.ONE_SIGMA
 
 ## Batch plotting
 
@@ -92,6 +94,8 @@ above.
         - fill
         - sum_histograms
         - uncertainty
+        - poisson_interval
+        - shape_covariance
         - summarize
         - read_stored
         - compatible_binning

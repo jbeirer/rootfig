@@ -129,8 +129,14 @@ def resolve(
                 f"panel={kind!r} does not have; it applies to {BAND_KINDS}"
             )
             raise ValueError(msg)
-        if uncertainty not in ("propagate", "numerator"):
-            msg = f"panel_uncertainty must be 'propagate' or 'numerator', got {uncertainty!r}"
+        if uncertainty not in ("propagate", "numerator", "poisson-ratio"):
+            msg = (
+                "panel_uncertainty must be 'propagate', 'numerator' or 'poisson-ratio', got "
+                f"{uncertainty!r}"
+            )
+            raise ValueError(msg)
+        if uncertainty == "poisson-ratio" and kind not in ("ratio", "relative_difference"):
+            msg = f"panel_uncertainty='poisson-ratio' is the interval of a ratio, not of {kind!r}"
             raise ValueError(msg)
     named = None if reference is None else _named(histograms, reference)
     if kind in SIGNIFICANCE_KINDS:
@@ -156,6 +162,10 @@ def resolve(
         modes = ["propagate"] * len(numerators)
     elif uncertainty is not None:
         modes = [uncertainty] * len(numerators)
+        if uncertainty == "poisson-ratio":  # both sides must be counts: checked before drawing
+            counted = [*numerators, chosen if chosen is not None else sum_histograms(stacked)]
+            for histogram_ in counted:
+                histogram_.counts()
     else:
         # Data over simulation keeps the reference as a band; every other comparison
         # propagates both uncertainties, so shared systematic sources cancel.
