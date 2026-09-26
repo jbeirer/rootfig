@@ -814,8 +814,9 @@ def from_sample(
 ) -> Histogram:
     """Wrap ``hist_`` as the :class:`Histogram` of ``sample`` (label, data flag, drawing hints).
 
-    ``weighted`` says that ``hist_`` was filled with weights or scaled, so its
-    contents are not unit-weight counts even where they look like them.
+    ``weighted`` says that ``hist_`` was filled with weights other than 0 and
+    1 or scaled (:attr:`~rootfig.selection.Columns.weighted`), so its contents
+    are not unit-weight counts even where they look like them.
     """
     return Histogram(
         hist=hist_,

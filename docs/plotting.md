@@ -67,11 +67,14 @@ and in `p.uncertainty("Data")`:
   sums of weights (`Σw`, `Σw²`) cannot tell counts scaled by one factor from
   unequal weights (`[1, 1, 4]` sums like two entries of weight 3), so no
   interval of counts describes them. `"auto"` keeps `√(Σw²)` for them instead.
-- Data filled from a tree with a `weight=` or a `scale` (or read from a file
-  with a `scale`) is weighted even where no entry falls, so an empty selection
-  of weighted data keeps `0 ± 0` under `"auto"`. Histograms from elsewhere
-  (stored `TH1`s, histogram objects) are judged by their contents, as ROOT
-  judges a `TH1` by its sums: an empty one holds counts.
+- Data filled from a tree is counts when every weight is 0 or 1 (no `weight=`,
+  `weight="1"`, a flag) and there is no `scale`, as ROOT treats a `TH1` whose
+  sum of weights equals the sum of their squares. Other weights or a `scale`
+  (also for a histogram read from a file) make it weighted, judged on the
+  weights before the selection, so an empty selection of weighted data keeps
+  `0 ± 0` under `"auto"`. Histograms from elsewhere (stored `TH1`s, histogram
+  objects) are judged by their contents, as ROOT judges a `TH1` by its sums: an
+  empty one holds counts.
 - A stored `TH1` brings the statistical error option it was saved with
   (`TH1::SetBinErrorOption`, the first file's for a sample of several, as
   `hadd` keeps it): `kPoisson` and `kPoisson2` give it the Poisson interval at
@@ -290,9 +293,14 @@ that into account:
 | `"scale"` (default) | its own, scaled with the contents |
 | `"shape"` | propagated to first order through the division by the fluctuating total: `(g/S)² (v (1 − 2p) + p² Σv)` for contents `x` of variance `v`, `p = x / S`, `S` the visible total and `g` the target (or one over the bin size); counts with a Poisson interval get the Clopper–Pearson interval of their fraction of the total count, at the same level |
 
-A flow bin is divided by the total without entering it. Each bin's interval is
-a marginal one, bin by bin, not a simultaneous confidence region for the whole
-shape. The correlations between bins are in
+A flow bin is divided by the total without entering it, which is why `"shape"`
+refuses `flow="sum"`: added to an edge bin afterwards, the two cells would be
+treated as independent although they share the fluctuating total
+(`flow="show"`, `"hint"` and `"none"` work). The histogram's variances are the
+first-order ones in every case, so a plain `hist.Hist` (`rf.histogram`) carries
+them; the Clopper–Pearson interval of counts is what `errors()`, the drawing and
+the lower panel use. Each bin's interval is a marginal one, bin by bin, not a
+simultaneous confidence region for the whole shape. The correlations between bins are in
 `rootfig.histograms.shape_covariance(histogram, spec)`, the first-order
 covariance matrix of the normalised visible bins from the sums of squared
 weights (its rows sum to zero for `True`: the normalised bins always add up to
@@ -742,10 +750,14 @@ the ROOT-supported choice that keeps a width at 0 and 1 for weighted samples.
 With a posterior mode the point can lie outside a central interval, which then
 reaches one way only; the shortest interval always holds the mode. Empty bins
 have no efficiency and are left out; `show_empty=True` draws them as ROOT's
-`"e0"` option does, at 0 with the interval `[0, 1]`, or at the prior's mean with
-its interval for a Bayesian one. Only a bin without entries is empty: one whose
-signed weights cancel to a total of zero holds entries, and its efficiency stays
-undefined rather than drawn as 0 in `[0, 1]` or as the prior.
+`"e0"` option does: for unweighted entries at 0 with the interval `[0, 1]`, or
+at the prior's mean with its interval for a Bayesian one; for weighted entries
+at 0 without a width for the normal approximation, and not at all for a
+Bayesian interval, whose effective entries of an empty bin are undefined
+(`"wilson-effective"`, rootfig's own, spans `[0, 1]`). Only a bin without
+entries is empty: one whose signed weights cancel to a total of zero holds
+entries, and its efficiency stays undefined rather than drawn as 0 or as the
+prior.
 Options are
 the usual axis, legend, label and style ones (`xlabel`, `ylabel`, `unit`,
 `title`, `logx`, `xlim`, `ylim`, `legend`, `text`, `style`, `figsize`, `ax`,
