@@ -62,9 +62,10 @@ docstrings and full type hints.
 
 ## Test data
 
-Almost all tests generate their ROOT files with uproot on the fly. Two files
-that uproot cannot write are committed, produced with ROOT 6.40; rerun their
-scripts only if the layout has to change, and keep the files small.
+Almost all tests generate their ROOT files with uproot on the fly. A few files
+are committed, produced with ROOT 6.40: two that uproot cannot write, and one
+whose point is that ROOT wrote it. Rerun their scripts only if the layout has
+to change, and keep the files small.
 
 `tests/data/split_collection.root` has a split `std::vector<struct>` branch and
 a `TParameter` the way podio/EDM4hep and FCCAnalyses write them (PyROOT):
@@ -118,6 +119,34 @@ void embedded() {
    f.WriteObject(&t, "events");
    f.Close();
 }
+```
+
+`tests/data/error_options.root` holds the same counts (0, 1 and 4) saved with
+each of ROOT's statistical error options, and weighted entries saved with
+`kPoisson`, which ROOT itself draws with `sqrt(sum w^2)` (PyROOT):
+
+```python
+import ROOT
+
+f = ROOT.TFile("error_options.root", "RECREATE")
+for name, option in (
+    ("normal", ROOT.TH1.kNormal),
+    ("poisson", ROOT.TH1.kPoisson),
+    ("poisson2", ROOT.TH1.kPoisson2),
+):
+    h = ROOT.TH1D(name, name, 3, 0.0, 3.0)
+    for x, n in ((1.5, 1), (2.5, 4)):
+        for _ in range(n):
+            h.Fill(x)
+    h.SetBinErrorOption(option)
+    h.Write()
+w = ROOT.TH1D("weighted", "weighted", 3, 0.0, 3.0)
+w.Sumw2()
+w.Fill(1.5, 2.0)
+w.Fill(2.5, 1.0)
+w.SetBinErrorOption(ROOT.TH1.kPoisson)
+w.Write()
+f.Close()
 ```
 
 ## Figures and the gallery

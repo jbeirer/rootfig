@@ -529,23 +529,25 @@ class FileSource:
             k for k, cls in self.objects().items() if objects.is_histogram_class(cls, ndim)
         )
 
-    def read_histogram(self, name: str, *, assume_poisson: bool = False) -> Hist:
+    def read_histogram(self, name: str, *, variances_from_contents: bool = False) -> Hist:
         """Read the histogram stored as ``name`` in every file and return their sum.
 
         The result has ``Weight`` storage; see :func:`rootfig.io.objects.read_histograms`
-        for how uncertainties are treated and what ``assume_poisson`` accepts.
+        for how uncertainties are treated and what ``variances_from_contents`` accepts.
         ``name`` may address an object inside a directory (``"dir/name"``).
         """
-        return self.read_histograms([name], assume_poisson=assume_poisson)[name]
+        return self.read_histograms([name], variances_from_contents=variances_from_contents)[name]
 
     def read_histograms(
-        self, names: Sequence[str], *, assume_poisson: bool = False
+        self, names: Sequence[str], *, variances_from_contents: bool = False
     ) -> dict[str, Hist]:
         """Read the histograms stored as ``names`` in every file and return their sums, by name.
 
         Each file is opened once for all of them; otherwise as :meth:`read_histogram`.
         """
-        return objects.read_histograms(self.files, names, assume_poisson=assume_poisson)
+        return objects.read_histograms(
+            self.files, names, variances_from_contents=variances_from_contents
+        )
 
     def arrays(self, branches: Sequence[str]) -> dict[str, ak.Array]:
         """Read ``branches`` from all files and concatenate them."""

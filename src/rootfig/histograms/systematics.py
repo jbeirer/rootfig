@@ -22,6 +22,7 @@ from rootfig._storage import add_hists
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
+from rootfig.histograms.provenance import Provenance
 
 __all__ = ["Uncertainty", "sum_histograms", "uncertainty"]
 
@@ -39,15 +40,17 @@ class Uncertainty:
         Bin edges.
     nominal
         Nominal bin contents.
-    stat
-        Statistical uncertainty, ``sqrt(variances)``.
+    stat_down, stat_up
+        Statistical uncertainty below and above the contents
+        (:meth:`Histogram.errors() <rootfig.histograms.Histogram.errors>`).
     components
         Signed shifts of every source, ``{name: (up - nominal, down - nominal)}``.
     """
 
     edges: FloatArray
     nominal: FloatArray
-    stat: FloatArray
+    stat_down: FloatArray
+    stat_up: FloatArray
     components: Mapping[str, tuple[FloatArray, FloatArray]] = field(default_factory=dict)
 
     @property
@@ -64,13 +67,18 @@ class Uncertainty:
 
     @property
     def total_up(self) -> FloatArray:
-        """Statistical and systematic uncertainty above the nominal, in quadrature."""
-        return np.asarray(np.hypot(self.stat, self.syst_up), dtype=float)
+        """Statistical and systematic uncertainty above the nominal, in quadrature.
+
+        The usual convention for an uncertainty band: with a Poisson
+        interval, which is no Gaussian standard deviation, the sum has no
+        exact coverage.
+        """
+        return np.asarray(np.hypot(self.stat_up, self.syst_up), dtype=float)
 
     @property
     def total_down(self) -> FloatArray:
-        """Statistical and systematic uncertainty below the nominal, in quadrature."""
-        return np.asarray(np.hypot(self.stat, self.syst_down), dtype=float)
+        """Statistical and systematic uncertainty below the nominal (see :attr:`total_up`)."""
+        return np.asarray(np.hypot(self.stat_down, self.syst_down), dtype=float)
 
     @property
     def has_systematics(self) -> bool:
@@ -104,10 +112,12 @@ def uncertainty(histogram: Histogram) -> Uncertainty:
         )
         for name, (up, down) in histogram.variations.items()
     }
+    stat_down, stat_up = histogram.errors()
     return Uncertainty(
         edges=histogram.edges,
         nominal=nominal,
-        stat=histogram.errors(),
+        stat_down=stat_down,
+        stat_up=stat_up,
         components=components,
     )
 
@@ -119,7 +129,17 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
     histogram without a source contributes its nominal contents to it. The sum
     keeps the inputs' ``normalization`` when they all share it and has none
     otherwise, so it never claims a scaling one of its parts lacks; it counts
-    objects (``per_object``) if any input does.
+    objects (``per_object``) if any input does, and is observed data
+    (``is_data``) if every input is. Counts of one factor add up to counts of
+    it, so the sum holds known counts (:meth:`~rootfig.histograms.Histogram.counts`)
+    when every input does with the same factor per count in every bin, however
+    the inputs reached their binning, and keeps the Poisson interval
+    (:attr:`~rootfig.histograms.Histogram.poisson`) when every input also has
+    it at one confidence level, as ``TH1::Add`` keeps ``kPoisson`` for
+    unweighted histograms. Otherwise, if an input has errors of its own
+    (``stat_errors``), each input's ``(down, up)`` errors add in quadrature
+    side by side, an approximation for asymmetric errors; else the sum has
+    ``sqrt(sum w^2)``, as ROOT falls back to it.
 
     Raises
     ------
@@ -157,12 +177,33 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
             [h.variations[name][1] if name in h.variations else h.hist for h in histograms]
         )
         variations[name] = (up, down)
+    counted = all(h._provenance.unit is not None for h in histograms) and all(
+        np.allclose(h._factors(flow=True), first._factors(flow=True), rtol=1e-12, atol=0)
+        for h in histograms[1:]
+    )
+    same_level = all(h.poisson and h._cl == first._cl for h in histograms)
+    unit = first._provenance.unit
+    total = add_hists([h.hist for h in histograms])
+    errors: tuple[FloatArray, FloatArray] | None = None
+    if any(h._provenance.errors is not None for h in histograms):  # then not all are Poisson
+        # given errors add in quadrature side by side, every input with its own (down, up)
+        sides = [h.errors(flow=True) for h in histograms]
+        errors = (
+            np.sqrt(np.sum([side[0] ** 2 for side in sides], axis=0)),
+            np.sqrt(np.sum([side[1] ** 2 for side in sides], axis=0)),
+        )
     return Histogram(
-        add_hists([h.hist for h in histograms]),
+        total,
         label=label,
         normalization=first.normalization
         if all(h.normalization == first.normalization for h in histograms)
         else None,
         variations=variations,
         per_object=any(h.per_object for h in histograms),
+        is_data=all(h.is_data for h in histograms),
+        poisson=first.poisson if counted and same_level else False,
+        _provenance=Provenance(
+            unit.copy() if counted and unit is not None else None, weighted=not counted
+        ),
+        stat_errors=errors,
     )

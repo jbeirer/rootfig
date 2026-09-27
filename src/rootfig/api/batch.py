@@ -446,7 +446,9 @@ def _copied(prepared: PreparedPlot) -> PreparedPlot:
     the plots of several variants must not share them, or changing one figure's
     histogram would change the next variant drawn from the same preparation.
     """
-    copies = [histogram.map_hists(lambda h: h.copy()) for histogram in prepared.histograms]
+    copies = [
+        histogram.map_hists(lambda h: h.copy(), linear=True) for histogram in prepared.histograms
+    ]
     return replace(prepared, histograms=copies)
 
 

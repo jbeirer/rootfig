@@ -7,7 +7,7 @@ they stay independent of the source classes.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import uproot
 
@@ -24,6 +24,7 @@ __all__ = [
     "object_classes",
     "read_histogram",
     "read_histograms",
+    "stored_error_option",
 ]
 
 _TREE_CLASSNAMES = ("TTree", "TNtuple", "TNtupleD", "TChain")
@@ -83,17 +84,40 @@ def histogram_names(path: str, ndim: int | None = None) -> list[str]:
     return sorted(k for k, cls in object_classes(path).items() if is_histogram_class(cls, ndim))
 
 
-def read_histogram(files: Sequence[str], name: str, *, assume_poisson: bool = False) -> Hist:
+ErrorOption: TypeAlias = Literal["normal", "poisson", "poisson2"]
+"""The statistical errors a ``TH1`` was saved with (its ``fBinStatErrOpt``).
+
+``"normal"`` is ``kNormal`` (``sqrt(sum w^2)``), ``"poisson"`` ``kPoisson`` (the
+Garwood 68.27 % interval) and ``"poisson2"`` ``kPoisson2`` (the 95 % one).
+"""
+
+_ERROR_OPTIONS: dict[int, ErrorOption] = {0: "normal", 1: "poisson", 2: "poisson2"}
+_ERROR_OPTION = "rootfig_bin_error_option"
+"""The attribute of a read ``Hist`` holding its ``TH1``'s error option (copies keep it)."""
+
+
+def stored_error_option(histogram: Hist) -> ErrorOption:
+    """Return the statistical errors the stored ``TH1`` read as ``histogram`` was saved with.
+
+    That of the first file for histograms summed over several, as ``hadd``
+    keeps it; ``"normal"`` for any histogram not read from a file.
+    """
+    return _ERROR_OPTIONS.get(int(getattr(histogram, _ERROR_OPTION, 0)), "normal")
+
+
+def read_histogram(
+    files: Sequence[str], name: str, *, variances_from_contents: bool = False
+) -> Hist:
     """Read the histogram stored as ``name`` in every file and return their sum.
 
     :func:`read_histograms` for one name; see there for how the files are read and
     summed and for the errors.
     """
-    return read_histograms(files, [name], assume_poisson=assume_poisson)[name]
+    return read_histograms(files, [name], variances_from_contents=variances_from_contents)[name]
 
 
 def read_histograms(
-    files: Sequence[str], names: Sequence[str], *, assume_poisson: bool = False
+    files: Sequence[str], names: Sequence[str], *, variances_from_contents: bool = False
 ) -> dict[str, Hist]:
     """Read the histograms stored as ``names`` in every file and return their sums, by name.
 
@@ -104,10 +128,11 @@ def read_histograms(
     histogram is brought to ``Weight`` storage first
     (:func:`rootfig._storage.as_weight_storage`): one written with ``Sumw2``
     keeps its uncertainties, one without it takes its counts as variances, and
-    negative contents without ``Sumw2`` are refused unless ``assume_poisson``.
+    negative contents without ``Sumw2`` are refused unless ``variances_from_contents``.
     Each file is added into the running total of its name as soon as it is
     read, so two histograms per name are held at a time however many files
-    there are; the first file's axis names and titles are kept.
+    there are; the first file's axis names and titles are kept, and so is its
+    ``fBinStatErrOpt`` (see :func:`stored_error_option`), as ``hadd`` keeps it.
 
     Raises
     ------
@@ -122,14 +147,17 @@ def read_histograms(
     for path in files:
         with uproot.open(path) as file:
             for name in dict.fromkeys(names):
-                raw = _read_one(file, path, name)
+                raw, option = _read_one(file, path, name)
                 try:
-                    current = as_weight_storage(raw, assume_poisson=assume_poisson)
+                    current = as_weight_storage(
+                        raw, variances_from_contents=variances_from_contents
+                    )
                 except ValueError as exc:
                     msg = f"histogram {name!r} in {path!r}: {exc}"
                     raise SourceError(msg) from exc
                 total = totals.get(name)
                 if total is None:
+                    setattr(current, _ERROR_OPTION, option)
                     totals[name] = current  # a fresh object from uproot, safe to accumulate into
                 elif not same_binning(total, current):
                     msg = (
@@ -145,8 +173,8 @@ def read_histograms(
     return totals
 
 
-def _read_one(file: Any, path: str, name: str) -> Hist:
-    """Read ``name`` from the open uproot ``file`` at ``path`` (named in messages) as a ``Hist``."""
+def _read_one(file: Any, path: str, name: str) -> tuple[Hist, int]:
+    """Read ``name`` from the open ``file`` at ``path``: the ``Hist`` and its ``fBinStatErrOpt``."""
     try:
         obj = file[name]
     except uproot.KeyInFileError as exc:
@@ -162,4 +190,8 @@ def _read_one(file: Any, path: str, name: str) -> Hist:
         )
         raise SourceError(msg)
     result: Hist = obj.to_hist()
-    return result
+    try:
+        option = int(obj.member("fBinStatErrOpt"))
+    except (KeyError, TypeError, ValueError):  # a model without it: ROOT's default
+        option = 0
+    return result, option

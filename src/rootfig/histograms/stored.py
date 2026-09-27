@@ -23,7 +23,7 @@ from rootfig._typing import Hist
 from rootfig.errors import SelectionError, SourceError, SystematicError, annotate
 from rootfig.histograms.build import Histogram, from_sample
 from rootfig.histograms.sources import shared_source
-from rootfig.io import FileSource, ReadCache
+from rootfig.io import FileSource, ReadCache, stored_error_option
 from rootfig.io.objects import is_tree_class
 from rootfig.model.binning import merge_target
 from rootfig.model.cuts import CutLike
@@ -32,7 +32,13 @@ from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.variables import Variable
 from rootfig.selection import NonFinitePolicy
 
-__all__ = ["describe_axes", "read_stored", "stored_mode", "stored_names"]
+__all__ = [
+    "describe_axes",
+    "read_stored",
+    "stored_mode",
+    "stored_names",
+    "with_saved_errors",
+]
 
 _ROOT_DEFAULT_AXIS_TITLES = frozenset({"", "xaxis", "yaxis", "zaxis"})
 _UPROOT_DEFAULT_AXIS_TITLE = re.compile(r"Axis \d+")  # what uproot writes for a label-less axis
@@ -193,14 +199,16 @@ def read_stored(
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
     include_systematics: bool = True,
     cache: ReadCache | None = None,
 ) -> list[Histogram]:
     """Read the histogram named by ``variables`` from every sample's files.
 
     One :class:`~rootfig.histograms.Histogram` per sample, in ``Weight``
-    storage, scaled by the sample's ``scale`` and luminosity factor. A
+    storage, scaled by the sample's ``scale`` and luminosity factor. A ``TH1``
+    saved with ``kPoisson`` or ``kPoisson2`` brings its Poisson interval (see
+    :func:`with_saved_errors`) unless a factor other than 1 made it weighted. A
     variable's ``bins`` and ``range`` crop and merge the stored bins. An integer
     count merges the whole axis; explicit edges must coincide with stored ones,
     and a range without bins keeps the stored bins between its ends, which must
@@ -228,7 +236,7 @@ def read_stored(
         sample addresses a tree or in-memory data instead of stored histograms.
     SourceError
         If the stored histogram has another dimensionality than ``variables``,
-        its variances are unusable (see ``assume_poisson``), or a file (of a
+        its variances are unusable (see ``variances_from_contents``), or a file (of a
         sample or of a variation) lacks it.
     """
     name = _stored_name(variables)
@@ -247,9 +255,11 @@ def read_stored(
     result = []
     for sample in samples:
         source = _stored_source(sample, name)
-        nominal = _read_scaled(
-            sample, source, name, variables, lumi=lumi, assume_poisson=assume_poisson, cache=cache
+        named = _read_named(
+            source, name, variables, variances_from_contents=variances_from_contents, cache=cache
         )
+        factor = sample.scale * sample.lumi_scale(lumi)
+        nominal = named if factor == 1.0 else named * factor
         sources = (
             {}
             if sample.is_data or not include_systematics
@@ -264,12 +274,14 @@ def read_stored(
                 nominal=nominal,
                 variables=variables,
                 lumi=lumi,
-                assume_poisson=assume_poisson,
+                variances_from_contents=variances_from_contents,
                 cache=cache,
             )
             for syst_name, syst in sources.items()
         }
-        histogram = from_sample(sample, nominal, variations=variations)
+        # a sample's factor makes the contents weighted, as for a tree and TH1::Scale
+        histogram = from_sample(sample, nominal, variations=variations, weighted=factor != 1.0)
+        histogram = with_saved_errors(histogram, named)
         result.append(
             histogram.rebinned_to([v.bins for v in variables], range=[v.range for v in variables])
         )
@@ -329,22 +341,50 @@ def _read_scaled(
     variables: Sequence[Variable],
     *,
     lumi: float | str | None,
-    assume_poisson: bool,
+    variances_from_contents: bool,
     cache: ReadCache | None = None,
 ) -> Hist:
+    named = _read_named(
+        source, name, variables, variances_from_contents=variances_from_contents, cache=cache
+    )
+    factor = sample.scale * sample.lumi_scale(lumi)
+    return named if factor == 1.0 else named * factor
+
+
+def with_saved_errors(histogram: Histogram, stored: Hist) -> Histogram:
+    """Give ``histogram``, read as ``stored``, the Poisson interval its ``TH1`` was saved with.
+
+    A ``TH1`` saved with ``kPoisson`` or ``kPoisson2`` (see
+    :func:`rootfig.io.stored_error_option`) that holds counts gets the Poisson
+    interval at 68.27 % or 95 %. Weighted contents, scaled ones included,
+    keep ``sqrt(sum w^2)``, as ROOT falls back to it for a weighted histogram.
+    """
+    level = {"poisson": True, "poisson2": 0.95}.get(stored_error_option(stored), False)
+    if not level or histogram._provenance.unit is None:
+        return histogram
+    return histogram.replace(poisson=level)
+
+
+def _read_named(
+    source: FileSource,
+    name: str,
+    variables: Sequence[Variable],
+    *,
+    variances_from_contents: bool,
+    cache: ReadCache | None = None,
+) -> Hist:
+    """Read the stored ``name`` of ``source`` with its axes named after ``variables``."""
     if cache is not None:
-        stored = cache.histogram(source, name, assume_poisson=assume_poisson)
+        stored = cache.histogram(source, name, variances_from_contents=variances_from_contents)
     else:
-        stored = source.read_histogram(name, assume_poisson=assume_poisson)
+        stored = source.read_histogram(name, variances_from_contents=variances_from_contents)
     if stored.ndim != len(variables):
         other = "plot2d" if stored.ndim == 2 else "plot"
         msg = (
             f"{name!r} in {source.files[0]!r} is a {stored.ndim}D histogram; draw it with {other}()"
         )
         raise SourceError(msg)
-    named = describe_axes(stored, variables)
-    factor = sample.scale * sample.lumi_scale(lumi)
-    return named if factor == 1.0 else named * factor
+    return describe_axes(stored, variables)
 
 
 def describe_axes(h: Hist, variables: Sequence[Variable | None]) -> Hist:
@@ -429,7 +469,7 @@ def _variation(
     nominal: Hist,
     variables: Sequence[Variable],
     lumi: float | str | None,
-    assume_poisson: bool,
+    variances_from_contents: bool,
     cache: ReadCache | None = None,
 ) -> tuple[Hist, Hist | None]:
     if syst.kind not in ("norm", "samples"):
@@ -457,7 +497,7 @@ def _variation(
                         name,
                         variables,
                         lumi=lumi,
-                        assume_poisson=assume_poisson,
+                        variances_from_contents=variances_from_contents,
                         cache=cache,
                     )
                 )

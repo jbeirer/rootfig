@@ -49,7 +49,7 @@ class ReadPlan:
         selections: Sequence[CutLike | None] = (None,),
         weight: str | None = None,
         systematics: Mapping[str, SystematicLike] | None = None,
-        assume_poisson: bool = False,
+        variances_from_contents: bool = False,
     ) -> None:
         """Plan what :func:`build_histograms` reads for ``variables`` and ``selections``.
 
@@ -74,7 +74,9 @@ class ReadPlan:
             except RootfigError:
                 continue
             if is_stored:
-                self._add_stored(samples, variable, plot_level, assume_poisson=assume_poisson)
+                self._add_stored(
+                    samples, variable, plot_level, variances_from_contents=variances_from_contents
+                )
                 continue
             for sample in samples:
                 systematics_of = _sample_systematics(sample, plot_level)
@@ -122,7 +124,7 @@ class ReadPlan:
         variable: Variable,
         plot_level: Mapping[str, Systematic] | None,
         *,
-        assume_poisson: bool,
+        variances_from_contents: bool,
     ) -> None:
         """Plan the stored histogram ``variable`` names, for the samples that provide it.
 
@@ -134,7 +136,7 @@ class ReadPlan:
         for sample in samples:
             systematics_of = _sample_systematics(sample, plot_level)
             for files in self._stored_sources(sample, systematics_of, name):
-                _extend(self._stored, (files, assume_poisson), [name])
+                _extend(self._stored, (files, variances_from_contents), [name])
 
     def _stored_sources(
         self, sample: Sample, systematics: Mapping[str, Systematic], name: str
@@ -169,9 +171,11 @@ class ReadPlan:
         for source, names in self._branches.items():
             with suppress(Exception):
                 self.cache.arrays(source, names)
-        for (source, assume_poisson), names in self._stored.items():
+        for (source, variances_from_contents), names in self._stored.items():
             with suppress(Exception):
-                self.cache.histograms(source, names, assume_poisson=assume_poisson)
+                self.cache.histograms(
+                    source, names, variances_from_contents=variances_from_contents
+                )
 
 
 def prefetch(
@@ -182,7 +186,7 @@ def prefetch(
     selections: Sequence[CutLike | None] = (None,),
     weight: str | None = None,
     systematics: Mapping[str, SystematicLike] | None = None,
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
 ) -> None:
     """Read into ``cache`` what :func:`build_histograms` reads for ``variables`` and ``selections``.
 
@@ -201,7 +205,7 @@ def prefetch(
         selections=selections,
         weight=weight,
         systematics=systematics,
-        assume_poisson=assume_poisson,
+        variances_from_contents=variances_from_contents,
     )
     plan.read()
 

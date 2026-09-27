@@ -73,7 +73,7 @@ def plot2d(
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
     nonfinite: NonFinitePolicy = "drop",
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
     save: str | None = None,
 ) -> Plot:
     """Draw a two-dimensional histogram of ``y`` versus ``x`` for one sample.
@@ -102,7 +102,7 @@ def plot2d(
     as in :func:`plot`: an integer count, or edges that coincide with the
     existing ones. A range without bins keeps the bins between its ends, which
     must be existing edges too; cropped
-    content moves into the flow bins. ``assume_poisson`` accepts such a histogram without
+    content moves into the flow bins. ``variances_from_contents`` accepts such a histogram without
     variances, as in :func:`plot`.
     """
     objects = histogram_objects(data)
@@ -123,11 +123,11 @@ def plot2d(
         # x and y describe the axes of the histogram given; an explicit bins= overrides theirs
         var_x = None if x is None else as_variable(x, bins=x_bins)
         var_y = None if y is None else as_variable(y, bins=y_bins)
-        [histogram_] = wrap_histograms(objects, assume_poisson=assume_poisson)
+        [histogram_] = wrap_histograms(objects, variances_from_contents=variances_from_contents)
         require_dimension([histogram_], 2, "plot2d")
         if var_x is not None or var_y is not None:
             described = [var_x, var_y]
-            histogram_ = histogram_.map_hists(lambda h: describe_axes(h, described))
+            histogram_ = histogram_.map_hists(lambda h: describe_axes(h, described), linear=True)
         [histogram_] = rebin_ready_made(
             [histogram_],
             [x_bins if var_x is None else var_x.bins, y_bins if var_y is None else var_y.bins],
@@ -165,7 +165,7 @@ def plot2d(
             weight=weight,
             lumi=lumi,
             nonfinite=nonfinite,
-            assume_poisson=assume_poisson,
+            variances_from_contents=variances_from_contents,
         )
         is_data = sample.is_data
     if histogram_.ndim != 2:

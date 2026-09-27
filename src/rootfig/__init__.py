@@ -45,6 +45,8 @@ from rootfig.errors import (
 )
 from rootfig.expressions import evaluate
 from rootfig.histograms import (
+    ONE_SIGMA,
+    Bayesian,
     Comparison,
     Cutflow,
     CutflowTable,
@@ -62,6 +64,8 @@ __version__ = "0.9.0"
 
 __all__ = [
     "ALL",
+    "ONE_SIGMA",
+    "Bayesian",
     "BinningError",
     "Comparison",
     "Cut",

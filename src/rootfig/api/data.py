@@ -14,6 +14,7 @@ from rootfig.expressions import parse
 from rootfig.histograms import (
     Histogram,
     NormalizeSpec,
+    NormalizeUncertainty,
     build_histograms,
     combined_selection,
     read_arrays,
@@ -117,9 +118,10 @@ def histograms(
     range: RangeSpec = None,
     label: str | Sequence[str] | None = None,
     normalize: NormalizeSpec = None,
+    normalize_uncertainty: NormalizeUncertainty = "scale",
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
 ) -> list[Histogram]:
     """Fill one :class:`~rootfig.histograms.Histogram` per sample or group with shared binning.
 
@@ -141,11 +143,17 @@ def histograms(
         lumi=lumi,
         nonfinite=nonfinite,
         systematics=systematics,
-        assume_poisson=assume_poisson,
+        variances_from_contents=variances_from_contents,
     )
     if normalize is None or normalize is False:
+        if normalize_uncertainty != "scale":
+            msg = (
+                f"normalize_uncertainty={normalize_uncertainty!r} needs a normalisation to the "
+                "histogram's own total: normalize=True, 'unity', 'density' or a number"
+            )
+            raise ValueError(msg)
         return hists
-    return [normalize_histogram(h, normalize) for h in hists]
+    return [normalize_histogram(h, normalize, uncertainty=normalize_uncertainty) for h in hists]
 
 
 def histogram(
@@ -159,8 +167,9 @@ def histogram(
     bins: Bins | None = None,
     range: RangeSpec = None,
     normalize: NormalizeSpec = None,
+    normalize_uncertainty: NormalizeUncertainty = "scale",
     nonfinite: NonFinitePolicy = "drop",
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
 ) -> Hist:
     """Fill a single histogram and return it as a plain ``hist.Hist``.
 
@@ -191,8 +200,9 @@ def histogram(
         bins=bins,
         range=range,
         normalize=normalize,
+        normalize_uncertainty=normalize_uncertainty,
         nonfinite=nonfinite,
-        assume_poisson=assume_poisson,
+        variances_from_contents=variances_from_contents,
     )
     if len(results) != 1:
         msg = (

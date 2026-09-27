@@ -284,13 +284,16 @@ def load_columns(
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
     cache: ReadCache | None = None,
+    scaled: bool = True,
 ) -> Columns:
     """Read the required branches of ``sample`` and prepare flat columns.
 
     The selection and weight given here are combined with those defined on the
     sample itself (see :func:`combined_selection` and :func:`combined_weight`).
     ``lumi`` scales samples that carry a cross section (see
-    :meth:`~rootfig.model.Sample.lumi_scale`). With a ``cache`` the sample reads
+    :meth:`~rootfig.model.Sample.lumi_scale`). ``scaled=False`` leaves the
+    sample's scale and luminosity factor out, for an efficiency, in which they
+    cancel: the weights are the event weights alone. With a ``cache`` the sample reads
     through the source instance it holds for its files
     (:func:`~rootfig.histograms.sources.shared_source`), which is then also
     where the branches and the cross-section numbers are read.
@@ -303,7 +306,7 @@ def load_columns(
         tuple(var_exprs),
         selection=None if cut is None else cut.expression,
         weight=weight_expr,
-        scale=sample.scale * sample.lumi_scale(lumi),
+        scale=sample.scale * sample.lumi_scale(lumi) if scaled else 1.0,
         nonfinite=nonfinite,
         context=sample.label,
     )
@@ -366,7 +369,7 @@ def build_histograms(
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
     cache: ReadCache | None = None,
 ) -> list[Histogram]:
     """Fill one 1D histogram per sample or group, with a binning shared by all of them.
@@ -380,7 +383,7 @@ def build_histograms(
 
     A bare variable name that addresses a histogram stored in the samples'
     files (see :func:`~rootfig.histograms.stored_mode`) is read instead of
-    filled; ``assume_poisson`` then accepts stored histograms without a sum of
+    filled; ``variances_from_contents`` then accepts stored histograms without a sum of
     squared weights.
 
     A ``cache`` (:class:`~rootfig.io.ReadCache`) serves the branch arrays and
@@ -398,7 +401,7 @@ def build_histograms(
             lumi=lumi,
             nonfinite=nonfinite,
             systematics=systematics,
-            assume_poisson=assume_poisson,
+            variances_from_contents=variances_from_contents,
             cache=cache,
         )
         return regroup_histograms(items, stored)
@@ -438,6 +441,7 @@ def build_histograms(
                 nominal,
                 stats=summarize(item.nominal) if keep else None,
                 per_object=item.nominal.per_object,
+                weighted=item.nominal.weighted,
                 variations={
                     name: _fill_variation(axis, nominal, up, down)
                     for name, (up, down) in item.variations.items()
@@ -692,7 +696,7 @@ def build_histograms_2d(
     weight: str | None = None,
     lumi: float | str | None = None,
     nonfinite: NonFinitePolicy = "drop",
-    assume_poisson: bool = False,
+    variances_from_contents: bool = False,
 ) -> list[Histogram]:
     """Fill one 2D histogram per sample; ``x`` and ``y`` must share their structure.
 
@@ -713,7 +717,7 @@ def build_histograms_2d(
             weight=weight,
             lumi=lumi,
             nonfinite=nonfinite,
-            assume_poisson=assume_poisson,
+            variances_from_contents=variances_from_contents,
             include_systematics=False,
         )
     if y is None:
@@ -735,6 +739,11 @@ def build_histograms_2d(
     name_y = var_y.safe_name if var_y.safe_name != var_x.safe_name else f"{var_y.safe_name}_y"
     axis_y = resolve_axis(var_y, [c.arrays[1] for c in columns], name=name_y, weights=weights)
     return [
-        from_sample(sample, fill([axis_x, axis_y], cols), stats=summarize(cols))
+        from_sample(
+            sample,
+            fill([axis_x, axis_y], cols),
+            stats=summarize(cols),
+            weighted=cols.weighted,
+        )
         for sample, cols in zip(samples, columns, strict=True)
     ]

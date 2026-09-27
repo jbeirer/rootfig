@@ -315,9 +315,10 @@ def _same_band(comparison: Comparison, other: Comparison) -> bool:
 
 
 def _band_arrays(comparison: Comparison) -> tuple[np.ndarray | None, ...]:
-    """Return the reference's statistical band and its systematic sides, ``None`` where absent."""
-    down, up = comparison.syst_band if comparison.syst_band is not None else (None, None)
-    return (comparison.band, down, up)
+    """Return the sides of the reference's statistical and systematic bands, ``None`` if absent."""
+    stat = comparison.band if comparison.band is not None else (None, None)
+    syst = comparison.syst_band if comparison.syst_band is not None else (None, None)
+    return (*stat, *syst)
 
 
 def _draw_points(
@@ -335,18 +336,14 @@ def _draw_points(
     """
     for comparison, color, is_data in zip(comparisons, colors, observed, strict=True):
         ok = np.isfinite(comparison.values)
-        yerr: Any
         if clip_errors:
-            yerr = np.where(np.isfinite(comparison.errors), comparison.errors, 0.0)[ok]
-        elif comparison.syst_errors is None and not isinstance(comparison.errors, tuple):
-            yerr = comparison.errors[ok]
+            down, up = (np.where(np.isfinite(side), side, 0.0) for side in comparison.errors)
         else:
-            errors_down, errors_up = comparison.total_errors()
-            yerr = [errors_down[ok], errors_up[ok]]
+            down, up = comparison.total_errors()
         ax.errorbar(
             comparison.centers[ok],
             comparison.values[ok],
-            yerr=yerr,
+            yerr=[down[ok], up[ok]],
             xerr=comparison.half_widths[ok],
             fmt="o",
             markersize=5 if is_data else 4,
@@ -387,7 +384,8 @@ def panel_ylim(
     if kind in SIGNIFICANCE_KINDS:
         tops = []
         for comparison, shown in zip(comparisons, visible, strict=True):
-            errors = np.where(np.isfinite(comparison.errors), comparison.errors, 0.0)
+            up = comparison.errors[1]
+            errors = np.where(np.isfinite(up), up, 0.0)
             ok = np.isfinite(comparison.values) & shown
             if ok.any():
                 tops.append(float(np.max(comparison.values[ok] + errors[ok])))

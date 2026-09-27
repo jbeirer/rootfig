@@ -39,6 +39,7 @@ dependencies = [
   "hist>=2.9",
   "mplhep>=1.2.1",
   "matplotlib>=3.11",
+  "scipy>=1.11.2",
 ]
 
 [project.urls]
@@ -128,7 +129,7 @@ warn_unreachable = true
 pretty = true
 
 [[tool.mypy.overrides]]
-module = ["uproot", "uproot.*", "awkward", "awkward.*", "mplhep", "mplhep.*", "hist", "hist.*", "boost_histogram", "boost_histogram.*"]
+module = ["uproot", "uproot.*", "awkward", "awkward.*", "mplhep", "mplhep.*", "hist", "hist.*", "boost_histogram", "boost_histogram.*", "scipy", "scipy.*"]
 ignore_missing_imports = true
 follow_untyped_imports = true
 implicit_reexport = true

@@ -82,6 +82,10 @@ class Columns:
         (entries that were also missing count as missing only).
     per_object
         True if the variable was jagged (one entry per object rather than per event).
+    unit_weights
+        True if the ``weights`` are all 0 or 1, judged on every event before the
+        selection (so an empty selection still says what its weights were):
+        every entry then counts once or not at all, as without weights.
     """
 
     arrays: tuple[np.ndarray, ...]
@@ -91,6 +95,7 @@ class Columns:
     n_missing: int = 0
     n_nonfinite: int = 0
     per_object: bool = False
+    unit_weights: bool = False
 
     @property
     def values(self) -> np.ndarray:
@@ -108,6 +113,15 @@ class Columns:
         if self.weights is None:
             return float(self.n_entries)
         return float(self.weights.sum())
+
+    @property
+    def weighted(self) -> bool:
+        """True unless every entry counts once or not at all (no weights, or 0 and 1 only).
+
+        A histogram filled from unweighted columns holds counts, as ROOT treats a
+        ``TH1`` whose sum of weights equals its sum of squared weights.
+        """
+        return self.weights is not None and not self.unit_weights
 
     def effective_weights(self) -> np.ndarray:
         """Weights as an array, ``1.0`` everywhere when unweighted."""
@@ -137,6 +151,7 @@ class Columns:
             n_missing=sum(part.n_missing for part in parts),
             n_nonfinite=sum(part.n_nonfinite for part in parts),
             per_object=first.per_object,
+            unit_weights=all(part.unit_weights for part in parts),
         )
 
 
@@ -230,6 +245,16 @@ def _check_nonfinite_policy(nonfinite: str) -> None:
         raise SelectionError(msg)
 
 
+def _unit_valued(weights: ak.Array) -> bool:
+    """Return True if every finite, present weight is 0 or 1 (the others never fill)."""
+    values = np.asarray(ak.to_numpy(ak.flatten(weights, axis=None)))
+    if values.dtype.kind not in "biuf":
+        return False  # refused with a message where the weights are flattened for filling
+    values = values.astype(np.float64, copy=False)
+    values = values[np.isfinite(values)]
+    return bool(np.all((values == 0.0) | (values == 1.0)))
+
+
 def _to_float(values: np.ndarray, what: str) -> np.ndarray:
     if values.dtype.kind in "biuf":
         return values.astype(np.float64, copy=False)
@@ -311,9 +336,11 @@ def prepare(
 
     # -- weights: bring to the variable's structure -----------------------------------
     weights: ak.Array | None = None
+    unit_weights = False
     if weight is not None:
         weight_expr = parse(weight)
         weights = _as_jagged(weight_expr.evaluate(arrays, length=n_events))
+        unit_weights = scale == 1.0 and _unit_valued(weights)  # before the selection
         w_depth = depth_of(weights)
         if w_depth > depth:
             msg = (
@@ -431,6 +458,7 @@ def prepare(
         n_missing=n_missing,
         n_nonfinite=n_nonfinite,
         per_object=depth > 1,
+        unit_weights=unit_weights,
     )
 
 

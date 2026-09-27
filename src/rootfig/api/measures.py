@@ -11,13 +11,18 @@ import numpy as np
 from rootfig.api._common import style_for
 from rootfig.api._panel import PanelPlan, resolve_points
 from rootfig.histograms import (
+    ONE_SIGMA,
     Comparison,
     ComparisonKind,
     Efficiency,
+    EfficiencyInterval,
     Profile,
     ProfileStatistic,
-    build_histograms,
+    fill,
+    from_sample,
     load_columns,
+    negative_bins,
+    summarize,
 )
 from rootfig.histograms import efficiency as efficiency_of
 from rootfig.histograms import profile as profile_of
@@ -85,7 +90,9 @@ def efficiency(
     style: StyleLike = None,
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
-    z: float = 1.0,
+    cl: float = ONE_SIGMA,
+    interval: EfficiencyInterval = "auto",
+    show_empty: bool = False,
     nonfinite: NonFinitePolicy = "drop",
     save: str | None = None,
 ) -> Plot:
@@ -94,9 +101,28 @@ def efficiency(
     For every sample two histograms are filled with the same binning, all
     entries satisfying ``selection`` (the denominator) and those also
     satisfying ``passed`` (the numerator); the ratio is drawn as points with
-    Wilson score intervals (``z`` standard deviations, effective entries for
-    weighted samples; see :func:`rootfig.histograms.efficiency` for the
-    treatment of negative weights). The :class:`~rootfig.histograms.Efficiency`
+    confidence intervals of confidence level ``cl`` (one standard deviation,
+    68.27 %, by default, as ROOT's). ``interval="auto"`` gives what ROOT's
+    ``TEfficiency`` gives: Clopper-Pearson for unweighted entries, the normal
+    approximation for weighted ones. The sample's ``scale`` and luminosity
+    factor cancel in an efficiency and are left out, so an unweighted sample
+    stays unweighted. ``interval`` names another method, as ROOT means it:
+    ``"clopper-pearson"``, ``"normal"``, ``"wilson"`` and
+    ``"agresti-coull"`` (all but the normal approximation for unweighted
+    entries only), the Bayesian
+    ``"jeffreys"`` and ``"uniform"`` or any ``rf.Bayesian(alpha, beta, mode=,
+    shortest=)`` prior (weighted entries too; the efficiency is then the
+    posterior's mean or mode), and ``"wilson-effective"``, the Wilson interval
+    of the effective entries for weighted samples (see
+    :data:`~rootfig.histograms.binomial.EfficiencyInterval`). A binomial
+    interval (any but the normal approximation) is not drawn, with a warning, for
+    a bin that an entry with a negative weight falls into, which keeps its
+    efficiency. Empty bins are left out; ``show_empty=True`` draws them as
+    ROOT's ``"e0"`` does (0 in ``[0, 1]``, or the prior for a Bayesian interval;
+    for weighted samples 0 without a width, or no point for a Bayesian
+    interval), while a bin whose signed weights cancel holds entries and stays
+    undefined.
+    The :class:`~rootfig.histograms.Efficiency`
     objects are returned in ``Plot.efficiencies``. An integer ``bins`` without a
     ``range`` infers one robustly, shared by numerator and denominator (see
     :func:`plot`).
@@ -115,26 +141,44 @@ def efficiency(
     ...     "reco.root", "TrueMuon_pt", passed="TrueMuon_matched", bins=(20, 0, 100)
     ... )  # doctest: +SKIP
     """
-    # efficiencies are statistical only: systematics are neither evaluated nor needed
-    samples = [s.replace(systematics={}) for s in as_samples(data, tree=tree, labels=label)]
+    # efficiencies are statistical only: load_columns reads no systematic variations
+    samples = as_samples(data, tree=tree, labels=label)
     var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
     logx = var.log if logx is None else logx
-    totals = build_histograms(
-        samples, var, selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
-    )
-    fixed = var.replace(bins=totals[0].axis)  # same binning for the numerators
     pass_cut = as_cut(passed)
     if pass_cut is None:
         msg = "efficiency() needs a 'passed' selection"
         raise ValueError(msg)
     base = as_cut(selection)
     numerator_cut = pass_cut if base is None else base & pass_cut
-    passes = build_histograms(
-        samples, fixed, selection=numerator_cut, weight=weight, lumi=lumi, nonfinite=nonfinite
+    # the sample's scale and luminosity factor cancel in a ratio: left out, unweighted entries
+    # stay unweighted, and a zero or negative factor changes nothing
+    options: dict[str, Any] = {"weight": weight, "nonfinite": nonfinite, "scaled": False}
+    totals = [load_columns(s, [var], selection=selection, **options) for s in samples]
+    axis = resolve_axis(
+        var, [c.values for c in totals], name=var.safe_name, weights=[c.weights for c in totals]
     )
+    fixed = var.replace(bins=axis)  # the same binning for the numerators
+    passing = [load_columns(s, [fixed], selection=numerator_cut, **options) for s in samples]
+    pass_hists = [fill([axis], c) for c in passing]
     efficiencies = [
-        efficiency_of(p.hist, t.hist, z=z, label=sample.label)
-        for p, t, sample in zip(passes, totals, samples, strict=True)
+        efficiency_of(
+            h,
+            fill([axis], t),
+            cl=cl,
+            label=sample.label,
+            negative_weights=negative_bins(axis, t),  # which the sums cannot always tell
+            interval=interval,
+            show_empty=show_empty,
+        )
+        for h, t, sample in zip(pass_hists, totals, samples, strict=True)
+    ]
+    # the numerators returned in Plot.histograms are yields, with the factor like any histogram
+    passes = [
+        from_sample(s, h, stats=summarize(c), per_object=c.per_object, weighted=c.weighted).scaled(
+            s.scale * s.lumi_scale(lumi)
+        )
+        for s, h, c in zip(samples, pass_hists, passing, strict=True)
     ]
     plan = resolve_points(
         efficiencies,
