@@ -291,7 +291,7 @@ that into account:
 | `normalize_uncertainty=` | A bin's uncertainty after `normalize=True`, `"density"` or a number |
 | --- | --- |
 | `"scale"` (default) | its own, scaled with the contents |
-| `"shape"` | propagated to first order through the division by the fluctuating total: `(g/S)² (v (1 − 2p) + p² Σv)` for contents `x` of variance `v`, `p = x / S`, `S` the visible total and `g` the target (or one over the bin size); counts with a Poisson interval get the Clopper–Pearson interval of their fraction of the total count, at the same level |
+| `"shape"` | propagated to first order through the division by the fluctuating total: `(g/S)² (v (1 − 2p) + p² Σv)` for contents `x` of variance `v`, `p = x / S`, `S` the visible total and `g` the target (or one over the bin size); counts with a Poisson interval get the Clopper–Pearson interval of their fraction of the total count, at the same level, when every visible bin holds counts of one factor (counts of different factors, e.g. divided by unequal bin widths, keep the first-order variance) |
 
 A flow bin is divided by the total without entering it, which is why `"shape"`
 refuses `flow="sum"`: added to an edge bin afterwards, the two cells would be

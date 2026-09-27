@@ -44,8 +44,10 @@ NormalizeUncertainty: TypeAlias = Literal["scale", "shape"]
 * ``"shape"`` - the total fluctuates with the bins, which are then
   anti-correlated: a bin's variance is propagated to first order through the
   division by the total (``p (1 - p) / N`` for a fraction ``p`` of ``N``
-  counts), and counts with a Poisson interval get the Clopper-Pearson interval
-  of their fraction of the total, at the same confidence level. See
+  counts), and counts of one factor in every visible bin with a Poisson
+  interval get the Clopper-Pearson interval of their fraction of the total, at
+  the same confidence level (counts of different factors keep the first-order
+  variances). See
   :func:`shape_covariance` for the correlations. Refused for errors given as
   ``stat_errors``: the total enters every bin with the opposite sign, so their
   asymmetric sides would mix.
@@ -253,8 +255,9 @@ def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | f
     """Give ``normalized`` the uncertainty of a shape (see :data:`NormalizeUncertainty`).
 
     The variances become the first-order shape variances in every case, so the
-    ``hist.Hist`` carries them too; counts with a Poisson interval also get the
-    exact Clopper-Pearson interval of their fractions as the errors drawn.
+    ``hist.Hist`` carries them too; counts with a Poisson interval and one
+    factor in every visible bin also get the exact Clopper-Pearson interval of
+    their fractions as the errors drawn.
     """
     values = original.values(flow=True)
     visible = _visible(original.hist)

@@ -20,6 +20,7 @@ from rootfig.histograms import (
 from rootfig.histograms.binomial import (
     clopper_pearson,
 )
+from rootfig.histograms.normalize import normalize_hist
 
 
 class TestNormalisedUncertainties:
@@ -116,6 +117,20 @@ class TestShapeUncertainty:
         edges.fill(np.repeat([0.5, 2.0, 3.5], [1, 3, 6]))
         density = normalize(Histogram(edges, "D", poisson=True), "density", uncertainty="shape")
         np.testing.assert_allclose(density.errors()[1], (upper - fraction) / [1, 2, 1])
+
+    def test_counts_of_different_factors_keep_the_first_order_variances(self) -> None:
+        # per unit width, the counts 1, 3, 6 have factors 1, 1/2, 1: no one count total whose
+        # fractions Clopper-Pearson could bound, so the errors are the first-order ones
+        edges = hist.Hist(hist.axis.Variable([0, 1, 3, 4]), storage=hist.storage.Weight())
+        edges.fill(np.repeat([0.5, 2.0, 3.5], [1, 3, 6]))
+        widths = Histogram(edges, "D", poisson=True).map_hists(
+            lambda h: normalize_hist(h, "width"), linear=True
+        )
+        assert widths.poisson
+        shape = normalize(widths, True, uncertainty="shape")
+        assert not shape.poisson
+        np.testing.assert_allclose(shape.errors()[0], np.sqrt(shape.variances()))
+        np.testing.assert_allclose(shape.errors()[1], np.sqrt(shape.variances()))
 
     def test_it_needs_a_normalisation_to_the_own_total(self) -> None:
         counts = Histogram(hist_of([1.0, 3.0]), label="C")
