@@ -232,7 +232,7 @@ class TestAbsoluteChi2:
         assert result.systematics == ("lumi",)
         assert result.statistic < goodness_of_fit(data, mc, test="chi2-absolute").statistic
 
-    def test_a_source_shared_by_both_sides_cancels(self) -> None:
+    def test_a_shift_shared_by_both_sides_cancels(self) -> None:
         a = weighted([12.0, 20.0], [12.0, 20.0], "A")
         b = weighted([10.0, 25.0], [10.0, 25.0], "B")
         plain = goodness_of_fit(a, b, test="chi2-absolute")
@@ -245,6 +245,25 @@ class TestAbsoluteChi2:
         assert both.statistic == pytest.approx(plain.statistic, rel=1e-12)
         one = goodness_of_fit(shifted(a, 3.0), b, test="chi2-absolute")
         assert one.statistic < plain.statistic
+
+    def test_a_shared_scale_moves_the_difference_by_its_fraction(self) -> None:
+        a = weighted([12.0, 20.0], [12.0, 20.0], "A")
+        b = weighted([10.0, 25.0], [10.0, 25.0], "B")
+
+        def lumi(h: Histogram) -> Histogram:
+            values = h.values()
+            return h.replace(variations={"lumi": (hist_of(1.1 * values), hist_of(0.9 * values))})
+
+        result = goodness_of_fit(lumi(a), lumi(b), test="chi2-absolute")
+        # Sherman-Morrison with the shift s = 0.1 (a - b) of r = a - b: it does not cancel
+        r = np.array([2.0, -5.0])
+        variances = np.array([22.0, 45.0])
+        s = 0.1 * r
+        expected = np.sum(r**2 / variances) - np.sum(r * s / variances) ** 2 / (
+            1 + np.sum(s**2 / variances)
+        )
+        assert result.statistic == pytest.approx(expected, rel=1e-12)
+        assert result.statistic < goodness_of_fit(a, b, test="chi2-absolute").statistic
 
     def test_a_singular_covariance_names_the_bins(self) -> None:
         exact = weighted([5.0, 6.0, 7.0], [0.0, 0.0, 0.0])

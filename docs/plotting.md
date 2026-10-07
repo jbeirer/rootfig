@@ -500,7 +500,9 @@ a [pull](#lower-panel) (data drawn with Poisson intervals enters with them),
 plus `δ δᵀ` for each [systematic source](#systematic-uncertainties), `δ` half
 the difference of its up and down shifts of `n − d`: a source is fully
 correlated across bins, and one carried by both histograms moves them
-together, so a shared luminosity uncertainty cancels. Bins empty on both
+together, so it cancels only as far as it shifts both alike: a shared
+luminosity uncertainty, scaling both by `1 + ε`, still moves `n − d` by
+`ε (n − d)`. Bins empty on both
 sides are left out, but not a bin whose weights cancel to zero, which keeps its
 sum of squared weights; without systematics the result is the sum of the squared
 pulls. It is a Gaussian approximation, poor for bins with few entries.
