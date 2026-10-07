@@ -202,6 +202,19 @@ class TestAbsoluteChi2:
         assert result.ndf == 2
         assert result.statistic == pytest.approx(1 / 9 + 16 / 8)
 
+    def test_bins_whose_weights_cancel_still_enter(self) -> None:
+        cancelled = weighted([4.0, 0.0, 6.0], [4.0, 2.0, 6.0])  # +1 and -1 in the middle bin
+        result = goodness_of_fit(cancelled, counts([5, 0, 2]), test="chi2-absolute")
+        np.testing.assert_array_equal(result.bins, [True, True, True])
+        assert result.ndf == 3  # a dimension of the test, adding nothing to the chi-square
+        assert result.statistic == pytest.approx(1 / 9 + 16 / 8)
+        sigma = np.array([2.0, 1.5, 3.0])
+        given = Histogram(hist_of([4.0, 0.0, 6.0]), label="", stat_errors=(sigma, sigma))
+        assert goodness_of_fit(given, counts([5, 0, 2]), test="chi2-absolute").ndf == 3
+        # the Poisson interval of no counts leaves an empty bin empty
+        data = Histogram(hist_of([4, 0, 6]), label="Data", is_data=True, poisson=True)
+        assert goodness_of_fit(data, counts([5, 0, 2]), test="chi2-absolute").ndf == 2
+
     def test_a_correlated_source_is_a_rank_one_covariance(self) -> None:
         data, mc = counts([110, 95, 130], "Data"), weighted([100.0, 90.0, 110.0], [4.0, 4, 9])
         varied = mc.replace(
@@ -281,8 +294,9 @@ class TestStatErrors:
         fit = Histogram(hist_of(W1), label="Fit", stat_errors=(np.full(6, 1.0), np.full(6, 2.0)))
         with pytest.raises(ValueError, match="'Fit' has asymmetric statistical errors"):
             goodness_of_fit(fit, weighted(W2, W2_VARIANCES), test=test)  # type: ignore[arg-type]
-        # the absolute chi-square takes each side's error towards the other
-        assert goodness_of_fit(fit, weighted(W2, W2_VARIANCES), test="chi2-absolute").ndf == 5
+        # the absolute chi-square takes each side's error towards the other, in every bin
+        # with an error (the third, empty in both, too)
+        assert goodness_of_fit(fit, weighted(W2, W2_VARIANCES), test="chi2-absolute").ndf == 6
 
     def test_the_absolute_chi2_counts_the_entries_of_the_errors_it_takes(self) -> None:
         sigma = np.full(3, 3.0)  # 25 / 9 effective entries in the first bin, none in sumw2

@@ -114,7 +114,9 @@ def goodness_of_fit(
     ``stat_errors`` are refused, as no variance describes them.
 
     Bins empty on both histograms do not enter the chi-squares; flow bins do
-    not enter at all.
+    not enter at all. For ``"chi2-absolute"`` a bin is empty only without an
+    uncertainty too: one whose weights cancel to zero still enters, with its
+    sum of squared weights.
 
     Raises
     ------
@@ -353,7 +355,7 @@ def _absolute(first: Histogram, second: Histogram) -> GoodnessOfFit:
     """``r C^-1 r`` of the difference ``r``, statistical and systematic covariance ``C``."""
     num, ref = _Side.of(first), _Side.of(second)
     difference = num.values - ref.values
-    used = (num.values != 0) | (ref.values != 0)
+    used = _occupied(first) | _occupied(second)
     stat = np.where(difference > 0, *_propagated(1.0, -1.0, num.errors, ref.errors))
     covariance = np.diag(stat**2)
     shifts = _source_shifts(np.subtract, difference, num, ref)
@@ -398,6 +400,20 @@ def _absolute(first: Histogram, second: Histogram) -> GoodnessOfFit:
         notes=notes,
         systematics=tuple(shifts),
     )
+
+
+def _occupied(histogram: Histogram) -> np.ndarray:
+    """Return which bins are not empty: with contents, or an uncertainty of their own.
+
+    Weights that cancel leave a bin with nothing but its sum of squared weights;
+    the Poisson interval of no counts does not make a bin occupied.
+    """
+    if histogram._provenance.errors is not None:
+        down, up = histogram.errors()
+        uncertain = (down != 0) | (up != 0)
+    else:
+        uncertain = histogram.variances() != 0
+    return np.asarray((histogram.values() != 0) | uncertain)
 
 
 def _entries(histogram: Histogram, error: FloatArray) -> FloatArray:

@@ -501,7 +501,8 @@ plus `δ δᵀ` for each [systematic source](#systematic-uncertainties), `δ` ha
 the difference of its up and down shifts of `n − d`: a source is fully
 correlated across bins, and one carried by both histograms moves them
 together, so a shared luminosity uncertainty cancels. Bins empty on both
-sides are left out; without systematics the result is the sum of the squared
+sides are left out, but not a bin whose weights cancel to zero, which keeps its
+sum of squared weights; without systematics the result is the sum of the squared
 pulls. It is a Gaussian approximation, poor for bins with few entries.
 
 **`"ks"`** is ROOT's `KolmogorovTest` with its default options: the largest
