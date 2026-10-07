@@ -490,6 +490,9 @@ histograms `"WW"`. The edge cases are ROOT's: a bin empty on both sides is
 left out and lowers `ndf`, and an empty bin of the weighted histogram of
 `"UW"` takes the variance `Σw² / Σw`, which does not scale like a variance,
 so with such bins the result depends on how that histogram is normalised.
+A histogram with `stat_errors` is weighted and enters with their squares as
+its variances, and so does a stack total carrying them; asymmetric
+`stat_errors` are refused by `"chi2"` and `"ks"`, as no variance describes them.
 
 **`"chi2-absolute"`** also tests the normalisation. `C` is the statistical
 variance of `n − d`, each side's error taken towards the other histogram as in
@@ -505,7 +508,8 @@ pulls. It is a Gaussian approximation, poor for bins with few entries.
 distance between the cumulative shapes, its probability from the effective
 entries of both; a histogram without uncertainties is compared as a function.
 For binned data the p-value is biased high, the less so the finer the bins
-compared with the features of the distribution.
+compared with the features of the distribution. Categories have no order to
+accumulate along, so `"ks"` refuses a category axis.
 
 **Inputs.** The histograms are tested as filled or read, with the data
 uncertainty of `data_errors=`, before `normalize=`, which only changes the

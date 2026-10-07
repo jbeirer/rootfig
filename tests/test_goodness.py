@@ -10,7 +10,13 @@ import pytest
 
 from helpers import hist_of
 from rootfig.errors import BinningError
-from rootfig.histograms import GoodnessOfFit, Histogram, compare, goodness_of_fit
+from rootfig.histograms import (
+    GoodnessOfFit,
+    Histogram,
+    compare,
+    goodness_of_fit,
+    sum_histograms,
+)
 
 # The histograms of the ROOT references below (recipe in CONTRIBUTING.md): counts, and
 # weighted contents with their variances (sums of squared weights).
@@ -229,8 +235,54 @@ class TestAbsoluteChi2:
 
     def test_a_singular_covariance_names_the_bins(self) -> None:
         exact = weighted([5.0, 6.0, 7.0], [0.0, 0.0, 0.0])
-        with pytest.raises(ValueError, match=r"no uncertainty in bins \[0\]"):
+        with pytest.raises(ValueError, match=r"singular: bins \[0\] have no statistical"):
             goodness_of_fit(counts([0, 6, 9]), exact, test="chi2-absolute")
+        # one correlated source cannot make up for two bins without statistical uncertainty
+        varied = exact.replace(
+            variations={"lumi": (hist_of([5.5, 6.6, 7.7]), hist_of([4.5, 5.4, 6.3]))}
+        )
+        with pytest.raises(ValueError, match=r"singular: bins \[0, 1\] have no statistical"):
+            goodness_of_fit(counts([0, 0, 9]), varied, test="chi2-absolute")
+
+
+class TestStatErrors:
+    @staticmethod
+    def given(values: list[float], variances: list[float], sumw2: float = 0.0) -> Histogram:
+        sigma = np.sqrt(variances)
+        return Histogram(
+            hist_of(values, [sumw2] * len(values)), label="Fit", stat_errors=(sigma, sigma)
+        )
+
+    @pytest.mark.parametrize("sumw2", [0.0, 9.0])  # no sums of squared weights, or others
+    def test_symmetric_errors_are_the_variances(self, sumw2: float) -> None:
+        fit = self.given(W1, W1_VARIANCES, sumw2)
+        result = goodness_of_fit(fit, weighted(W2, W2_VARIANCES))
+        assert result.method == "WW"
+        assert_chi2(result, ROOT_WW)
+        mc = self.given(MC, MC_VARIANCES, sumw2)
+        assert_chi2(goodness_of_fit(counts(DATA), mc), ROOT_UW)
+        ks = goodness_of_fit(counts(DATA), mc, test="ks")
+        assert ks.p_value == pytest.approx(ROOT_KS_UW[0], rel=1e-9)
+
+    def test_counts_with_errors_of_their_own_are_weighted(self) -> None:
+        sigma = np.sqrt([3.0, 5.0, 4.0])
+        given = Histogram(hist_of([3, 5, 4]), label="Data", stat_errors=(sigma, sigma))
+        assert goodness_of_fit(given, counts([4, 4, 5])).method == "UW"
+
+    def test_a_stack_total_carries_them(self) -> None:
+        half = [0.5 * v for v in W1]
+        parts = [self.given(half, [0.5 * v for v in W1_VARIANCES]) for _ in range(2)]
+        total = sum_histograms(parts)
+        result = goodness_of_fit(total, weighted(W2, W2_VARIANCES))
+        assert_chi2(result, ROOT_WW)
+
+    @pytest.mark.parametrize("test", ["chi2", "ks"])
+    def test_asymmetric_errors_have_no_variance(self, test: str) -> None:
+        fit = Histogram(hist_of(W1), label="Fit", stat_errors=(np.full(6, 1.0), np.full(6, 2.0)))
+        with pytest.raises(ValueError, match="'Fit' has asymmetric statistical errors"):
+            goodness_of_fit(fit, weighted(W2, W2_VARIANCES), test=test)  # type: ignore[arg-type]
+        # the absolute chi-square takes each side's error towards the other
+        assert goodness_of_fit(fit, weighted(W2, W2_VARIANCES), test="chi2-absolute").ndf == 5
 
 
 class TestRequests:
@@ -241,6 +293,18 @@ class TestRequests:
     def test_the_binning_must_agree(self) -> None:
         with pytest.raises(BinningError, match="identical bin edges"):
             goodness_of_fit(counts([1, 2]), counts([2, 1, 3]))
+
+    def test_categories_have_no_order_to_accumulate(self) -> None:
+        def categories(names: list[str], values: list[float]) -> Histogram:
+            h = hist.Hist(hist.axis.StrCategory(names), storage=hist.storage.Weight())
+            h.fill(names, weight=values)
+            return Histogram(h, label="")
+
+        a = categories(["e", "mu", "tau"], [4.0, 9.0, 2.0])
+        b = categories(["e", "mu", "tau"], [5.0, 7.0, 3.0])
+        assert goodness_of_fit(a, b).method == "WW"
+        with pytest.raises(ValueError, match="categories have no order"):
+            goodness_of_fit(a, b, test="ks")
 
     @pytest.mark.parametrize("test", ["chi2", "ks"])
     def test_an_empty_histogram_has_no_shape(self, test: str) -> None:

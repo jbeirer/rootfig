@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 
 import numpy as np
 
+from rootfig._storage import is_category
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
@@ -92,7 +93,8 @@ def goodness_of_fit(
       ``"WW"``. Statistical only. As in ROOT, an empty bin of the weighted
       histogram of ``"UW"`` takes the variance ``sum(w^2) / sum(w)``, which
       does not scale like a variance, so there the result depends on that
-      histogram's normalisation.
+      histogram's normalisation. A histogram with ``stat_errors`` is weighted
+      and enters with their squares, whatever counts it holds.
     * ``"chi2-absolute"`` also tests the normalisation: ``r C^-1 r`` with
       ``r = a - b`` and ``C`` the statistical variances of ``r``, each side's
       error taken towards the other histogram as in a pull, plus one matrix
@@ -104,7 +106,12 @@ def goodness_of_fit(
       the cumulative shapes, its probability from the effective entries of
       both. A histogram without uncertainties is compared as a function. For
       binned data the p-value is biased high, the less so the finer the
-      binning relative to the features compared (ROOT's NOTE 3).
+      binning relative to the features compared (ROOT's NOTE 3). Categories
+      have no order to accumulate along, so it refuses a category axis.
+
+    ``"chi2"`` and ``"ks"`` need one variance per bin: the sum of squared
+    weights, or the square of symmetric ``stat_errors``; asymmetric
+    ``stat_errors`` are refused, as no variance describes them.
 
     Bins empty on both histograms do not enter the chi-squares; flow bins do
     not enter at all.
@@ -115,9 +122,11 @@ def goodness_of_fit(
         If the histograms do not share one one-dimensional binning.
     ValueError
         For an unknown ``test``; for ``"chi2"`` and ``"ks"``, for a histogram
-        whose contents sum to zero, or a bin they cannot test (no uncertainty
-        on either side); for ``"chi2-absolute"``, for a singular covariance
-        (bins without uncertainty).
+        whose contents sum to zero or with asymmetric ``stat_errors``, or a
+        bin they cannot test (no uncertainty on either side); for ``"ks"``, for
+        a category axis; for ``"chi2-absolute"``, for a singular covariance
+        (bins without statistical uncertainty that the systematic sources do
+        not make up for).
     """
     if test not in GOODNESS_OF_FIT_TESTS:
         msg = f"test must be one of {GOODNESS_OF_FIT_TESTS}, got {test!r}"
@@ -126,6 +135,9 @@ def goodness_of_fit(
     if not compatible_binning(first.hist, second.hist):
         msg = "goodness_of_fit requires two one-dimensional histograms with identical bin edges"
         raise BinningError(msg)
+    if test == "ks" and is_category(first.axis):
+        msg = "the Kolmogorov test needs ordered bins, and categories have no order"
+        raise ValueError(msg)
     if test == "chi2-absolute":
         return _absolute(first, second)
     for position, side in (("first", first), ("second", second)):
@@ -164,11 +176,36 @@ def _chi2(first: Histogram, second: Histogram) -> GoodnessOfFit:
 
 
 def _counts(histogram: Histogram) -> FloatArray | None:
-    """Return the counts behind ``histogram``, or ``None`` if it is not known to hold any."""
+    """Return the counts behind ``histogram``, or ``None`` if it is not known to hold any.
+
+    A histogram with ``stat_errors`` holds no counts here: its errors are its own.
+    """
+    if histogram._provenance.errors is not None:
+        return None
     try:
         return histogram.counts()[0]
     except ValueError:
         return None
+
+
+def _variances(histogram: Histogram) -> FloatArray:
+    """Return each bin's statistical variance: its sum of squared weights or ``stat_errors``².
+
+    Raises
+    ------
+    ValueError
+        For asymmetric ``stat_errors``, which no variance describes.
+    """
+    if histogram._provenance.errors is None:
+        return histogram.variances()
+    down, up = histogram.errors()
+    if not np.array_equal(down, up):
+        msg = (
+            f"histogram {histogram.label!r} has asymmetric statistical errors of its own "
+            "(stat_errors), which no variance describes"
+        )
+        raise ValueError(msg)
+    return up * up
 
 
 _Result: TypeAlias = tuple[float, np.ndarray, tuple[str, ...]]
@@ -196,7 +233,7 @@ def _uw(n1: FloatArray, one: Histogram, two: Histogram) -> _Result:
     expected value undefined, ROOT adds an event to the bin and to the total,
     which the later bins keep.
     """
-    w2, s2 = two.values(), two.variances()
+    w2, s2 = two.values(), _variances(two)
     sum1, sum2, sumw2 = float(n1.sum()), float(w2.sum()), float(s2.sum())
     if sum2 < 0:
         msg = f"histogram {two.label!r} has a negative total, which has no shape to test"
@@ -254,7 +291,7 @@ def _uw_bin(cnt1: float, cnt2: float, e2sq: float, sum1: float, sum2: float) -> 
 
 def _ww(one: Histogram, two: Histogram) -> _Result:
     """ROOT's ``"WW"``: two weighted histograms."""
-    w1, w2, s1, s2 = one.values(), two.values(), one.variances(), two.variances()
+    w1, w2, s1, s2 = one.values(), two.values(), _variances(one), _variances(two)
     sum1, sum2 = float(w1.sum()), float(w2.sum())
     used = (w1 * w1 != 0) | (w2 * w2 != 0)
     exact = used & (s1 == 0) & (s2 == 0)
@@ -276,7 +313,7 @@ def _kolmogorov(first: Histogram, second: Histogram) -> GoodnessOfFit:
     """``TH1::KolmogorovTest`` with its default options (shape only, flow bins excluded)."""
     w1, w2 = first.values(), second.values()
     sum1, sum2 = float(w1.sum()), float(w2.sum())
-    v1, v2 = float(first.variances().sum()), float(second.variances().sum())
+    v1, v2 = float(_variances(first).sum()), float(_variances(second).sum())
     if v1 <= 0 and v2 <= 0:
         msg = (
             f"histograms {first.label!r} and {second.label!r} both have no uncertainties, "
@@ -330,8 +367,9 @@ def _absolute(first: Histogram, second: Histogram) -> GoodnessOfFit:
     except np.linalg.LinAlgError:
         bins = np.flatnonzero(used)[stat[used] == 0].tolist()
         msg = (
-            f"the difference of {first.label!r} and {second.label!r} has no uncertainty in "
-            f"bins {bins}, so its covariance is singular; give the histograms uncertainties "
+            f"the covariance of the difference of {first.label!r} and {second.label!r} is "
+            f"singular: bins {bins} have no statistical uncertainty, and the systematic "
+            "sources do not make up for it; give the histograms statistical uncertainties "
             "there (e.g. data_errors='auto' for empty data bins)"
         )
         raise ValueError(msg) from None
