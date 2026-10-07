@@ -25,7 +25,8 @@ objects you already have (see [the end of this page](#histograms-that-already-ex
 - **Data**: samples with `is_data=True` (or passed as `observed=...`) are
   points with error bars, drawn on top and never stacked, in the style's text
   colour (black by default) unless the sample sets `color`. Their error bars are
-  `√N`, as ROOT draws a `TH1`, or Poisson intervals with `data_errors="poisson"`
+  `√N`, as ROOT draws a `TH1`, or Poisson intervals where data holds
+  unit-weight counts with `data_errors="auto"`
   ([Uncertainties of data](#uncertainties-of-data)).
 - **Groups**: a [`Group`][rootfig.Group] of samples is one histogram of the
   overlay or stack, the sum of its components filled apart; see
@@ -38,8 +39,9 @@ backgrounds with a signal drawn over them and a significance panel.
 ## Uncertainties of data
 
 By default every histogram, data included, has ROOT's `TH1` errors: `√(Σw²)` on
-both sides, `√N` for counts. For observed counts the asymmetric Poisson
-(Garwood) interval is the usual choice, and one keyword gives it:
+both sides, `√N` for counts, so a plot shows the numbers ROOT shows for the same
+histogram. For observed counts the asymmetric Poisson (Garwood) interval is the
+usual convention of published data points, and one keyword gives it:
 
 ```python
 rf.plot(mc, "m_ll", observed=data, data_errors="auto")  # Poisson where data is counts

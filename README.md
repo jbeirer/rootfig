@@ -108,6 +108,7 @@ p = rf.plot(
     selection=baseline,
     stack=True,
     panel="ratio",
+    data_errors="auto",  # Poisson intervals for unweighted data
     logy=True,
     style=style,
 )

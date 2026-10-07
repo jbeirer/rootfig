@@ -87,6 +87,7 @@ rf.plot(
     observed=data,
     stack=True,
     panel="ratio",
+    data_errors="auto",  # Poisson intervals for unweighted data
     logy=True,
     bins=(40, 0, 400),
     unit="GeV",

@@ -310,6 +310,7 @@ def plot(
         confidence level such as ``0.95`` (ROOT's ``TH1::kPoisson2``) is the
         Garwood interval at that level. Both raise for data not known to hold
         counts (weighted data, see :meth:`~rootfig.histograms.Histogram.counts`).
+        ``"auto"`` is the usual choice for published data/simulation plots.
     xlim, ylim
         Axis limits; ``ylim`` entries may be ``None`` to keep the automatic value.
     xbreak
