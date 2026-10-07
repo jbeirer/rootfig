@@ -362,21 +362,29 @@ def _absolute(first: Histogram, second: Histogram) -> GoodnessOfFit:
         covariance += np.outer(delta, delta)
     covariance = covariance[np.ix_(used, used)]
     residual = difference[used]
-    try:
-        np.linalg.cholesky(covariance)
-    except np.linalg.LinAlgError:
-        bins = np.flatnonzero(used)[stat[used] == 0].tolist()
+    # singular up to round-off (numpy's matrix_rank tolerance), on every platform alike
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    tolerance = eigenvalues.max(initial=0.0) * len(eigenvalues) * np.finfo(float).eps
+    if np.any(eigenvalues <= tolerance):
+        # the systematic outer products only add, so some bin's own variance is that small
+        bins = np.flatnonzero(used)[stat[used] ** 2 <= tolerance].tolist()
         msg = (
             f"the covariance of the difference of {first.label!r} and {second.label!r} is "
             f"singular: bins {bins} have no statistical uncertainty, and the systematic "
             "sources do not make up for it; give the histograms statistical uncertainties "
             "there (e.g. data_errors='auto' for empty data bins)"
         )
-        raise ValueError(msg) from None
-    chi2 = float(residual @ np.linalg.solve(covariance, residual))
+        raise ValueError(msg)
+    chi2 = float(np.sum((eigenvectors.T @ residual) ** 2 / eigenvalues))
     ndf = int(used.sum())
-    notes = _note(first, _FEW_ENTRIES, _few(num.values, first.variances(), used)) + _note(
-        second, _FEW_ENTRIES, _few(ref.values, second.variances(), used)
+    # the effective entries of the errors that entered: each side's towards the other
+    towards = difference > 0
+    facing = (
+        np.where(towards, num.errors[0], num.errors[1]),
+        np.where(towards, ref.errors[1], ref.errors[0]),
+    )
+    notes = _note(first, _FEW_ENTRIES, _few(num.values, _entries(first, facing[0]), used)) + _note(
+        second, _FEW_ENTRIES, _few(ref.values, _entries(second, facing[1]), used)
     )
     return GoodnessOfFit(
         test="chi2-absolute",
@@ -390,6 +398,11 @@ def _absolute(first: Histogram, second: Histogram) -> GoodnessOfFit:
         notes=notes,
         systematics=tuple(shifts),
     )
+
+
+def _entries(histogram: Histogram, error: FloatArray) -> FloatArray:
+    """Return the variances behind the effective entries: ``stat_errors`` as they entered."""
+    return error * error if histogram._provenance.errors is not None else histogram.variances()
 
 
 def _probability(chi2: float, ndf: int) -> float:

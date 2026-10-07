@@ -284,6 +284,14 @@ class TestStatErrors:
         # the absolute chi-square takes each side's error towards the other
         assert goodness_of_fit(fit, weighted(W2, W2_VARIANCES), test="chi2-absolute").ndf == 5
 
+    def test_the_absolute_chi2_counts_the_entries_of_the_errors_it_takes(self) -> None:
+        sigma = np.full(3, 3.0)  # 25 / 9 effective entries in the first bin, none in sumw2
+        fit = Histogram(
+            hist_of([5.0, 60.0, 70.0], [0.0] * 3), label="Fit", stat_errors=(sigma, sigma)
+        )
+        result = goodness_of_fit(fit, counts([100, 100, 100], "Data"), test="chi2-absolute")
+        assert result.notes == ("'Fit' has a bin with fewer than 10 effective entries",)
+
 
 class TestRequests:
     def test_unknown_test(self) -> None:

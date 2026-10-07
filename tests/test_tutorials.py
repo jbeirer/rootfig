@@ -96,8 +96,13 @@ def test_goodness_of_fit_matches_root(tutorials_dir: Path, tmp_path: Path) -> No
         pytest.skip("the root executable is not available")
     macro = tmp_path / "gof.C"
     macro.write_text(_GOODNESS_OF_FIT_MACRO % path)
+    # a cold start of ROOT from CVMFS (Key4hep) can take minutes before the macro runs
     out = subprocess.run(
-        [root, "-l", "-b", "-q", str(macro)], capture_output=True, text=True, check=True, timeout=60
+        [root, "-l", "-b", "-q", str(macro)],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=600,
     )
     expected = [line.split() for line in out.stdout.splitlines() if line[:1].isdigit()]
     stored = uproot.open(path)["hpx"].to_hist()
