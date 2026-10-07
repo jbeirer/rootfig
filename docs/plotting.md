@@ -384,7 +384,8 @@ difference, the `d` of `n − d` for a difference, an asymmetry and a pull, and
 the background of a significance. Every other histogram, data included, is compared with it;
 for a significance every other non-data histogram is a signal over it. A label
 that no drawn histogram or several carry raises `ValueError`, as does observed
-data as a background, or `reference=` without `panel=`.
+data as a background, or `reference=` without `panel=` or
+[`goodness_of_fit=`](#goodness-of-fit).
 
 **Uncertainties.** A ratio, relative difference or difference draws its error
 bars in one of two modes, chosen per numerator: data over simulation keeps the
@@ -456,6 +457,86 @@ every further sample over the first. Both sides are independent points, so
 their intervals are propagated to first order, each side entering with the error
 that moves the result the same way: a ratio of efficiency intervals keeps its
 asymmetry, and a pull divides by the errors facing the other side. There is no band and no `panel_uncertainty`.
+
+## Goodness of fit
+
+`goodness_of_fit=True` tests how well each histogram a ratio panel would
+compare agrees with its reference, data with the stack total by default (the
+[roles](#lower-panel) of a ratio, whatever `panel=` shows; `reference=` names
+another reference, with or without a panel), and writes the chi-square per
+degree of freedom and the p-value below the experiment label, after the
+`text=` lines (one line per histogram tested, headed by its label when there
+are several), as `χ²/ndf = 1.15, p = 0.258`; `goodness_of_fit_format="fraction"`
+writes `χ²/ndf = 33.5/29` instead:
+
+```python
+rf.plot(mc, "Muon_pt", observed=data, stack=True, panel="ratio", goodness_of_fit=True)
+```
+
+| `goodness_of_fit=` | Statistic | ndf | Tests | Uncertainties |
+| --- | --- | --- | --- | --- |
+| `True`, `"chi2"` | ROOT's `TH1::Chi2Test` | bins − 1 | the shapes | statistical |
+| `"chi2-absolute"` | `rᵀ C⁻¹ r` with `r = n − d` | bins | shapes and normalisation | statistical and systematic |
+| `"ks"` | ROOT's `TH1::KolmogorovTest` | — | the shapes | statistical |
+
+**`"chi2"`** is ROOT's `Chi2Test`, Gagunashvili's test of whether both
+histograms follow one shape, whatever their normalisations. How each side
+enters follows from what it holds, never from a guess at its sums: histograms
+known to hold counts (filled without weights, and scaled since, e.g. to a
+luminosity, as ROOT's `"UU NORM"`; see `Histogram.counts()`) are Poisson
+counts, every other one is weighted. Counts with counts is ROOT's `"UU"`,
+counts with a weighted histogram `"UW"` (in either order) and two weighted
+histograms `"WW"`. The edge cases are ROOT's: a bin empty on both sides is
+left out and lowers `ndf`, and an empty bin of the weighted histogram of
+`"UW"` takes the variance `Σw² / Σw`, which does not scale like a variance,
+so with such bins the result depends on how that histogram is normalised.
+A histogram with `stat_errors` is weighted and enters with their squares as
+its variances, and so does a stack total carrying them; asymmetric
+`stat_errors` are refused by `"chi2"` and `"ks"`, as no variance describes them.
+
+**`"chi2-absolute"`** also tests the normalisation. `C` is the statistical
+variance of `n − d`, each side's error taken towards the other histogram as in
+a [pull](#lower-panel) (data drawn with Poisson intervals enters with them),
+and where the two agree the root mean square of its two errors, so the order
+of the histograms does not matter,
+plus `δ δᵀ` for each [systematic source](#systematic-uncertainties), `δ` the
+larger of its up and down shifts of `n − d`, signed as the up shift (as the down
+shift reversed where up does not move the bin): asymmetric shifts are
+symmetrised to the larger one, and two moving the same way do not cancel, as in
+the uncertainty. With mirrored shifts this is half their difference. A source is fully
+correlated across bins, and one carried by both histograms moves them
+together, so it cancels only as far as it shifts both alike: a shared
+luminosity uncertainty, scaling both by `1 + ε`, still moves `n − d` by
+`ε (n − d)`. Bins empty on both
+sides are left out, but not a bin whose weights cancel to zero, which keeps its
+sum of squared weights; without systematics the result is the sum of the squared
+pulls. It is a Gaussian approximation, poor for bins with few entries (an
+empty data bin has none).
+
+**`"ks"`** is ROOT's `KolmogorovTest` with its default options: the largest
+distance between the cumulative shapes, its probability from the effective
+entries of both; a histogram without uncertainties is compared as a function.
+For binned data the p-value is biased high, the less so the finer the bins
+compared with the features of the distribution. Categories have no order to
+accumulate along, so `"ks"` refuses a category axis.
+
+**Inputs.** The histograms are tested as filled or read, with the data
+uncertainty of `data_errors=`, before `normalize=`, which only changes the
+drawing, and in the bins drawn: the flow bins enter where `flow="show"` adds
+them or `flow="sum"` folds them, and `xlim` and `xbreak` restrict nothing, as
+they only change the view; `bins=` and `range=` choose the bins.
+
+**Result.** `Plot.goodness_of_fit` holds one
+[`GoodnessOfFit`][rootfig.GoodnessOfFit] per histogram tested, in the panel's
+order. It records the `test` and the `method`
+(`"UU"`, `"UW"`, `"WW"`, `"absolute"`, `"ks"`), the `statistic`, `ndf`,
+`chi2_ndf` and `p_value` (`nan` without degrees of freedom, where ROOT
+returns 0), which `bins` entered, the `systematics` in the covariance, and
+`notes`: ROOT's warnings that a bin holds less than one event or fewer than
+ten effective entries, where the approximation is poor.
+[`rf.goodness_of_fit(a, b, test=...)`][rootfig.goodness_of_fit] tests any two
+histograms. The gallery shows a [goodness of fit](gallery/goodness_of_fit.md)
+of data and a stack.
 
 ## Binning and range
 
@@ -618,6 +699,8 @@ panel alike.
   the figure. `label_loc=2` and `3` explicitly put the status on a separate line.
 - `stats=True` adds entries, mean and standard deviation per sample below the
   legend (a location string moves it).
+- `goodness_of_fit=True` adds ROOT's chi-square test of the compared histograms
+  as a line below the experiment label (see [Goodness of fit](#goodness-of-fit)).
 
 ## Figure handling
 

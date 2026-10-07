@@ -19,6 +19,12 @@ from rootfig.histograms.comparison import (
 )
 from rootfig.histograms.cutflow import Cutflow, CutflowStep, CutflowTable, cutflow
 from rootfig.histograms.efficiency import Efficiency, Profile, ProfileStatistic, efficiency, profile
+from rootfig.histograms.goodness import (
+    GOODNESS_OF_FIT_TESTS,
+    GoodnessOfFit,
+    GoodnessOfFitTest,
+    goodness_of_fit,
+)
 from rootfig.histograms.intervals import (
     ONE_SIGMA,
     DataErrors,
@@ -52,6 +58,7 @@ from rootfig.histograms.systematics import Uncertainty, sum_histograms, uncertai
 
 __all__ = [
     "COMPARISON_KINDS",
+    "GOODNESS_OF_FIT_TESTS",
     "ONE_SIGMA",
     "Bayesian",
     "Comparison",
@@ -62,6 +69,8 @@ __all__ = [
     "DataErrors",
     "Efficiency",
     "EfficiencyInterval",
+    "GoodnessOfFit",
+    "GoodnessOfFitTest",
     "Histogram",
     "NormalizeSpec",
     "NormalizeUncertainty",
@@ -85,6 +94,7 @@ __all__ = [
     "efficiency",
     "fill",
     "from_sample",
+    "goodness_of_fit",
     "load_columns",
     "load_columns_each",
     "negative_bins",

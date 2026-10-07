@@ -148,7 +148,8 @@ book.save_pdf("zh.pdf")  # rf.ALL in place of the list plots every histogram the
 - **Compare samples with a few keywords.** Overlays, stacks, data points (`√N`
   as ROOT draws them, or Poisson intervals) and a lower panel (ratio, difference, relative difference, asymmetry, pull or
   significance, against a reference you name) share binning and propagate histogram
-  uncertainties; bin edges
+  uncertainties; ROOT's χ² and Kolmogorov tests quote the agreement
+  (`goodness_of_fit=True`). Bin edges
   and `(n, low, high)` are used as given, while a range inferred from the data
   ignores far outliers, so `-999` sentinels do not set the axis. Normalise to
   unity, density, bin width or luminosity; stack some samples and overlay the rest.

@@ -16,6 +16,7 @@
 ::: rootfig.profile
 ::: rootfig.evaluate
 ::: rootfig.compare
+::: rootfig.goodness_of_fit
 ::: rootfig.log_bins
 ::: rootfig.use_style
 ::: rootfig.dark_theme
@@ -45,6 +46,7 @@
 ::: rootfig.Plot
 ::: rootfig.Histogram
 ::: rootfig.Comparison
+::: rootfig.GoodnessOfFit
 ::: rootfig.Uncertainty
 ::: rootfig.Summary
 ::: rootfig.SummaryTable

@@ -51,11 +51,13 @@ from rootfig.histograms import (
     Cutflow,
     CutflowTable,
     Efficiency,
+    GoodnessOfFit,
     Histogram,
     Profile,
     Summary,
     Uncertainty,
     compare,
+    goodness_of_fit,
 )
 from rootfig.model import Cut, Group, Sample, Style, Systematic, Variable, log_bins
 from rootfig.plotting import Plot, dark_theme, use_style
@@ -73,6 +75,7 @@ __all__ = [
     "CutflowTable",
     "Efficiency",
     "ExpressionError",
+    "GoodnessOfFit",
     "Group",
     "Histogram",
     "IncompatibleWeightError",
@@ -102,6 +105,7 @@ __all__ = [
     "discover_variables",
     "efficiency",
     "evaluate",
+    "goodness_of_fit",
     "histogram",
     "histograms",
     "load",

@@ -5,6 +5,7 @@ or ``reference=`` leaves nothing open; :meth:`PanelPlan.comparisons` computes
 them once the stack is drawn, against the very total :attr:`Plot.stack
 <rootfig.Plot.stack>` holds. :func:`resolve_points` does the same for the
 efficiencies and profiles of :func:`~rootfig.efficiency` and :func:`~rootfig.profile`.
+:func:`fit_results` tests the pairs a ratio panel would compare (``goodness_of_fit=``).
 """
 
 from __future__ import annotations
@@ -16,20 +17,25 @@ from typing import Protocol, TypeAlias
 from rootfig.errors import BinningError
 from rootfig.histograms import (
     COMPARISON_KINDS,
+    GOODNESS_OF_FIT_TESTS,
     Comparison,
     ComparisonKind,
     Efficiency,
+    GoodnessOfFit,
+    GoodnessOfFitTest,
     Histogram,
     Profile,
     UncertaintyMode,
     compare,
     compatible_binning,
+    goodness_of_fit,
     sum_histograms,
 )
 from rootfig.histograms.comparison import BAND_KINDS, SIGNIFICANCE_KINDS
+from rootfig.plotting import FlowSpec, StackSpec, fold_flow_bins, show_flow_bins, split_stack
 from rootfig.plotting.panel import comparison_label
 
-__all__ = ["PanelPlan", "resolve", "resolve_points"]
+__all__ = ["PanelPlan", "fit_results", "resolve", "resolve_points"]
 
 Compared: TypeAlias = Histogram | Efficiency | Profile
 """What a lower panel compares: histograms, or the points of an efficiency or a profile."""
@@ -88,6 +94,7 @@ def resolve(
     stacked: Sequence[Histogram],
     overlaid: Sequence[Histogram],
     data: Sequence[Histogram],
+    tested: bool = False,
 ) -> PanelPlan | None:
     """Return the roles of the lower panel ``panel``, or ``None`` without one.
 
@@ -100,12 +107,14 @@ def resolve(
     A significance takes the overlays as signals over the stack total, or else
     the last non-data histogram over the sum of the others. ``reference`` names
     the reference (the background) for every other histogram (non-data for a
-    significance).
+    significance). It needs no ``panel`` when ``tested``: it then names the
+    reference of the goodness of fit alone.
 
     Raises
     ------
     ValueError
-        For an unknown ``panel``, ``reference`` without ``panel``, a
+        For an unknown ``panel``, ``reference`` without ``panel`` (unless
+        ``tested``), a
         ``reference`` naming no drawn histogram or several, data as the
         background of a significance, ``uncertainty`` for a kind without a band,
         and roles the drawn histograms cannot fill.
@@ -113,7 +122,12 @@ def resolve(
         If a numerator does not share the reference's binning.
     """
     if panel is None:
-        _no_panel(reference)
+        if not tested:
+            _no_panel(
+                reference,
+                "the lower panel or the goodness of fit",
+                "choose the panel too, e.g. panel='ratio', or goodness_of_fit=True",
+            )
         return None
     if not isinstance(panel, str) or panel not in COMPARISON_KINDS:
         msg = (
@@ -143,7 +157,7 @@ def resolve(
         numerators, background = _significance_roles(
             histograms, named, stacked=stacked, overlaid=overlaid
         )
-        _check_binning(numerators, background, kind=kind, stacked=stacked)
+        _check_binning(numerators, background, what=f"panel={kind!r}", stacked=stacked)
         modes: list[UncertaintyMode] = ["propagate"] * len(numerators)
         return PanelPlan(
             kind,
@@ -154,9 +168,9 @@ def resolve(
             tuple(h.is_data for h in numerators),
         )
     numerators, chosen = _ratio_roles(
-        histograms, named, kind=kind, stacked=stacked, overlaid=overlaid, data=data
+        histograms, named, what=f"panel={kind!r}", stacked=stacked, overlaid=overlaid, data=data
     )
-    _check_binning(numerators, chosen, kind=kind, stacked=stacked)
+    _check_binning(numerators, chosen, what=f"panel={kind!r}", stacked=stacked)
     reference_is_data = chosen is not None and chosen.is_data
     if kind not in BAND_KINDS:
         modes = ["propagate"] * len(numerators)
@@ -206,7 +220,7 @@ def resolve_points(
         ``panel``, a ``reference`` naming no sample or several, or a single sample.
     """
     if panel is None:
-        _no_panel(reference)
+        _no_panel(reference, "the lower panel", "choose the panel too, e.g. panel='ratio'")
         return None
     if not isinstance(panel, str) or panel not in COMPARISON_KINDS or panel in SIGNIFICANCE_KINDS:
         kinds = tuple(k for k in COMPARISON_KINDS if k not in SIGNIFICANCE_KINDS)
@@ -222,7 +236,7 @@ def resolve_points(
     numerators, chosen = _ratio_roles(
         items,
         named,
-        kind=kind,
+        what=f"panel={kind!r}",
         stacked=[],
         overlaid=[p for p in items if not flags[id(p)]],
         data=[p for p in items if flags[id(p)]],
@@ -235,13 +249,55 @@ def resolve_points(
     return PanelPlan(kind, tuple(numerators), chosen, tuple(modes), label, observed)
 
 
-def _no_panel(reference: str | None) -> None:
-    """Refuse ``reference`` without a lower panel for it to name the reference of."""
-    if reference is not None:
+def fit_results(
+    histograms: Sequence[Histogram],
+    spec: bool | GoodnessOfFitTest,
+    *,
+    flow: FlowSpec,
+    stack: StackSpec,
+    reference: str | None,
+) -> list[GoodnessOfFit]:
+    """Test what a ratio panel would compare with its reference, whatever ``panel`` is.
+
+    ``spec`` is ``plot(goodness_of_fit=)``: ``False`` for nothing, ``True`` for
+    ``"chi2"``. ``histograms`` are taken before normalisation, which changes
+    only the drawing, with the flow bins shown or folded as ``flow`` draws them.
+
+    Raises
+    ------
+    ValueError
+        For an unknown test and roles the histograms cannot fill (see :func:`resolve`).
+    BinningError
+        If a tested histogram does not share its reference's binning.
+    """
+    if spec is False:
+        return []
+    test = "chi2" if spec is True else spec
+    if test not in GOODNESS_OF_FIT_TESTS:
         msg = (
-            f"reference={reference!r} names what the lower panel compares with; "
-            "choose the panel too, e.g. panel='ratio'"
+            f"goodness_of_fit={spec!r} is not True, False or one of {GOODNESS_OF_FIT_TESTS}; "
+            "for ROOT's chi-square test of the shapes write goodness_of_fit=True"
         )
+        raise ValueError(msg)
+    if flow == "show":
+        histograms = show_flow_bins(histograms)[0]
+    elif flow == "sum":
+        histograms = fold_flow_bins(histograms)
+    stacked, overlaid, data = split_stack(histograms, stack)
+    named = None if reference is None else _named(histograms, reference)
+    what = f"goodness_of_fit={spec!r}"
+    numerators, chosen = _ratio_roles(
+        histograms, named, what=what, stacked=stacked, overlaid=overlaid, data=data
+    )
+    _check_binning(numerators, chosen, what=what, stacked=stacked)
+    against = chosen if chosen is not None else sum_histograms(stacked)
+    return [goodness_of_fit(h, against, test=test) for h in numerators]
+
+
+def _no_panel(reference: str | None, compares: str, remedy: str) -> None:
+    """Refuse ``reference`` without anything it could name the reference of."""
+    if reference is not None:
+        msg = f"reference={reference!r} names what {compares} compares with; {remedy}"
         raise ValueError(msg)
 
 
@@ -249,7 +305,7 @@ def _check_binning(
     numerators: Sequence[Histogram],
     reference: Histogram | None,
     *,
-    kind: ComparisonKind,
+    what: str,
     stacked: Sequence[Histogram],
 ) -> None:
     """Refuse a numerator that does not bin like the reference, before a figure is made.
@@ -261,7 +317,7 @@ def _check_binning(
     for numerator in numerators:
         if not compatible_binning(numerator.hist, against.hist):
             msg = (
-                f"panel={kind!r} compares {numerator.label!r} with {against.label!r}, "
+                f"{what} compares {numerator.label!r} with {against.label!r}, "
                 "which do not share one binning; give them the same bins= and range= "
                 "(histograms that already exist must be rebinned to match)"
             )
@@ -324,19 +380,22 @@ def _ratio_roles[T: _Labelled](
     histograms: Sequence[T],
     reference: T | None,
     *,
-    kind: ComparisonKind,
+    what: str,
     stacked: Sequence[T],
     overlaid: Sequence[T],
     data: Sequence[T],
 ) -> tuple[list[T], T | None]:
-    """Return the numerators and the reference (``None``: the stack total) of a ratio-like kind."""
+    """Return the numerators and the reference (``None``: the stack total) of a ratio-like kind.
+
+    ``what`` names the option asking, for the errors.
+    """
     if reference is not None:
         numerators = [h for h in histograms if h is not reference]
     elif stacked:
         numerators = list(data or overlaid)
         if not numerators:
             msg = (
-                f"panel={kind!r} with every non-data histogram stacked needs observed data "
+                f"{what} with every non-data histogram stacked needs observed data "
                 "(observed=...) or a histogram outside the stack (stack=[...])"
             )
             raise ValueError(msg)
@@ -347,6 +406,6 @@ def _ratio_roles[T: _Labelled](
         # all simulation, or all observed data (two run periods): later ones / the first
         numerators, reference = list(histograms[1:]), histograms[0]
     if not numerators:
-        msg = f"a {kind} panel needs at least two histograms"
+        msg = f"{what} needs at least two histograms"
         raise ValueError(msg)
     return numerators, reference

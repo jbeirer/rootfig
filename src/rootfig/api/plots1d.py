@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 from matplotlib.gridspec import SubplotSpec
 
@@ -25,10 +25,12 @@ from rootfig.api._hists import (
     unit_of,
     wrap_histograms,
 )
+from rootfig.api._panel import fit_results
 from rootfig.api._panel import resolve as resolve_panel
 from rootfig.histograms import (
     ComparisonKind,
     DataErrors,
+    GoodnessOfFitTest,
     Histogram,
     NormalizeSpec,
     NormalizeUncertainty,
@@ -65,6 +67,7 @@ from rootfig.plotting import (
     envelope,
     finish_axes,
     finish_figure,
+    fit_lines,
     fold_flow_bins,
     label_flow_bins,
     legend_location,
@@ -136,6 +139,8 @@ def plot(
     panel_ylim: tuple[float, float] | None = None,
     panel_label: str | None = None,
     panel_uncertainty: UncertaintyMode | None = None,
+    goodness_of_fit: bool | GoodnessOfFitTest = False,
+    goodness_of_fit_format: Literal["quotient", "fraction"] = "quotient",
     logx: bool | None = None,
     logy: bool = False,
     flow: FlowSpec = "hint",
@@ -282,6 +287,20 @@ def plot(
         :meth:`~rootfig.histograms.Histogram.counts`). The label is shrunk,
         and if needed wrapped onto two lines, to fit the short panel; pass a
         shorter ``panel_label`` (``"Ratio"``) to keep it at full size.
+    goodness_of_fit
+        Test every histogram a ratio panel would compare with its reference
+        (data with the stack total by default; ``reference=`` names another,
+        with or without a ``panel``) and write the result below the experiment
+        label, after the ``text`` lines:
+        ``True`` or ``"chi2"`` is ROOT's ``TH1::Chi2Test`` of the shapes,
+        ``"chi2-absolute"`` a chi-square of the difference with systematic
+        uncertainties, ``"ks"`` ROOT's ``TH1::KolmogorovTest`` (see
+        :func:`~rootfig.goodness_of_fit`). The histograms are tested before
+        ``normalize``, in the bins drawn: flow bins enter when ``flow`` shows
+        or sums them, ``xlim`` and ``xbreak`` restrict nothing.
+    goodness_of_fit_format
+        How the chi-square per degree of freedom is written: ``"quotient"``
+        (``1.15``) or ``"fraction"`` (``33.5/29``).
     logx, logy
         Logarithmic axes. ``logx=None`` (default) follows the ``Variable``'s
         ``log`` flag; ``True``/``False`` override it.
@@ -390,6 +409,8 @@ def plot(
         panel_ylim=panel_ylim,
         panel_label=panel_label,
         panel_uncertainty=panel_uncertainty,
+        goodness_of_fit=goodness_of_fit,
+        goodness_of_fit_format=goodness_of_fit_format,
         logx=logx,
         logy=logy,
         flow=flow,
@@ -554,6 +575,8 @@ def draw_plot(
     panel_ylim: tuple[float, float] | None = None,
     panel_label: str | None = None,
     panel_uncertainty: UncertaintyMode | None = None,
+    goodness_of_fit: bool | GoodnessOfFitTest = False,
+    goodness_of_fit_format: Literal["quotient", "fraction"] = "quotient",
     logx: bool | None = None,
     logy: bool = False,
     flow: FlowSpec = "hint",
@@ -621,6 +644,8 @@ def draw_plot(
         )
         raise ValueError(msg)
     histograms_ = with_data_errors(histograms_, data_errors)
+    # the goodness of fit tests the histograms before normalisation, in the bins drawn
+    tested, tested_flow = histograms_, flow
     if normalize is not None and normalize is not False:
         histograms_ = [normalize_for_plot(h, normalize, normalize_uncertainty) for h in histograms_]
     elif normalize_uncertainty != "scale":
@@ -661,7 +686,11 @@ def draw_plot(
         stacked=stacked,
         overlaid=overlaid,
         data=data,
+        tested=goodness_of_fit is not False,
     )
+    fits = fit_results(tested, goodness_of_fit, flow=tested_flow, stack=stack, reference=reference)
+    if lines := fit_lines(fits, chi2=goodness_of_fit_format):  # below the label, like text=
+        resolved_style = resolved_style.replace(text=[*resolved_style.text_lines, *lines])
     reference_hist = histograms_[0]
     outer: tuple[float, float] | None = xlim or (
         float(reference_hist.edges[0]),
@@ -798,6 +827,7 @@ def draw_plot(
         panel_ax_right=layout.panel_right,
         histograms=list(histograms_),
         comparisons=comparisons,
+        goodness_of_fit=fits,
         variable=variable,
         stack=drawn.stack,
     )

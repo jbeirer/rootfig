@@ -20,6 +20,7 @@ import uproot
 from matplotlib.collections import PolyCollection
 from matplotlib.colors import to_rgba
 from matplotlib.font_manager import FontProperties
+from matplotlib.offsetbox import AnchoredText
 from matplotlib.transforms import ScaledTranslation
 
 import rootfig as rf
@@ -33,7 +34,7 @@ from rootfig.errors import (
     SelectionError,
     SourceError,
 )
-from rootfig.histograms import poisson_interval
+from rootfig.histograms import poisson_interval, sum_histograms
 from rootfig.histograms.binomial import normal_interval
 from rootfig.model.style import EXPERIMENT_STYLES
 from rootfig.plotting import (
@@ -42,6 +43,12 @@ from rootfig.plotting import (
     style_context,
 )
 from rootfig.plotting.style import LABEL_MIN_SCALE, align_experiment_label
+
+
+def label_lines(ax: Any) -> list[str]:
+    """The lines of the free text drawn with a neutral style's (absent) experiment label."""
+    (box,) = [a for a in ax.artists if isinstance(a, AnchoredText)]
+    return str(box.txt.get_text()).split("\n")
 
 
 def panel_ylabel(plot: Any) -> str:
@@ -831,6 +838,128 @@ class TestPanelRoles:
         assert p.panel_ax.get_xscale() == "log"
         assert p.panel_ax.get_xlim() == p.ax.get_xlim()
         p.close()
+
+
+class TestGoodnessOfFit:
+    """plot(goodness_of_fit=): the pairs a ratio panel compares, tested as filled."""
+
+    def _hists(self, *, overflow: bool = False) -> list[rf.Histogram]:
+        rng = np.random.default_rng(7)
+        axis = hist.axis.Regular(8, 0, 8, name="x", label="x")
+
+        def filled(n: int, scale: float, label: str, is_data: bool = False) -> rf.Histogram:
+            h = hist.Hist(axis, storage=hist.storage.Weight())
+            values = rng.exponential(3.0, n)
+            h.fill(values if overflow else values[values < 8])
+            return rf.Histogram(h, label=label, is_data=is_data).scaled(scale)
+
+        return [filled(3000, 0.2, "A"), filled(1500, 0.3, "B"), filled(1000, 1.0, "Data", True)]
+
+    def test_data_is_tested_against_the_stack_total(self) -> None:
+        hists = self._hists()
+        p = rf.plot(hists, stack=True, panel="ratio", goodness_of_fit=True)
+        (result,) = p.goodness_of_fit
+        assert (result.label, result.reference, result.method) == ("Data", "Total", "UW")
+        expected = rf.goodness_of_fit(hists[2], sum_histograms(hists[:2]))
+        assert result.statistic == pytest.approx(expected.statistic, rel=1e-12)
+        # below the experiment label, after the text= lines
+        assert label_lines(p.ax) == [
+            f"$\\chi^2$/ndf = {result.chi2_ndf:.2f}, p = {result.p_value:.3g}"
+        ]
+        p.close()
+
+    @pytest.mark.parametrize("panel", [None, "ratio", "pull"])
+    def test_reference_names_the_reference_with_or_without_a_panel(self, panel: Any) -> None:
+        p = rf.plot(self._hists(), reference="B", panel=panel, goodness_of_fit="ks")
+        assert [(r.label, r.reference, r.test) for r in p.goodness_of_fit] == [
+            ("A", "B", "ks"),
+            ("Data", "B", "ks"),
+        ]
+        # several results: one line each, headed by the label of the histogram tested
+        lines = label_lines(p.ax)
+        assert [line.split(": ")[0] for line in lines] == ["A", "Data"]
+        assert all(": KS p = " in line for line in lines)
+        p.close()
+
+    def test_the_lines_follow_the_text_lines(self) -> None:
+        p = rf.plot(
+            self._hists(),
+            stack=True,
+            text="Signal region",
+            goodness_of_fit="chi2-absolute",
+            goodness_of_fit_format="fraction",
+        )
+        (result,) = p.goodness_of_fit
+        assert label_lines(p.ax) == [
+            "Signal region",
+            f"$\\chi^2_\\mathrm{{abs}}$/ndf = {result.statistic:.2f}/{result.ndf}, "
+            f"p = {result.p_value:.3g}",
+        ]
+        p.close()
+
+    def test_the_bins_are_those_drawn(self) -> None:
+        hists = self._hists(overflow=True)
+        hint = rf.plot(hists, goodness_of_fit=True, flow="hint").goodness_of_fit[0]
+        assert hint.bins.size == 8  # flow bins excluded
+        expected = rf.goodness_of_fit(hists[2], hists[0])
+        assert hint.statistic == pytest.approx(expected.statistic, rel=1e-12)
+        summed = rf.plot(hists, goodness_of_fit=True, flow="sum").goodness_of_fit[0]
+        assert summed.bins.size == 8
+        assert summed.statistic != pytest.approx(hint.statistic)
+        shown = rf.plot(hists, goodness_of_fit=True, flow="show").goodness_of_fit[0]
+        assert shown.bins.size == 9  # the overflow as a bin of its own
+        plt.close("all")
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"normalize": True},
+            {"normalize": True, "normalize_uncertainty": "shape"},
+            {"normalize": "width"},
+            {"xlim": (1, 5)},
+        ],
+    )
+    def test_the_histograms_are_tested_as_filled(self, kwargs: dict[str, Any]) -> None:
+        hists = self._hists()
+        for test in ("chi2", "chi2-absolute"):
+            plain = rf.plot(hists, goodness_of_fit=test).goodness_of_fit[0]
+            drawn = rf.plot(hists, goodness_of_fit=test, **kwargs).goodness_of_fit[0]
+            assert drawn.statistic == pytest.approx(plain.statistic, rel=1e-12)
+            assert drawn.ndf == plain.ndf
+        plt.close("all")
+
+    def test_the_absolute_chi2_sums_the_squared_pulls(self) -> None:
+        p = rf.plot(
+            self._hists(),
+            stack=True,
+            panel="pull",
+            data_errors="auto",
+            goodness_of_fit="chi2-absolute",
+        )
+        (result,) = p.goodness_of_fit
+        assert result.statistic == pytest.approx(np.sum(p.comparisons[0].values ** 2), rel=1e-12)
+        p.close()
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"goodness_of_fit": "anderson"}, "is not True, False or one of"),
+            ({"goodness_of_fit_format": "ratio"}, "a 'quotient' or a 'fraction'"),
+            ({"reference": "A"}, "or goodness_of_fit=True"),
+            ({"reference": "nope", "goodness_of_fit": True}, "not the label of a drawn"),
+            ({"stack": True, "goodness_of_fit": True, "data": False}, "needs observed data"),
+        ],
+    )
+    def test_bad_requests_raise_before_a_figure_exists(
+        self, kwargs: dict[str, Any], match: str
+    ) -> None:
+        before = plt.get_fignums()
+        hists = self._hists() if kwargs.pop("data", True) else self._hists()[:2]
+        with pytest.raises(ValueError, match=match):
+            rf.plot(hists, **kwargs)
+        with pytest.raises(ValueError, match="needs at least two histograms"):
+            rf.plot(hists[:1], goodness_of_fit=True)
+        assert plt.get_fignums() == before
 
 
 class TestBrokenAxis:

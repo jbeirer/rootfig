@@ -36,11 +36,16 @@ class Provenance:
         Errors given as ``stat_errors``: the ``(down, up)`` sides as the
         variances of two histograms, so scaling squares the factor and merging
         cells adds them in quadrature.
+    correlated
+        The statistical errors are correlated across bins, as after normalising
+        to the histogram's own total with ``uncertainty="shape"``: the variances
+        are only the diagonal of their covariance.
     """
 
     unit: Hist | None = None
     weighted: bool = False
     errors: tuple[Hist, Hist] | None = None
+    correlated: bool = False
 
     def through(self, transform: Callable[[Hist], Hist], *, factor: float = 1.0) -> Provenance:
         """Return the record put through ``transform``, linear in the cells like the contents.
@@ -57,7 +62,7 @@ class Provenance:
         if errors is not None:
             down, up = transform(errors[0]), transform(errors[1])
             errors = (up, down) if factor < 0 else (down, up)
-        return Provenance(unit, weighted, errors)
+        return Provenance(unit, weighted, errors, self.correlated)
 
 
 def _mixes_factors(unit: Hist, moved: Hist, transform: Callable[[Hist], Hist]) -> bool:

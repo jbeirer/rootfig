@@ -463,14 +463,15 @@ class Histogram:
         then go through it too, which holds only while every cell stays counts
         times factors that do not depend on the contents: merging counts of
         different factors, e.g. bins divided by unequal widths, drops the
-        counts (and raises with :attr:`poisson`).
+        counts (and raises with :attr:`poisson`). Errors correlated across bins
+        stay correlated through any transform.
         """
         variations = {
             name: (transform(up), transform(down)) for name, (up, down) in self.variations.items()
         }
         hist_ = transform(self.hist)
         if not linear:
-            lost = Provenance(weighted=True)
+            lost = Provenance(weighted=True, correlated=self._provenance.correlated)
             return replace(self, hist=hist_, variations=variations, poisson=False, _provenance=lost)
         provenance = self._provenance.through(transform)
         return replace(self, hist=hist_, variations=variations, _provenance=provenance)
