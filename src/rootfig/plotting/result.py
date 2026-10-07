@@ -83,12 +83,12 @@ class Plot:
     panel_ax_right: Axes | None = None
     histograms: list[Histogram] = field(default_factory=list)
     comparisons: list[Comparison] = field(default_factory=list)
-    goodness_of_fit: list[GoodnessOfFit] = field(default_factory=list)
     variable: Variable | None = None
     matrix: FloatArray | None = None
     efficiencies: list[Efficiency] = field(default_factory=list)
     profiles: list[Profile] = field(default_factory=list)
     stack: Histogram | None = None
+    goodness_of_fit: list[GoodnessOfFit] = field(default_factory=list)
 
     @property
     def axes(self) -> tuple[Axes, ...]:
