@@ -497,8 +497,11 @@ its variances, and so does a stack total carrying them; asymmetric
 **`"chi2-absolute"`** also tests the normalisation. `C` is the statistical
 variance of `n − d`, each side's error taken towards the other histogram as in
 a [pull](#lower-panel) (data drawn with Poisson intervals enters with them),
-plus `δ δᵀ` for each [systematic source](#systematic-uncertainties), `δ` half
-the difference of its up and down shifts of `n − d`: a source is fully
+plus `δ δᵀ` for each [systematic source](#systematic-uncertainties), `δ` the
+larger of its up and down shifts of `n − d`, signed as the up shift (as the down
+shift reversed where up does not move the bin): asymmetric shifts are
+symmetrised to the larger one, and two moving the same way do not cancel, as in
+the uncertainty. With mirrored shifts this is half their difference. A source is fully
 correlated across bins, and one carried by both histograms moves them
 together, so it cancels only as far as it shifts both alike: a shared
 luminosity uncertainty, scaling both by `1 + ε`, still moves `n − d` by

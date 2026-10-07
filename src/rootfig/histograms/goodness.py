@@ -360,7 +360,11 @@ def _absolute(first: Histogram, second: Histogram) -> GoodnessOfFit:
     covariance = np.diag(stat**2)
     shifts = _source_shifts(np.subtract, difference, num, ref)
     for up, down in shifts.values():
-        delta = 0.5 * (up - down)  # signed: a shift moving bins oppositely anticorrelates them
+        # symmetrised to the larger shift, as the uncertainty takes it (two variations moving
+        # the same way do not cancel), signed by the up variation (by the down one where up
+        # leaves the bin): a source moving bins oppositely anticorrelates them
+        direction = np.where(up != 0, np.sign(up), -np.sign(down))
+        delta = direction * np.maximum(np.abs(up), np.abs(down))
         covariance += np.outer(delta, delta)
     covariance = covariance[np.ix_(used, used)]
     residual = difference[used]

@@ -265,6 +265,30 @@ class TestAbsoluteChi2:
         assert result.statistic == pytest.approx(expected, rel=1e-12)
         assert result.statistic < goodness_of_fit(a, b, test="chi2-absolute").statistic
 
+    def test_an_asymmetric_source_enters_with_its_larger_shift(self) -> None:
+        data, mc = counts([110, 95], "Data"), weighted([100.0, 90.0], [4.0, 4.0], "MC")
+
+        def varied(up: list[float], down: list[float]) -> Histogram:
+            shifted = (hist_of(np.add([100.0, 90.0], up)), hist_of(np.add([100.0, 90.0], down)))
+            return mc.replace(variations={"syst": shifted})
+
+        def expected(delta: list[float]) -> float:
+            r, variances, s = np.array([10.0, 5.0]), np.array([114.0, 99.0]), np.array(delta)
+            return float(
+                np.sum(r**2 / variances)
+                - np.sum(r * s / variances) ** 2 / (1 + np.sum(s**2 / variances))
+            )
+
+        # shifts of n - d are minus those of the prediction
+        same_way = goodness_of_fit(data, varied([4, -2], [4, -2]), test="chi2-absolute")
+        assert same_way.statistic == pytest.approx(expected([-4, 2]), rel=1e-12)
+        assert same_way.statistic < goodness_of_fit(data, mc, test="chi2-absolute").statistic
+        lopsided = goodness_of_fit(data, varied([4, 0], [-2, 3]), test="chi2-absolute")
+        # signed by the up shift, by the down shift reversed where up leaves the bin
+        assert lopsided.statistic == pytest.approx(expected([-4, 3]), rel=1e-12)
+        mirrored = goodness_of_fit(data, varied([4, -2], [-4, 2]), test="chi2-absolute")
+        assert mirrored.statistic == pytest.approx(expected([-4, 2]), rel=1e-12)
+
     def test_a_singular_covariance_names_the_bins(self) -> None:
         exact = weighted([5.0, 6.0, 7.0], [0.0, 0.0, 0.0])
         with pytest.raises(ValueError, match=r"singular: bins \[0\] have no statistical"):
