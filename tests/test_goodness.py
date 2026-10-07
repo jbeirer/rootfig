@@ -196,6 +196,33 @@ class TestAbsoluteChi2:
             "'MC' has a bin with fewer than 10 effective entries",
         )
 
+    def test_the_order_of_the_histograms_does_not_matter(self) -> None:
+        # the middle bin agrees: Poisson data has no error facing the prediction there, and
+        # a correlated source carries that bin's variance into the others
+        data = Histogram(hist_of([110, 90, 130]), label="Data", is_data=True, poisson=True)
+        mc = weighted([100.0, 90.0, 110.0], [4.0, 4.0, 9.0], "MC").replace(
+            variations={"lumi": (hist_of([110.0, 99, 121]), hist_of([90.0, 81, 99]))}
+        )
+        result = goodness_of_fit(data, mc, test="chi2-absolute")
+        swapped = goodness_of_fit(mc, data, test="chi2-absolute")
+        assert swapped.statistic == pytest.approx(result.statistic, rel=1e-12)
+        assert sorted(swapped.notes) == sorted(result.notes)
+        down, up = data.errors()
+        variances = np.array([down[0] ** 2, (down[1] ** 2 + up[1] ** 2) / 2, down[2] ** 2])
+        variances += [4.0, 4.0, 9.0]
+        r, s = np.array([10.0, 0.0, 20.0]), -0.1 * np.array([100.0, 90.0, 110.0])
+        expected = np.sum(r**2 / variances) - np.sum(r * s / variances) ** 2 / (
+            1 + np.sum(s**2 / variances)
+        )
+        assert result.statistic == pytest.approx(expected, rel=1e-12)
+
+    def test_a_poisson_bin_without_counts_has_no_entries(self) -> None:
+        data = Histogram(hist_of([0, 100, 120]), label="Data", is_data=True, poisson=True)
+        mc = weighted([2.0, 100.0, 110.0], [0.01, 1.0, 1.0], "MC")
+        note = ("'Data' has a bin with fewer than 10 effective entries",)
+        assert goodness_of_fit(data, mc, test="chi2-absolute").notes == note
+        assert goodness_of_fit(mc, data, test="chi2-absolute").notes == note
+
     def test_bins_empty_on_both_sides_do_not_enter(self) -> None:
         result = goodness_of_fit(counts([4, 0, 6]), counts([5, 0, 2]), test="chi2-absolute")
         np.testing.assert_array_equal(result.bins, [True, False, True])

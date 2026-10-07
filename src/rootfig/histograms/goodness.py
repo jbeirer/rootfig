@@ -16,7 +16,7 @@ from rootfig._storage import is_category
 from rootfig._typing import FloatArray, Hist
 from rootfig.errors import BinningError
 from rootfig.histograms.build import Histogram, compatible_binning
-from rootfig.histograms.comparison import _propagated, _Side, _source_shifts
+from rootfig.histograms.comparison import _Side, _source_shifts
 
 __all__ = ["GOODNESS_OF_FIT_TESTS", "GoodnessOfFit", "GoodnessOfFitTest", "goodness_of_fit"]
 
@@ -356,7 +356,8 @@ def _absolute(first: Histogram, second: Histogram) -> GoodnessOfFit:
     num, ref = _Side.of(first), _Side.of(second)
     difference = num.values - ref.values
     used = _occupied(first) | _occupied(second)
-    stat = np.where(difference > 0, *_propagated(1.0, -1.0, num.errors, ref.errors))
+    errors = _towards(num, ref), _towards(ref, num)
+    stat = np.hypot(*errors)
     covariance = np.diag(stat**2)
     shifts = _source_shifts(np.subtract, difference, num, ref)
     for up, down in shifts.values():
@@ -383,14 +384,8 @@ def _absolute(first: Histogram, second: Histogram) -> GoodnessOfFit:
         raise ValueError(msg)
     chi2 = float(np.sum((eigenvectors.T @ residual) ** 2 / eigenvalues))
     ndf = int(used.sum())
-    # the effective entries of the errors that entered: each side's towards the other
-    towards = difference > 0
-    facing = (
-        np.where(towards, num.errors[0], num.errors[1]),
-        np.where(towards, ref.errors[1], ref.errors[0]),
-    )
-    notes = _note(first, _FEW_ENTRIES, _few(num.values, _entries(first, facing[0]), used)) + _note(
-        second, _FEW_ENTRIES, _few(ref.values, _entries(second, facing[1]), used)
+    notes = _note(first, _FEW_ENTRIES, _few(num.values, _entries(first, errors[0]), used)) + _note(
+        second, _FEW_ENTRIES, _few(ref.values, _entries(second, errors[1]), used)
     )
     return GoodnessOfFit(
         test="chi2-absolute",
@@ -420,9 +415,29 @@ def _occupied(histogram: Histogram) -> np.ndarray:
     return np.asarray((histogram.values() != 0) | uncertain)
 
 
+def _towards(side: _Side, other: _Side) -> FloatArray:
+    """Return the statistical error of ``side`` facing ``other``, as a pull takes it.
+
+    The lower error where ``side`` lies above, the upper one where below, and where
+    the contents agree the root mean square of the two, which favours neither order
+    of the histograms.
+    """
+    down, up = side.errors
+    gap = side.values - other.values
+    return np.where(gap > 0, down, np.where(gap < 0, up, np.sqrt((down * down + up * up) / 2)))
+
+
 def _entries(histogram: Histogram, error: FloatArray) -> FloatArray:
-    """Return the variances behind the effective entries: ``stat_errors`` as they entered."""
-    return error * error if histogram._provenance.errors is not None else histogram.variances()
+    """Return the variances behind the effective entries of the errors that entered.
+
+    ``stat_errors`` as they entered; otherwise the sums of squared weights, and where
+    those are zero but an error entered (the Poisson interval of no counts), that
+    error, which leaves the bin no entries.
+    """
+    if histogram._provenance.errors is not None:
+        return error * error
+    variances = histogram.variances()
+    return np.where(variances > 0, variances, error * error)
 
 
 def _probability(chi2: float, ndf: int) -> float:

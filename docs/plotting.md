@@ -497,6 +497,8 @@ its variances, and so does a stack total carrying them; asymmetric
 **`"chi2-absolute"`** also tests the normalisation. `C` is the statistical
 variance of `n − d`, each side's error taken towards the other histogram as in
 a [pull](#lower-panel) (data drawn with Poisson intervals enters with them),
+and where the two agree the root mean square of its two errors, so the order
+of the histograms does not matter,
 plus `δ δᵀ` for each [systematic source](#systematic-uncertainties), `δ` the
 larger of its up and down shifts of `n − d`, signed as the up shift (as the down
 shift reversed where up does not move the bin): asymmetric shifts are
@@ -508,7 +510,8 @@ luminosity uncertainty, scaling both by `1 + ε`, still moves `n − d` by
 `ε (n − d)`. Bins empty on both
 sides are left out, but not a bin whose weights cancel to zero, which keeps its
 sum of squared weights; without systematics the result is the sum of the squared
-pulls. It is a Gaussian approximation, poor for bins with few entries.
+pulls. It is a Gaussian approximation, poor for bins with few entries (an
+empty data bin has none).
 
 **`"ks"`** is ROOT's `KolmogorovTest` with its default options: the largest
 distance between the cumulative shapes, its probability from the effective
