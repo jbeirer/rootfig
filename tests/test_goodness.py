@@ -451,7 +451,13 @@ class TestRequests:
         # normalised to their own totals, the bins anticorrelate, which no test takes in
         shaped = normalize(counts([60, 40], "A"), "unity", uncertainty="shape")
         weights = normalize(weighted([5.0, 4.0], [2.0, 1.0]), "unity", uncertainty="shape")
-        for a, b in ((shaped, counts([50, 50])), (counts([50, 50]), weights.scaled(2.0))):
+        # what is derived from them stays correlated, also through a transform not declared linear
+        mapped = weights.map_hists(lambda h: h * 3.0)
+        for a, b in (
+            (shaped, counts([50, 50])),
+            (counts([50, 50]), weights.scaled(2.0)),
+            (mapped, counts([50, 50])),
+        ):
             with pytest.raises(ValueError, match="correlated across bins"):
                 goodness_of_fit(a, b, test=test)  # type: ignore[arg-type]
         scaled = normalize(counts([60, 40]), "unity")  # a scale correlates nothing
