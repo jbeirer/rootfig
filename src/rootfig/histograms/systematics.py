@@ -203,7 +203,9 @@ def sum_histograms(histograms: Sequence[Histogram], *, label: str = "Total") -> 
         is_data=all(h.is_data for h in histograms),
         poisson=first.poisson if counted and same_level else False,
         _provenance=Provenance(
-            unit.copy() if counted and unit is not None else None, weighted=not counted
+            unit.copy() if counted and unit is not None else None,
+            weighted=not counted,
+            correlated=any(h._provenance.correlated for h in histograms),
         ),
         stat_errors=errors,
     )

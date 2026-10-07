@@ -15,6 +15,7 @@ from rootfig.histograms import (
     Histogram,
     compare,
     goodness_of_fit,
+    normalize,
     sum_histograms,
 )
 
@@ -131,6 +132,33 @@ class TestRootChi2Test:
         assert goodness_of_fit(counts([3, 5, 4]), mc).method == "UW"
         lumi = counts([30, 50, 40]).scaled(0.1)  # scaled counts stay counts
         assert goodness_of_fit(counts([3, 5, 4]), lumi).method == "UU"
+
+    @pytest.mark.parametrize("mode", ["width", "density"])
+    def test_counts_divided_by_unequal_widths(self, mode: str) -> None:
+        def variable(values: list[float], variances: list[float], label: str) -> Histogram:
+            h = hist.Hist(hist.axis.Variable([0.0, 1.0, 3.0]), storage=hist.storage.Weight())
+            h.view().value, h.view().variance = values, variances
+            return Histogram(h, label=label)
+
+        data, mc = variable([10, 20], [10, 20], "Data"), variable([12, 18], [6, 9], "MC")
+        assert goodness_of_fit(data, mc).method == "UW"
+        a, b = normalize(data, mode), normalize(mc, mode)  # type: ignore[arg-type]
+        assert np.ptp(a.counts()[1]) > 0  # counts of a factor per bin
+        # the counts would compare in other units than the contents of MC: weighted, as
+        # their contents and variances are
+        result = goodness_of_fit(a, b)
+        assert result.method == "WW"
+        plain = Histogram(a.hist.copy(), label="Data").scaled(1.0)
+        assert result.statistic == pytest.approx(goodness_of_fit(plain, b).statistic, rel=1e-12)
+        assert goodness_of_fit(b, a).method == "WW"
+        # counts of the same factors compare as the counts they are
+        same = goodness_of_fit(a, normalize(variable([14, 22], [14, 22], "B"), mode))  # type: ignore[arg-type]
+        assert same.method == "UU"
+        raw = goodness_of_fit(data, variable([14, 22], [14, 22], "B"))
+        assert same.statistic == pytest.approx(raw.statistic, rel=1e-12)
+        # one factor in every bin keeps them counts
+        unity = goodness_of_fit(normalize(data, "unity"), b)
+        assert unity.method == "UW"
 
     @pytest.mark.parametrize("factor", [0.01, 1.0, 250.0])
     @pytest.mark.parametrize("test", ["chi2", "ks"])
@@ -417,6 +445,17 @@ class TestRequests:
             goodness_of_fit(counts([3, 4]), negative)
         with pytest.raises(ValueError, match="negative total"):
             goodness_of_fit(counts([3, 4]), weighted([-6.0, 4.0], [2.0, 1.5]))
+
+    @pytest.mark.parametrize("test", ["chi2", "chi2-absolute", "ks"])
+    def test_correlated_bins_are_refused(self, test: str) -> None:
+        # normalised to their own totals, the bins anticorrelate, which no test takes in
+        shaped = normalize(counts([60, 40], "A"), "unity", uncertainty="shape")
+        weights = normalize(weighted([5.0, 4.0], [2.0, 1.0]), "unity", uncertainty="shape")
+        for a, b in ((shaped, counts([50, 50])), (counts([50, 50]), weights.scaled(2.0))):
+            with pytest.raises(ValueError, match="correlated across bins"):
+                goodness_of_fit(a, b, test=test)  # type: ignore[arg-type]
+        scaled = normalize(counts([60, 40]), "unity")  # a scale correlates nothing
+        assert goodness_of_fit(scaled, counts([50, 50]), test=test).test == test  # type: ignore[arg-type]
 
     def test_a_plain_hist_is_judged_by_its_contents(self) -> None:
         plain = goodness_of_fit(hist_of(COUNTS_A), hist_of(COUNTS_B))

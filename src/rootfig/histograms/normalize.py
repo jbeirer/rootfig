@@ -266,7 +266,9 @@ def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | f
     result = normalized.hist.copy()
     view: Any = result.view(flow=True)
     view.variance = variances
-    shaped = normalized.replace(hist=result, poisson=False, _provenance=Provenance(weighted=True))
+    shaped = normalized.replace(
+        hist=result, poisson=False, _provenance=Provenance(weighted=True, correlated=True)
+    )
     if not original.poisson:
         return shaped
     factor = original._factors(flow=True)
@@ -279,7 +281,9 @@ def _with_shape_errors(original: Histogram, normalized: Histogram, mode: str | f
         return shaped
     flow = np.sqrt(variances)  # a flow cell is no fraction of the visible total
     sides = (np.where(visible, bounds[0], flow), np.where(visible, bounds[1], flow))
-    given = Provenance(weighted=True, errors=error_sides(result, sides, shaped.label))
+    given = Provenance(
+        weighted=True, errors=error_sides(result, sides, shaped.label), correlated=True
+    )
     return shaped.replace(_provenance=given)
 
 

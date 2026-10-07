@@ -94,7 +94,10 @@ def goodness_of_fit(
       histogram of ``"UW"`` takes the variance ``sum(w^2) / sum(w)``, which
       does not scale like a variance, so there the result depends on that
       histogram's normalisation. A histogram with ``stat_errors`` is weighted
-      and enters with their squares, whatever counts it holds.
+      and enters with their squares, whatever counts it holds. Counts whose
+      factor varies from bin to bin (divided by unequal bin widths, say) enter
+      as counts only with counts of the same factors, and otherwise as
+      weighted, with their contents.
     * ``"chi2-absolute"`` also tests the normalisation: ``r C^-1 r`` with
       ``r = a - b`` and ``C`` the statistical variances of ``r``, each side's
       error taken towards the other histogram as in a pull, plus one matrix
@@ -118,12 +121,18 @@ def goodness_of_fit(
     uncertainty too: one whose weights cancel to zero still enters, with its
     sum of squared weights.
 
+    Every test takes the bins' uncertainties as independent, so histograms
+    normalised with ``uncertainty="shape"``, whose bins are correlated (see
+    :func:`~rootfig.histograms.shape_covariance`), are refused: test them
+    before normalising.
+
     Raises
     ------
     BinningError
         If the histograms do not share one one-dimensional binning.
     ValueError
-        For an unknown ``test``; for ``"chi2"`` and ``"ks"``, for a histogram
+        For an unknown ``test``; for a histogram normalised with
+        ``uncertainty="shape"``; for ``"chi2"`` and ``"ks"``, for a histogram
         whose contents sum to zero or with asymmetric ``stat_errors``, or a
         bin they cannot test (no uncertainty on either side); for ``"ks"``, for
         a category axis; for ``"chi2-absolute"``, for a singular covariance
@@ -140,6 +149,14 @@ def goodness_of_fit(
     if test == "ks" and is_category(first.axis):
         msg = "the Kolmogorov test needs ordered bins, and categories have no order"
         raise ValueError(msg)
+    for side in (first, second):
+        if side._provenance.correlated:
+            msg = (
+                f"{_name(side)} has statistical uncertainties correlated across bins "
+                "(normalised with uncertainty='shape'), which the tests take as independent; "
+                "test the histograms before normalising them"
+            )
+            raise ValueError(msg)
     if test == "chi2-absolute":
         return _absolute(first, second)
     for position, side in (("first", first), ("second", second)):
@@ -153,7 +170,14 @@ def goodness_of_fit(
 
 def _chi2(first: Histogram, second: Histogram) -> GoodnessOfFit:
     """``TH1::Chi2Test``, its kind of comparison chosen from which sides hold known counts."""
-    counts = [_counts(first), _counts(second)]
+    known = [_counts(first), _counts(second)]
+    factors = [None if k is None else k[1] for k in known]
+    if factors[0] is None or factors[1] is None or not _proportional(factors[0], factors[1]):
+        # counts whose factor varies from bin to bin (e.g. divided by unequal widths)
+        # compare like their contents only with counts of the same factors; otherwise
+        # they enter as weighted, with their contents and variances
+        known = [k if k is not None and _proportional(k[1], k[1][:1]) else None for k in known]
+    counts = [None if k is None else k[0] for k in known]
     swapped = counts[0] is None and counts[1] is not None  # UW needs the counts first
     one, two = (second, first) if swapped else (first, second)
     n1, n2 = counts[::-1] if swapped else counts
@@ -177,17 +201,22 @@ def _chi2(first: Histogram, second: Histogram) -> GoodnessOfFit:
     )
 
 
-def _counts(histogram: Histogram) -> FloatArray | None:
-    """Return the counts behind ``histogram``, or ``None`` if it is not known to hold any.
+def _counts(histogram: Histogram) -> tuple[FloatArray, FloatArray] | None:
+    """Return the counts behind ``histogram`` and their factors, or ``None`` without known counts.
 
     A histogram with ``stat_errors`` holds no counts here: its errors are its own.
     """
     if histogram._provenance.errors is not None:
         return None
     try:
-        return histogram.counts()[0]
+        return histogram.counts()
     except ValueError:
         return None
+
+
+def _proportional(factor: FloatArray, other: FloatArray) -> bool:
+    """Whether the factors of two sets of counts differ by one overall scale in every bin."""
+    return bool(np.allclose(factor * other[0], other * factor[0], rtol=1e-12, atol=0.0))
 
 
 def _variances(histogram: Histogram) -> FloatArray:
