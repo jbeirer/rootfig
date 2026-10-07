@@ -149,6 +149,41 @@ w.Write()
 f.Close()
 ```
 
+`tests/test_goodness.py` pins ROOT 6.40's `TH1::Chi2TestX` and
+`TH1::KolmogorovTest` for the histograms defined at its top (`COUNTS_A`, ...).
+Rerun to check them against another ROOT version (PyROOT):
+
+```python
+import ctypes, math
+import ROOT
+
+
+def th1(name, values, variances=None):  # Sumw2 only for weighted contents
+    h = ROOT.TH1D(name, name, len(values), 0.0, float(len(values)))
+    if variances is not None:
+        h.Sumw2()
+    for i, v in enumerate(values, start=1):
+        h.SetBinContent(i, v)
+        if variances is not None:
+            h.SetBinError(i, math.sqrt(variances[i - 1]))
+    return h
+
+
+def chi2_test(h1, h2, option):  # (chi2, ndf, p-value, igood)
+    chi2, ndf, igood = ctypes.c_double(), ctypes.c_int(), ctypes.c_int()
+    p = h1.Chi2TestX(h2, chi2, ndf, igood, option)
+    return chi2.value, ndf.value, p, igood.value
+
+
+a, b = th1("a", COUNTS_A), th1("b", COUNTS_B)
+data, mc = th1("data", DATA), th1("mc", MC, MC_VARIANCES)
+print(chi2_test(a, b, "UU"), chi2_test(data, mc, "UW"))
+scaled = th1("bs", [0.37 * n for n in COUNTS_B], [0.37**2 * n for n in COUNTS_B])
+print(chi2_test(a, scaled, "UU NORM"))
+print(chi2_test(th1("w1", W1, W1_VARIANCES), th1("w2", W2, W2_VARIANCES), "WW"))
+print(a.KolmogorovTest(b), a.KolmogorovTest(b, "M"))  # likewise for the other pairs
+```
+
 ## Figures and the gallery
 
 The `examples/gallery` package is both the showcase and the image-regression

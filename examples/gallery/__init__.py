@@ -240,6 +240,32 @@ def pull(mc: list[rf.Sample], data: rf.Sample, met: rf.Variable, style: rf.Style
 
 
 @example(
+    "goodness_of_fit",
+    "Goodness of fit: ROOT's chi-square test of data against the prediction",
+    section=SIMULATION_AND_DATA,
+)
+def goodness_of_fit(
+    mc: list[rf.Sample], data: rf.Sample, pt: rf.Variable, style: rf.Style
+) -> rf.Plot:
+    """``goodness_of_fit=True`` runs ROOT's ``TH1::Chi2Test`` of the data against the
+    stacked prediction, a test of their shapes, and writes the chi-square per degree of
+    freedom and the p-value under the label. ``"chi2-absolute"`` also tests the
+    normalisation, with the systematic uncertainties, and ``"ks"`` is ROOT's Kolmogorov
+    test. ``p.goodness_of_fit`` holds the results: the test, how each side entered and
+    ROOT's warnings about bins with few entries."""
+    return rf.plot(
+        mc,
+        pt,
+        observed=data,
+        stack=True,
+        panel="ratio",
+        data_errors="auto",
+        goodness_of_fit=True,
+        style=style,
+    )
+
+
+@example(
     "poisson_data",
     "Low counts: Poisson intervals for data",
     section=SIMULATION_AND_DATA,

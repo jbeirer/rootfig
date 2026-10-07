@@ -1,4 +1,4 @@
-"""Legends, statistics boxes and free text on axes."""
+"""Legends, statistics boxes, goodness-of-fit lines and free text on axes."""
 
 from __future__ import annotations
 
@@ -14,10 +14,11 @@ from matplotlib.offsetbox import AnchoredText
 from matplotlib.text import Text
 
 from rootfig.histograms.build import Histogram
+from rootfig.histograms.goodness import GoodnessOfFit
 from rootfig.model.style import Style
 from rootfig.plotting.style import foreground, legend_location
 
-__all__ = ["add_legend", "add_stats_box", "add_text"]
+__all__ = ["add_legend", "add_stats_box", "add_text", "fit_lines"]
 
 _LOCATIONS = {
     "upper right",
@@ -133,6 +134,40 @@ def add_stats_box(
             step = extent.height + 0.02
             y = y - step if va == "top" else y + step
     return texts
+
+
+def fit_lines(results: Sequence[GoodnessOfFit], *, chi2: str = "quotient") -> list[str]:
+    """Return one text line per goodness-of-fit result: chi-square per ndf and p-value.
+
+    ``chi2="quotient"`` writes the chi-square per ndf as a number (``1.15``),
+    ``"fraction"`` as the two (``33.5/29``). With several results, each line
+    starts with the label of the histogram tested.
+
+    Raises
+    ------
+    ValueError
+        For another ``chi2``, also without results.
+    """
+    if chi2 not in ("quotient", "fraction"):
+        msg = f"the chi-square is written as a 'quotient' or a 'fraction', not {chi2!r}"
+        raise ValueError(msg)
+    lines = []
+    for result in results:
+        p_value = f"p = {result.p_value:.3g}"
+        if p_value == "p = 1" and result.p_value < 1:  # not rounded up to certainty
+            p_value = "p > 0.999"
+        if result.ndf is None:
+            line = f"KS {p_value}"
+        else:
+            name = r"$\chi^2_\mathrm{abs}$" if result.test == "chi2-absolute" else r"$\chi^2$"
+            value = f"{result.chi2_ndf:.2f}"
+            if chi2 == "fraction":
+                size = abs(result.statistic)
+                decimals = 0 if size >= 100 else 1 if size >= 10 else 2
+                value = f"{result.statistic:.{decimals}f}/{result.ndf}"
+            line = f"{name}/ndf = {value}, {p_value}"
+        lines.append(f"{result.label}: {line}" if len(results) > 1 else line)
+    return lines
 
 
 def _renderer(ax: Axes) -> Any:

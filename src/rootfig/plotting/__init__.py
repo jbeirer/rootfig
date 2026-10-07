@@ -1,6 +1,6 @@
 """Rendering histograms with matplotlib and mplhep."""
 
-from rootfig.plotting.annotations import add_legend, add_stats_box, add_text
+from rootfig.plotting.annotations import add_legend, add_stats_box, add_text, fit_lines
 from rootfig.plotting.correlation import correlation_figsize, draw_correlation
 from rootfig.plotting.figure import (
     AxesLike,
@@ -78,6 +78,7 @@ __all__ = [
     "finish_axes",
     "finish_figure",
     "finishing_together",
+    "fit_lines",
     "fold_flow_bins",
     "foreground",
     "label_flow_bins",

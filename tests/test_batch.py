@@ -516,6 +516,14 @@ class TestPassthrough:
         assert from_book.panel_ax is not None
         np.testing.assert_allclose(from_book.comparisons[0].values, direct.comparisons[0].values)
 
+    def test_goodness_of_fit_is_a_drawing_keyword(self, samples: list[rf.Sample]) -> None:
+        book = rf.PlotBook(samples, [X], variants={"plain": {}, "fit": {"goodness_of_fit": "ks"}})
+        results = {task.stem: result for task, result in book.plots()}
+        assert results["x__plain"].goodness_of_fit == []
+        (fit,) = results["x__fit"].goodness_of_fit
+        (direct,) = rf.plot(samples, X, goodness_of_fit="ks").goodness_of_fit
+        assert (fit.label, fit.reference, fit.p_value) == ("B", "A", direct.p_value)
+
     def test_histogram_objects(self) -> None:
         h = hist.Hist(hist.axis.Regular(4, 0, 1, name="x"), storage=hist.storage.Weight())
         h.fill([0.1, 0.5, 0.6])

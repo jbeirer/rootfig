@@ -17,7 +17,14 @@ from rootfig.histograms import uncertainty
 
 if TYPE_CHECKING:
     from rootfig._typing import FloatArray
-    from rootfig.histograms import Comparison, Efficiency, Histogram, Profile, Uncertainty
+    from rootfig.histograms import (
+        Comparison,
+        Efficiency,
+        GoodnessOfFit,
+        Histogram,
+        Profile,
+        Uncertainty,
+    )
     from rootfig.model import Variable
 
 __all__ = ["Plot", "normalize_formats"]
@@ -56,6 +63,9 @@ class Plot:
     comparisons
         The :class:`~rootfig.histograms.Comparison` objects drawn in the lower
         panel, one per numerator.
+    goodness_of_fit
+        The :class:`~rootfig.histograms.GoodnessOfFit` of each histogram tested
+        against its reference (``plot(goodness_of_fit=...)``).
     variable
         The :class:`~rootfig.model.Variable` (x axis) if known; used for default
         file names.
@@ -73,6 +83,7 @@ class Plot:
     panel_ax_right: Axes | None = None
     histograms: list[Histogram] = field(default_factory=list)
     comparisons: list[Comparison] = field(default_factory=list)
+    goodness_of_fit: list[GoodnessOfFit] = field(default_factory=list)
     variable: Variable | None = None
     matrix: FloatArray | None = None
     efficiencies: list[Efficiency] = field(default_factory=list)
