@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from rootfig.expressions import Expression, parse
+from rootfig.expressions.parser import validate
 
 __all__ = ["Cut", "CutLike", "as_cut"]
 
@@ -26,6 +27,8 @@ class Cut:
     ----------
     expression
         A rootfig expression producing booleans (see :mod:`rootfig.expressions`).
+        Its syntax is checked here; the functions it calls are looked up when it
+        is used, among the call's ``functions=``.
     label
         Optional short description for legends or logging.
     """
@@ -34,7 +37,7 @@ class Cut:
     label: str | None = None
 
     def __post_init__(self) -> None:
-        parse(self.expression)  # validate early
+        validate(self.expression)
 
     def __str__(self) -> str:
         return self.expression

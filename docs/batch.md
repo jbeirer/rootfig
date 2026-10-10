@@ -78,7 +78,10 @@ prepared histograms. With the signal last and `panel="s/sqrt(b)"` in
 `plot_kwargs`, both show the same significance panel.
 
 Every other keyword of `rf.plot` (`observed=`, `normalize=`, `panel=`,
-`systematics=`, `style=`, ...) goes into `plot_kwargs` or a variant. The keyword
+`systematics=`, `style=`, ...) goes into `plot_kwargs` or a variant, also
+`functions=`: with `plot_kwargs={"functions": functions}` every variable and
+selection of the book may call [functions of your own](expressions.md#functions-of-your-own),
+and the branches they are called on are read with the rest of the batch. The keyword
 names are checked against `rf.plot`'s signature when the book is built, so a
 misspelt `log_y` is reported, with `logy` as the suggestion, before anything is
 drawn rather than after the first tasks have written their files; the values are

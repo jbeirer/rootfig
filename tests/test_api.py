@@ -3769,3 +3769,154 @@ def test_a_confidence_level_replaces_a_saved_one() -> None:
     p = rf.plot(ERROR_OPTIONS, "poisson", observed=kept, data_errors=0.9)
     assert p.histograms[-1].poisson == 0.9  # the counts are known: any level
     p.close()
+
+
+class TestCustomFunctions:
+    """``functions=`` reaches every expression of a call, and only that call's."""
+
+    FUNCTIONS: ClassVar[dict[str, Any]] = {
+        "halved": lambda values: values / 2,
+        "busy": lambda n: n >= 2,
+    }
+
+    def test_plot_variable_selection_weights_and_systematics(
+        self, signal_file: Path, background_file: Path
+    ) -> None:
+        def plotted(sample_weight: str, **options: Any) -> rf.Plot:
+            samples = [
+                rf.Sample(signal_file, tree="events", label="S", weight=sample_weight),
+                rf.Sample(background_file, tree="events", label="B", weight="weight"),
+            ]
+            return rf.plot(samples, bins=(20, 0, 60), stack=True, **options)
+
+        custom = plotted(
+            "halved(weight)",
+            variable="halved(MET)",
+            selection="busy(nMuon)",
+            weight="halved(MET) > 1",  # combined with the samples' weights as one expression
+            systematics={"w": ("halved(weight) * 2.2", "weight")},
+            functions=self.FUNCTIONS,
+        )
+        builtin = plotted(
+            "weight / 2",
+            variable="MET / 2",
+            selection="nMuon >= 2",
+            weight="MET / 2 > 1",
+            systematics={"w": ("weight / 2 * 2.2", "weight")},
+        )
+        for got, want in zip(custom.histograms, builtin.histograms, strict=True):
+            np.testing.assert_allclose(got.values(), want.values())
+            np.testing.assert_allclose(got.variances(), want.variances())
+            for mine, theirs in zip(got.variations["w"], want.variations["w"], strict=True):
+                np.testing.assert_allclose(mine.values(), theirs.values())
+
+    def test_every_expression_function(self, signal_file: Path) -> None:
+        f, events = self.FUNCTIONS, {"tree": "events"}
+        bins = (10, 0, 50)
+
+        def same(got: Any, want: Any) -> None:
+            np.testing.assert_allclose(np.asarray(got, dtype=float), np.asarray(want, dtype=float))
+
+        same(
+            rf.histogram(signal_file, "halved(MET)", bins=bins, functions=f, **events).values(),
+            rf.histogram(signal_file, "MET / 2", bins=bins, **events).values(),
+        )
+        [custom_hist] = rf.histograms(
+            signal_file, "halved(MET)", selection="busy(nMuon)", bins=bins, functions=f, **events
+        )
+        [builtin_hist] = rf.histograms(
+            signal_file, "MET / 2", selection="nMuon >= 2", bins=bins, **events
+        )
+        same(custom_hist.values(), builtin_hist.values())
+        same(
+            rf.load(
+                signal_file, {"m": "halved(MET)"}, selection="busy(nMuon)", functions=f, **events
+            )["m"],
+            rf.load(signal_file, {"m": "MET / 2"}, selection="nMuon >= 2", **events)["m"],
+        )
+        custom_summary = rf.summarize(signal_file, "halved(MET)", functions=f, **events)
+        builtin_summary = rf.summarize(signal_file, "MET / 2", **events)
+        assert custom_summary.get("halved(MET)").mean == builtin_summary.get("MET / 2").mean
+        same(
+            rf.cutflow(signal_file, ["busy(nMuon)", "halved(MET) > 10"], functions=f, **events)
+            .rows[0]
+            .yields,
+            rf.cutflow(signal_file, ["nMuon >= 2", "MET / 2 > 10"], **events).rows[0].yields,
+        )
+        same(
+            rf.efficiency(
+                signal_file, "halved(MET)", passed="busy(nMuon)", bins=bins, functions=f, **events
+            )
+            .efficiencies[0]
+            .values,
+            rf.efficiency(signal_file, "MET / 2", passed="nMuon >= 2", bins=bins, **events)
+            .efficiencies[0]
+            .values,
+        )
+        same(
+            rf.profile(
+                signal_file, "halved(MET)", "halved(nMuon)", bins=bins, functions=f, **events
+            )
+            .profiles[0]
+            .values,
+            rf.profile(signal_file, "MET / 2", "nMuon / 2", bins=bins, **events).profiles[0].values,
+        )
+        same(
+            rf.plot2d(signal_file, "halved(MET)", "nMuon", bins=bins, functions=f, **events)
+            .histograms[0]
+            .values(),
+            rf.plot2d(signal_file, "MET / 2", "nMuon", bins=bins, **events).histograms[0].values(),
+        )
+        custom_matrix = rf.correlation(
+            signal_file, ["halved(MET)", "nMuon", "event"], functions=f, **events
+        ).matrix
+        builtin_matrix = rf.correlation(signal_file, ["MET / 2", "nMuon", "event"], **events).matrix
+        same(custom_matrix, builtin_matrix)
+        same(rf.evaluate("halved(x)", {"x": ak.Array([2.0, 4.0])}, functions=f), [1.0, 2.0])
+
+    def test_descriptions_built_before_the_call(self, signal_file: Path) -> None:
+        variable = rf.Variable("halved(MET)", bins=(10, 0, 50), label="MET / 2")
+        cut = rf.Cut("busy(nMuon)", label="two muons") & "MET > 5"
+        first, second = (
+            rf.plot(signal_file, variable, tree="events", selection=cut, functions=self.FUNCTIONS)
+            for _ in range(2)  # one mapping, reused
+        )
+        np.testing.assert_array_equal(first.histograms[0].values(), second.histograms[0].values())
+        assert first.histograms[0].values().sum() > 0
+
+    def test_unknown_function_raises_before_reading(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rf.plot(signal_file, "halved(MET)", tree="events", functions=self.FUNCTIONS)
+
+        def unread(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("read")
+
+        for method in ("arrays", "iterate"):
+            monkeypatch.setattr(rf.io.FileSource, method, unread)
+        # a later call sees only its own functions
+        with pytest.raises(rf.ExpressionError, match=r"unknown function 'halved'.*functions="):
+            rf.plot(signal_file, "halved(MET)", tree="events")
+        with pytest.raises(rf.ExpressionError, match="Did you mean halved"):
+            rf.plot(signal_file, "halve(MET)", tree="events", functions=self.FUNCTIONS)
+
+    def test_simultaneous_calls_keep_their_functions(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        arrays = {"x": np.linspace(0.5, 9.5, 10)}
+
+        def run(scale: float) -> tuple[float, Any]:
+            hist_ = rf.histogram(
+                arrays, "f(x)", bins=(10, 0, 100), functions={"f": lambda v: v * scale}
+            )
+            return scale, hist_.values()
+
+        with ThreadPoolExecutor(8) as pool:
+            results = list(pool.map(run, [1.0, 10.0] * 20))
+        expected = {
+            scale: rf.histogram(arrays, f"x * {scale}", bins=(10, 0, 100)).values()
+            for scale in (1.0, 10.0)
+        }
+        assert not np.array_equal(expected[1.0], expected[10.0])
+        for scale, values in results:
+            np.testing.assert_array_equal(values, expected[scale])

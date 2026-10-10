@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import difflib
 import re
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import CodeType
 from typing import Any, Final
@@ -14,18 +14,24 @@ import awkward as ak
 import numpy as np
 
 from rootfig.errors import ExpressionError, MissingBranchError
+from rootfig.expressions.custom import (
+    RESERVED_PREFIX,
+    active_functions,
+    check_functions,
+    function_scope,
+)
 from rootfig.expressions.functions import CONSTANTS, FUNCTIONS
 
-__all__ = ["Expression", "ExpressionLike", "evaluate", "parse", "quote_name"]
+__all__ = ["Expression", "ExpressionLike", "evaluate", "parse", "quote_name", "validate"]
 
 
 # --------------------------------------------------------------------------------------
 # Parsing and validation
 # --------------------------------------------------------------------------------------
 
-_FUNCTION_PREFIX: Final = "__rootfig_fn_"
-_BACKTICK_PREFIX: Final = "__rootfig_bt_"
-_NOT_NAME: Final = "__rootfig_not"
+_FUNCTION_PREFIX: Final = f"{RESERVED_PREFIX}fn_"
+_BACKTICK_PREFIX: Final = f"{RESERVED_PREFIX}bt_"
+_NOT_NAME: Final = f"{RESERVED_PREFIX}not"
 _BACKTICK_RE: Final = re.compile(r"`([^`]*)`")
 
 _ALLOWED_BINOPS: Final[dict[type[ast.operator], str]] = {
@@ -74,12 +80,17 @@ class _Rewriter(ast.NodeTransformer):
     """Validate the AST and rewrite Python-only constructs to element-wise ones.
 
     Collects the referenced names into ``self.names`` (in order of first
-    appearance) and the called functions into ``self.functions``.
+    appearance) and the called functions into ``self.functions``. A call must name
+    a built-in function or one of ``known``; with ``known=None`` any name passes,
+    for checking the syntax of an expression whose functions are given later.
     """
 
-    def __init__(self, text: str, backticks: dict[str, str]) -> None:
+    def __init__(
+        self, text: str, backticks: dict[str, str], known: Mapping[str, Callable[..., Any]] | None
+    ) -> None:
         self.text = text
         self.backticks = backticks
+        self.known = known
         self.names: list[str] = []
         self.functions: list[str] = []
 
@@ -184,13 +195,8 @@ class _Rewriter(ast.NodeTransformer):
         if not isinstance(node.func, ast.Name):
             raise self._fail(node.func, "calling anything but a known function by name")
         name = node.func.id
-        if name not in FUNCTIONS:
-            suggestions = difflib.get_close_matches(name, FUNCTIONS, n=3)
-            hint = f" Did you mean {', '.join(suggestions)}?" if suggestions else ""
-            msg = f"unknown function {name!r}.{hint} Available functions: " + ", ".join(
-                sorted(FUNCTIONS)
-            )
-            raise ExpressionError(msg)
+        if self.known is not None and name not in FUNCTIONS and name not in self.known:
+            raise self._unknown(name, self.known)
         if name not in self.functions:
             self.functions.append(name)
         node.func = ast.copy_location(
@@ -226,6 +232,19 @@ class _Rewriter(ast.NodeTransformer):
     def generic_visit(self, node: ast.AST) -> ast.AST:
         raise self._fail(node, f"the construct {type(node).__name__}")
 
+    @staticmethod
+    def _unknown(name: str, known: Mapping[str, Callable[..., Any]]) -> ExpressionError:
+        suggestions = difflib.get_close_matches(name, [*FUNCTIONS, *known], n=3)
+        hint = f" Did you mean {', '.join(suggestions)}?" if suggestions else ""
+        msg = f"unknown function {name!r}.{hint} Available functions: " + ", ".join(
+            sorted(FUNCTIONS)
+        )
+        if known:
+            msg += "; given with functions=: " + ", ".join(sorted(known))
+        else:
+            msg += ". Pass functions of your own with functions={'name': callable}"
+        return ExpressionError(msg)
+
 
 # --------------------------------------------------------------------------------------
 # Public objects
@@ -248,7 +267,9 @@ class Expression:
         are candidate branch names; a name that is not a branch may still
         resolve to a constant (``pi``, ``e``, ``inf``, ``nan``).
     functions
-        Names of the functions called by the expression.
+        Names of the functions called by the expression, built-in or given with
+        ``functions=``. The functions themselves are bound when it is parsed, and two
+        expressions are equal when their text and these functions are.
     """
 
     text: str
@@ -256,6 +277,7 @@ class Expression:
     functions: tuple[str, ...]
     _code: CodeType = field(repr=False, compare=False)
     _backticks: Mapping[str, str] = field(repr=False, compare=False, default_factory=dict)
+    _callables: tuple[Callable[..., Any], ...] = field(repr=False, default=())
 
     def __str__(self) -> str:
         return self.text
@@ -317,16 +339,18 @@ class Expression:
         lookup = _as_mapping(arrays)
         self.required_branches(list(lookup.keys()))
         namespace: dict[str, Any] = {
-            f"{_FUNCTION_PREFIX}{name}": fn for name, fn in FUNCTIONS.items()
+            f"{_FUNCTION_PREFIX}{name}": fn
+            for name, fn in zip(self.functions, self._callables, strict=True)
         }
         namespace[_NOT_NAME] = np.logical_not
         for mangled, original in self._backticks.items():
             namespace[mangled] = (
                 _bind(lookup[original]) if original in lookup else CONSTANTS[original]
             )
-        # A name may occur both quoted and unquoted (``x + `x```); bind both spellings.
+        # A name may occur both quoted and unquoted (``x + `x```); bind both spellings. A
+        # reserved name is only ever quoted, and bare it would replace one of rootfig's own.
         for name in self.names:
-            if name.isidentifier():
+            if name.isidentifier() and not name.startswith(RESERVED_PREFIX):
                 namespace[name] = _bind(lookup[name]) if name in lookup else CONSTANTS[name]
         try:
             result = eval(self._code, {"__builtins__": {}}, namespace)  # validated AST
@@ -342,26 +366,63 @@ ExpressionLike = str | Expression
 """Anything accepted where an expression is expected."""
 
 
-def parse(expression: ExpressionLike) -> Expression:
+def parse(
+    expression: ExpressionLike, *, functions: Mapping[str, Callable[..., Any]] | None = None
+) -> Expression:
     """Parse and validate an expression string.
+
+    Calls may name the built-in functions (:data:`FUNCTIONS`) and those in
+    ``functions``, ``{name: callable}``. Without ``functions``, they are the ones
+    given to the rootfig call this runs in (none outside one). The expression
+    keeps the functions it was parsed with, so an :class:`Expression` is returned
+    as it is, and refused together with ``functions``.
 
     Raises
     ------
     ExpressionError
         If the text is not a single Python expression or uses a disallowed
         construct (unknown functions, string literals, lambdas, comprehensions,
-        conditional expressions, ...). Dotted names such as
-        ``Collection.field.sub`` are read as one branch name (podio/EDM4hep
-        files), not as attribute access; attributes of anything else are rejected.
+        conditional expressions, names beginning with ``__rootfig_`` outside
+        backticks, ...). Dotted names such as ``Collection.field.sub`` are read
+        as one branch name (podio/EDM4hep files), not as attribute access;
+        attributes of anything else are rejected.
     """
     if isinstance(expression, Expression):
+        if functions is not None:
+            msg = (
+                f"expression {expression.text!r} is already parsed with its functions; pass "
+                "its text to parse it with these"
+            )
+            raise ExpressionError(msg)
         return expression
+    return _parse(
+        expression, active_functions() if functions is None else check_functions(functions)
+    )
+
+
+def validate(expression: str) -> None:
+    """Check the syntax of ``expression`` as :func:`parse` does, with any function name allowed.
+
+    For descriptions built before the functions they call are given: the names
+    are resolved when the expression is parsed for use.
+    """
+    _parse(expression, None)
+
+
+def _parse(expression: object, known: Mapping[str, Callable[..., Any]] | None) -> Expression:
+    """Parse ``expression``, calling the built-in functions and ``known`` (any name if ``None``)."""
     if not isinstance(expression, str):  # runtime guard for untyped callers
-        msg = f"expression must be a string, got {type(expression).__name__}"  # type: ignore[unreachable]
+        msg = f"expression must be a string, got {type(expression).__name__}"
         raise ExpressionError(msg)
     text = expression.strip()
     if not text:
         msg = "expression is empty"
+        raise ExpressionError(msg)
+    if RESERVED_PREFIX in _BACKTICK_RE.sub("", text):
+        msg = (
+            f"names beginning with {RESERVED_PREFIX!r} are reserved for rootfig, in {text!r}; "
+            "write a branch of such a name in backticks"
+        )
         raise ExpressionError(msg)
     mangled, backticks = _mangle_backticks(text)
     try:
@@ -369,16 +430,22 @@ def parse(expression: ExpressionLike) -> Expression:
     except SyntaxError as exc:
         msg = f"invalid syntax in expression {text!r}: {exc.msg}"
         raise ExpressionError(msg) from exc
-    rewriter = _Rewriter(mangled, backticks)
+    rewriter = _Rewriter(mangled, backticks, known)
     tree = rewriter.visit(tree)
     ast.fix_missing_locations(tree)
     code = compile(tree, "<rootfig expression>", "eval")
+    callables = (
+        ()
+        if known is None
+        else tuple(FUNCTIONS[n] if n in FUNCTIONS else known[n] for n in rewriter.functions)
+    )
     return Expression(
         text=text,
         names=tuple(rewriter.names),
         functions=tuple(rewriter.functions),
         _code=code,
         _backticks=backticks,
+        _callables=callables,
     )
 
 
@@ -407,13 +474,18 @@ def quote_name(name: str) -> str | None:
 
 
 def evaluate(
-    expression: ExpressionLike, arrays: Mapping[str, Any] | ak.Array, *, length: int | None = None
+    expression: ExpressionLike,
+    arrays: Mapping[str, Any] | ak.Array,
+    *,
+    length: int | None = None,
+    functions: Mapping[str, Callable[..., Any]] | None = None,
 ) -> ak.Array:
     """Parse (if needed) and evaluate ``expression`` on ``arrays``.
 
     This is a convenience wrapper around :func:`parse` and
     :meth:`Expression.evaluate`; ``length`` sizes constant expressions when
-    ``arrays`` is empty.
+    ``arrays`` is empty. ``functions`` (``{name: callable}``) may be called
+    besides the built-in ones; like any rootfig call, this one sees no others.
 
     Examples
     --------
@@ -423,8 +495,11 @@ def evaluate(
     [[False, True], [], [True]]
     >>> evaluate("count(pt)", arrays).tolist()
     [2, 0, 1]
+    >>> evaluate("twice(count(pt))", arrays, functions={"twice": lambda x: 2 * x}).tolist()
+    [4, 0, 2]
     """
-    return parse(expression).evaluate(arrays, length=length)
+    with function_scope(functions):
+        return parse(expression, functions=functions).evaluate(arrays, length=length)
 
 
 # --------------------------------------------------------------------------------------

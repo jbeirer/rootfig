@@ -8,7 +8,7 @@ the branches of several variables together.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from functools import partial
@@ -27,6 +27,7 @@ from rootfig.api._hists import (
 )
 from rootfig.api._panel import fit_results
 from rootfig.api._panel import resolve as resolve_panel
+from rootfig.expressions.custom import function_scope
 from rootfig.histograms import (
     ComparisonKind,
     DataErrors,
@@ -159,6 +160,7 @@ def plot(
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
     variances_from_contents: bool = False,
+    functions: Mapping[str, Callable[..., Any]] | None = None,
     save: str | None = None,
 ) -> Plot:
     """Histogram a variable from one or more samples and draw it.
@@ -372,6 +374,12 @@ def plot(
         was filled with weights or rescaled, so ``hist`` reports no variances:
         the absolute bin contents are used instead (a warning says so). Fill
         with ``hist.storage.Weight()`` to keep the real uncertainties.
+    functions
+        Functions of your own that the variable, selection and weights may call
+        besides the built-in ones, ``{name: callable}`` (see
+        :mod:`rootfig.expressions`). They are called with the branch arrays of a
+        chunk of events at a time, possibly in several threads at once, so each
+        event's result must depend on that event alone.
     save
         Path to save the figure to (also returned in the :class:`Plot`).
 
@@ -396,6 +404,7 @@ def plot(
         nonfinite=nonfinite,
         systematics=systematics,
         variances_from_contents=variances_from_contents,
+        functions=functions,
     )
     return draw_plot(
         prepared,
@@ -447,6 +456,7 @@ def prepare_plot(
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
     variances_from_contents: bool = False,
+    functions: Mapping[str, Callable[..., Any]] | None = None,
     cache: ReadCache | None = None,
 ) -> PreparedPlot:
     """Read or fill the histograms :func:`plot` draws; see there for the options.
@@ -456,54 +466,55 @@ def prepare_plot(
     (:class:`~rootfig.io.ReadCache`) serves the branch arrays and stored
     histograms it holds and reads the rest, for file sources.
     """
-    objects = histogram_objects(data)
-    if objects is not None:
-        reject_fill_options(
-            "histogram objects",
-            tree=tree,
-            selection=selection,
-            weight=weight,
-            lumi=lumi,
-            nonfinite=nonfinite,
-            systematics=systematics,
-        )
-        var = (
-            None
-            if variable is None
-            else as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
-        )
-        hists = wrap_histograms(objects, label, variances_from_contents=variances_from_contents)
-        if observed is not None:
-            observed_objects = histogram_objects(observed)
-            if observed_objects is None:
-                msg = "observed= must be histogram objects when data are histogram objects"
-                raise TypeError(msg)
-            hists += wrap_histograms(
-                observed_objects, variances_from_contents=variances_from_contents, is_data=True
+    with function_scope(functions):
+        objects = histogram_objects(data)
+        if objects is not None:
+            reject_fill_options(
+                "histogram objects",
+                tree=tree,
+                selection=selection,
+                weight=weight,
+                lumi=lumi,
+                nonfinite=nonfinite,
+                systematics=systematics,
             )
-        require_dimension(hists, 1, "plot")
-        hists = rebin_ready_made(
-            hists,
-            [bins if var is None else var.bins],
-            [range if var is None else var.range],
-        )
-    else:
-        if variable is None:
-            msg = "plot() needs a variable (a branch, expression or stored histogram name)"
-            raise TypeError(msg)
-        items = plot_items(data, tree=tree, label=label, observed=observed)
-        var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
-        hists = build_histograms(
-            items,
-            var,
-            selection=selection,
-            weight=weight,
-            lumi=lumi,
-            nonfinite=nonfinite,
-            systematics=systematics,
-            variances_from_contents=variances_from_contents,
-            cache=cache,
-        )
+            var = (
+                None
+                if variable is None
+                else as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
+            )
+            hists = wrap_histograms(objects, label, variances_from_contents=variances_from_contents)
+            if observed is not None:
+                observed_objects = histogram_objects(observed)
+                if observed_objects is None:
+                    msg = "observed= must be histogram objects when data are histogram objects"
+                    raise TypeError(msg)
+                hists += wrap_histograms(
+                    observed_objects, variances_from_contents=variances_from_contents, is_data=True
+                )
+            require_dimension(hists, 1, "plot")
+            hists = rebin_ready_made(
+                hists,
+                [bins if var is None else var.bins],
+                [range if var is None else var.range],
+            )
+        else:
+            if variable is None:
+                msg = "plot() needs a variable (a branch, expression or stored histogram name)"
+                raise TypeError(msg)
+            items = plot_items(data, tree=tree, label=label, observed=observed)
+            var = as_variable(variable, bins=bins, range=range, label=xlabel, unit=unit)
+            hists = build_histograms(
+                items,
+                var,
+                selection=selection,
+                weight=weight,
+                lumi=lumi,
+                nonfinite=nonfinite,
+                systematics=systematics,
+                variances_from_contents=variances_from_contents,
+                cache=cache,
+            )
     return PreparedPlot(hists, var, xlabel=xlabel, unit=unit, lumi=lumi)
 
 
@@ -528,10 +539,11 @@ def prefetch_plots(
 
     Each entry of ``options`` is a set of :func:`prepare_plot` keywords to read
     for; those deciding what is read (``tree``, ``label``, ``observed``,
-    ``weight``, ``systematics``, ``variances_from_contents``) are used, the others are
-    accepted and ignored. All of them are planned before anything is read, so
-    sets needing different branches, such as two variants with different
-    weights, cost one pass over each file rather than one each.
+    ``weight``, ``systematics``, ``variances_from_contents``, and ``functions``, which
+    the expressions may call) are used, the others are accepted and ignored. All of
+    them are planned before anything is read, so sets needing different branches,
+    such as two variants with different weights, cost one pass over each file
+    rather than one each.
 
     An optimisation only, so it never raises: nothing is read for histogram
     objects, and whatever :func:`prepare_plot` will refuse, an unusable
@@ -544,7 +556,7 @@ def prefetch_plots(
     for option_set in options:
         # Every exception, not only rootfig's: a bad option of one task must not surface
         # while the histograms of another are read ahead, nor stop them being read.
-        with suppress(Exception):
+        with suppress(Exception), function_scope(option_set.get("functions")):
             items = plot_items(
                 data,
                 tree=option_set.get("tree"),

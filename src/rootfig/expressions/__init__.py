@@ -18,11 +18,13 @@ Supported syntax
   functions such as ``abs``, ``sqrt``, ``log``, ``where``, and per-event
   reductions over jagged branches: ``count``, ``sum``, ``min``, ``max``,
   ``mean``, ``any``, ``all``, ``first``.
+* Functions of the caller's own, given as ``functions={name: callable}`` to the
+  rootfig call (or to :func:`parse`).
 * Constants ``pi``, ``e``, ``inf``, ``nan``, ``True``, ``False``.
 
 Everything else (attribute access, lambdas, comprehensions, string literals,
-calls to unknown functions) is rejected at parse time with
-:class:`~rootfig.errors.ExpressionError`.
+calls to unknown functions, names beginning with ``__rootfig_`` outside
+backticks) is rejected at parse time with :class:`~rootfig.errors.ExpressionError`.
 
 The public entry points are :func:`parse`, :class:`Expression`, and
 :func:`evaluate`.

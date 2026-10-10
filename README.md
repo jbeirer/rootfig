@@ -143,8 +143,9 @@ book.save_pdf("zh.pdf")  # rf.ALL in place of the list plots every histogram the
 ## What you can do
 
 - **Select events and objects with readable expressions.** Write cuts such as
-  `count(Jet_pt) >= 2` or `Muon_pt > 20`; event and object selections have
-  explicit rules, and event weights carry through to each selected object.
+  `count(Jet_pt) >= 2` or `Muon_pt > 20`, calling functions of your own where the
+  built-in ones end (`functions={"delta_r": delta_r}`); event and object selections
+  have explicit rules, and event weights carry through to each selected object.
 - **Compare samples with a few keywords.** Overlays, stacks, data points (`√N`
   as ROOT draws them, or Poisson intervals) and a lower panel (ratio, difference, relative difference, asymmetry, pull or
   significance, against a reference you name) share binning and propagate histogram

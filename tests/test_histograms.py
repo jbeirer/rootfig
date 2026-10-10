@@ -24,6 +24,7 @@ from rootfig.errors import (
     SourceError,
     SystematicError,
 )
+from rootfig.expressions.custom import function_scope
 from rootfig.histograms import (
     COMPARISON_KINDS,
     Efficiency,
@@ -2329,6 +2330,35 @@ class TestChunkedFilling:
                     np.testing.assert_array_equal(
                         mine.variances(flow=True), theirs.variances(flow=True)
                     )
+
+    def test_functions_reach_the_workers(
+        self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+
+        callers: set[int] = set()
+
+        def halved(values: Any) -> Any:
+            callers.add(threading.get_ident())
+            return values / 2
+
+        functions = {"halved": halved, "central": lambda eta: abs(eta) < 1.5}
+        sample = Sample(
+            str(signal_file),
+            weight="halved(weight)",
+            systematics={"w": ("halved(weight) * 1.1", "weight")},
+        )
+        variable = Variable("halved(Muon_pt)", bins=(20, 0, 100))
+        with function_scope(functions):
+            [whole] = build_histograms([sample], variable, selection="central(Muon_eta)")
+            self._chunked(monkeypatch)
+            callers.clear()
+            [parts] = build_histograms([sample], variable, selection="central(Muon_eta)")
+        assert callers - {threading.get_ident()}, "the chunks were prepared in worker threads"
+        np.testing.assert_array_equal(parts.values(flow=True), whole.values(flow=True))
+        np.testing.assert_array_equal(parts.variances(flow=True), whole.variances(flow=True))
+        for mine, theirs in zip(parts.variations["w"], whole.variations["w"], strict=True):
+            np.testing.assert_array_equal(mine.values(flow=True), theirs.values(flow=True))
 
     def test_constant_variables_are_chunked_too(
         self, signal_file: Path, monkeypatch: pytest.MonkeyPatch
