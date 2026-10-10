@@ -33,6 +33,8 @@ _FUNCTION_PREFIX: Final = f"{RESERVED_PREFIX}fn_"
 _BACKTICK_PREFIX: Final = f"{RESERVED_PREFIX}bt_"
 _NOT_NAME: Final = f"{RESERVED_PREFIX}not"
 _BACKTICK_RE: Final = re.compile(r"`([^`]*)`")
+# A name beginning with the reserved prefix; ``Jet__rootfig_pt`` merely contains it.
+_RESERVED_NAME_RE: Final = re.compile(rf"(?<!\w){re.escape(RESERVED_PREFIX)}")
 
 _ALLOWED_BINOPS: Final[dict[type[ast.operator], str]] = {
     ast.Add: "+",
@@ -418,7 +420,7 @@ def _parse(expression: object, known: Mapping[str, Callable[..., Any]] | None) -
     if not text:
         msg = "expression is empty"
         raise ExpressionError(msg)
-    if RESERVED_PREFIX in _BACKTICK_RE.sub("", text):
+    if _RESERVED_NAME_RE.search(_BACKTICK_RE.sub("", text)):
         msg = (
             f"names beginning with {RESERVED_PREFIX!r} are reserved for rootfig, in {text!r}; "
             "write a branch of such a name in backticks"

@@ -520,3 +520,11 @@ class TestReservedNames:
         assert expr.evaluate(arrays).tolist() == [11.0, 22.0]
         assert evaluate("`__rootfig_not` & (not (x > 0))", arrays).tolist() == [True, False]
         assert evaluate("`a-b` + `__rootfig_bt_0`", arrays).tolist() == [101.0, 202.0]
+
+    def test_names_containing_the_prefix_are_not_reserved(self) -> None:
+        arrays = {"Jet__rootfig_pt": ak.Array([1.0, -2.0]), "x___rootfig_y": ak.Array([3.0, 4.0])}
+        functions = {"my__rootfig_abs": np.abs}
+        expr = parse("my__rootfig_abs(Jet__rootfig_pt) + x___rootfig_y", functions=functions)
+        assert expr.names == ("Jet__rootfig_pt", "x___rootfig_y")
+        assert expr.functions == ("my__rootfig_abs",)
+        assert expr.evaluate(arrays).tolist() == [4.0, 6.0]
