@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import partial
 from typing import Any
 
@@ -10,6 +10,7 @@ import numpy as np
 
 from rootfig.api._common import style_for
 from rootfig.api._panel import PanelPlan, resolve_points
+from rootfig.expressions.custom import function_scope
 from rootfig.histograms import (
     ONE_SIGMA,
     Comparison,
@@ -94,6 +95,7 @@ def efficiency(
     interval: EfficiencyInterval = "auto",
     show_empty: bool = False,
     nonfinite: NonFinitePolicy = "drop",
+    functions: Mapping[str, Callable[..., Any]] | None = None,
     save: str | None = None,
 ) -> Plot:
     """Plot the fraction of entries passing ``passed`` as a function of ``variable``.
@@ -135,6 +137,9 @@ def efficiency(
     asymmetry. ``panel_ylim`` and ``panel_label`` set its range and y label, and
     ``Plot.comparisons`` holds the :class:`~rootfig.histograms.Comparison` objects.
 
+    ``functions`` (``{name: callable}``) are functions of your own the variable,
+    ``selection`` and ``passed`` may call, as in :func:`plot`.
+
     Examples
     --------
     >>> rf.efficiency(
@@ -154,12 +159,13 @@ def efficiency(
     # the sample's scale and luminosity factor cancel in a ratio: left out, unweighted entries
     # stay unweighted, and a zero or negative factor changes nothing
     options: dict[str, Any] = {"weight": weight, "nonfinite": nonfinite, "scaled": False}
-    totals = [load_columns(s, [var], selection=selection, **options) for s in samples]
-    axis = resolve_axis(
-        var, [c.values for c in totals], name=var.safe_name, weights=[c.weights for c in totals]
-    )
-    fixed = var.replace(bins=axis)  # the same binning for the numerators
-    passing = [load_columns(s, [fixed], selection=numerator_cut, **options) for s in samples]
+    with function_scope(functions):
+        totals = [load_columns(s, [var], selection=selection, **options) for s in samples]
+        axis = resolve_axis(
+            var, [c.values for c in totals], name=var.safe_name, weights=[c.weights for c in totals]
+        )
+        fixed = var.replace(bins=axis)  # the same binning for the numerators
+        passing = [load_columns(s, [fixed], selection=numerator_cut, **options) for s in samples]
     pass_hists = [fill([axis], c) for c in passing]
     efficiencies = [
         efficiency_of(
@@ -279,6 +285,7 @@ def profile(
     figsize: tuple[float, float] | None = None,
     ax: AxesLike = None,
     nonfinite: NonFinitePolicy = "drop",
+    functions: Mapping[str, Callable[..., Any]] | None = None,
     save: str | None = None,
 ) -> Plot:
     """Plot the mean (or standard deviation) of ``y`` in bins of ``x``, per sample.
@@ -297,7 +304,8 @@ def profile(
     ``Plot.profiles``. ``panel``, ``reference``, ``panel_ylim`` and
     ``panel_label`` add a lower panel comparing the profiles, as for
     :func:`efficiency` (``panel="difference"`` compares the response or
-    resolution of two configurations).
+    resolution of two configurations). ``functions`` (``{name: callable}``) are
+    functions of your own the expressions may call, as in :func:`plot`.
 
     Examples
     --------
@@ -315,12 +323,18 @@ def profile(
     var_y = as_variable(y)
     logx = var_x.log if logx is None else logx
     logy = var_y.log if logy is None else logy
-    columns = [
-        load_columns(
-            s, [var_x, var_y], selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
-        )
-        for s in samples
-    ]
+    with function_scope(functions):
+        columns = [
+            load_columns(
+                s,
+                [var_x, var_y],
+                selection=selection,
+                weight=weight,
+                lumi=lumi,
+                nonfinite=nonfinite,
+            )
+            for s in samples
+        ]
     axis = resolve_axis(
         var_x,
         [c.arrays[0] for c in columns],

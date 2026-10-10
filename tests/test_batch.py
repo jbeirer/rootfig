@@ -845,6 +845,7 @@ class TestBatching:
             "label",
             "xlabel",
             "unit",
+            "functions",
         }
         assert prepare <= batch._PREPARE_KEYWORDS
         draw = {"logy", "logx", "normalize", "stack", "style", "text", "stats"}
@@ -944,6 +945,27 @@ class TestBatching:
         assert sorted(by_stem["MET__varied"].histograms[0].variations) == ["scale"]
         for task, result in results:
             assert_same_plot(result, rf.plot(files, task.variable, **task.kwargs))
+
+    def test_functions_of_the_book_and_its_variants(
+        self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads = _reads(monkeypatch)
+        book = rf.PlotBook(
+            files,
+            [rf.Variable("scaled(MET)", bins=(10, 0, 300), name="met"), "Muon_pt"],
+            selections={"busy": "scaled(nMuon) >= 4"},
+            variants={"twice": {}, "thrice": {"functions": {"scaled": lambda v: 3 * v}}},
+            plot_kwargs={"functions": {"scaled": lambda v: 2 * v}},
+        )
+        results = {task.stem: (task, result) for task, result in book.plots()}
+        # the branches the functions are called on were read ahead with the rest
+        assert len(reads) == 2
+        assert all(set(call) == {"MET", "Muon_pt", "nMuon", "weight"} for call in reads)
+        for task, result in results.values():
+            direct = rf.plot(files, task.variable, selection=task.selection, **task.kwargs)
+            assert_same_plot(result, direct)
+        twice, thrice = (results[f"met__busy__{v}"][1] for v in ("twice", "thrice"))
+        assert not np.array_equal(twice.histograms[0].values(), thrice.histograms[0].values())
 
     def test_normalisation_is_a_drawing_variant(
         self, files: list[rf.Sample], monkeypatch: pytest.MonkeyPatch

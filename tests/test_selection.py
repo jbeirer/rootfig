@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 
 from rootfig.errors import IncompatibleWeightError, RootfigWarning, SelectionError
+from rootfig.expressions import parse
+from rootfig.expressions.custom import function_scope
 from rootfig.selection import Columns, depth_of, prepare
 from rootfig.selection.columns import same_structure
 
@@ -470,6 +472,54 @@ class TestUnitWeights:
         ]
         assert Columns.concatenate(halves).weighted
         assert not Columns.concatenate([halves[0], halves[0]]).weighted
+
+
+class TestCustomFunctions:
+    """Functions of the caller's own follow the same per-event/per-object rules."""
+
+    FUNCTIONS: ClassVar[dict[str, Any]] = {
+        "central": lambda eta: abs(eta) < 1.0,
+        "busy": lambda n: n >= 2,
+        "halved": lambda values: values / 2,
+        "numbers": lambda n: n * 1,
+        "first_two": lambda values: values[:2] > 0,
+    }
+
+    def test_object_cut_masks_objects(self, arrays: dict[str, ak.Array]) -> None:
+        with function_scope(self.FUNCTIONS):
+            cols = prepare(arrays, "halved(jet_pt)", selection="central(jet_eta)")
+        assert cols.values.tolist() == [5.0, 2.5, 30.0]
+        assert cols.n_selected_events == 2
+
+    def test_event_cut_keeps_whole_events(self, arrays: dict[str, ak.Array]) -> None:
+        with function_scope(self.FUNCTIONS):
+            cols = prepare(arrays, "jet_pt", selection="busy(njet)", weight="halved(w)")
+        assert cols.values.tolist() == [10.0, 30.0, 5.0, 60.0, 70.0]
+        assert cols.weights is not None
+        assert cols.weights.tolist() == [0.25, 0.25, 2.0, 2.0, 2.0]
+
+    def test_parsed_expressions_carry_their_functions(self, arrays: dict[str, ak.Array]) -> None:
+        variable = parse("halved(met)", functions=self.FUNCTIONS)
+        cut = parse("busy(njet)", functions=self.FUNCTIONS)
+        assert prepare(arrays, variable, selection=cut).values.tolist() == [5.0, 20.0]
+
+    @pytest.mark.parametrize(
+        ("options", "error", "match"),
+        [
+            ({"weight": "halved(el_pt)"}, IncompatibleWeightError, "different structure"),
+            ({"selection": "numbers(njet)"}, SelectionError, "must be boolean"),
+            ({"selection": "first_two(met)"}, SelectionError, "different numbers of events"),
+        ],
+    )
+    def test_incompatible_results(
+        self,
+        arrays: dict[str, ak.Array],
+        options: dict[str, str],
+        error: type[Exception],
+        match: str,
+    ) -> None:
+        with function_scope(self.FUNCTIONS), pytest.raises(error, match=match):
+            prepare(arrays, "jet_pt" if "weight" in options else "met", **options)
 
 
 class TestEventWeightsPolicy:

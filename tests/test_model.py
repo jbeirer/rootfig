@@ -22,6 +22,7 @@ from rootfig.errors import (
     SourceError,
     SystematicError,
 )
+from rootfig.expressions.custom import function_scope
 from rootfig.io import ArraySource, FileSource
 from rootfig.model import (
     Cut,
@@ -55,6 +56,13 @@ class TestCut:
     def test_invalid_expression(self) -> None:
         with pytest.raises(ExpressionError):
             Cut("x >")
+
+    def test_functions_are_resolved_on_use(self) -> None:
+        cut = Cut("delta_r(a, b) > 0.4") & "x > 1"  # built before its functions are given
+        with pytest.raises(ExpressionError, match="unknown function 'delta_r'"):
+            cut.parsed()
+        with function_scope({"delta_r": np.hypot}):
+            assert cut.parsed().functions == ("delta_r",)
 
     def test_composition(self) -> None:
         a, b = Cut("x > 1", label="A"), Cut("y < 2", label="B")
@@ -94,6 +102,15 @@ class TestVariable:
     def test_invalid_expression(self) -> None:
         with pytest.raises(ExpressionError):
             Variable("a +")
+        with pytest.raises(ExpressionError, match="reserved"):
+            Variable("__rootfig_x")
+
+    def test_functions_are_resolved_on_use(self) -> None:
+        var = Variable("delta_phi(a, b)", bins=10)
+        with pytest.raises(ExpressionError, match="unknown function 'delta_phi'"):
+            var.parsed()
+        with function_scope({"delta_phi": np.subtract}):
+            assert var.parsed().names == ("a", "b")
 
     @pytest.mark.parametrize(
         "bins",
@@ -848,6 +865,9 @@ class TestSystematic:
     def test_invalid_forms(self, value: Any, message: str) -> None:
         with pytest.raises(SystematicError, match=message):
             as_systematics({"s": value})
+
+    def test_weight_calling_functions_given_later(self) -> None:
+        assert as_systematics({"sf": ("w * sf(x)", "w")})["sf"].up == "w * sf(x)"
 
     def test_invalid_mapping_and_kind(self) -> None:
         with pytest.raises(SystematicError, match="non-empty strings"):

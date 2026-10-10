@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from rootfig.expressions.custom import function_scope
 from rootfig.histograms import (
     ONE_SIGMA,
     CutflowTable,
@@ -81,8 +82,12 @@ def summarize(
     lumi: float | str | None = None,
     label: str | Sequence[str] | None = None,
     nonfinite: NonFinitePolicy = "drop",
+    functions: Mapping[str, Callable[..., Any]] | None = None,
 ) -> SummaryTable:
     """Compute entries, mean, standard deviation, skewness, ... for variables and samples.
+
+    The options work as in :func:`plot`, ``functions`` (``{name: callable}``, functions
+    of your own the expressions may call) included.
 
     Examples
     --------
@@ -97,9 +102,10 @@ def summarize(
     rows: list[tuple[str, str, Summary]] = []
     for sample in samples:
         # One read per sample: the branches of all variables are fetched together.
-        per_variable = load_columns_each(
-            sample, var_list, selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
-        )
+        with function_scope(functions):
+            per_variable = load_columns_each(
+                sample, var_list, selection=selection, weight=weight, lumi=lumi, nonfinite=nonfinite
+            )
         for var, columns in zip(var_list, per_variable, strict=True):
             rows.append((sample.label, as_variable(var).expression, summarize_columns(columns)))
     return SummaryTable(tuple(rows))
@@ -116,12 +122,13 @@ def cutflow(
     nonfinite: NonFinitePolicy = "drop",
     interval: EfficiencyInterval = "auto",
     cl: float = ONE_SIGMA,
+    functions: Mapping[str, Callable[..., Any]] | None = None,
 ) -> CutflowTable:
     """Count events and weighted yields after each successive cut, per sample.
 
     The first row holds all events (after the sample's own selection, if any);
     every further row applies one more cut. Per-object cuts pass an event when
-    any object passes. ``weight``, ``lumi`` and ``nonfinite`` work as in
+    any object passes. ``weight``, ``lumi``, ``nonfinite`` and ``functions`` work as in
     :func:`plot`: events with a ``nan``/``inf`` weight are excluded from all
     steps with a warning, or raise for ``nonfinite="error"``. Yields carry
     ``sqrt(sum w^2)``; efficiencies carry the confidence interval ``interval``
@@ -143,11 +150,11 @@ def cutflow(
     >>> table.get("Signal").efficiency_errors  # (down, up)  # doctest: +SKIP
     """
     samples = as_samples(data, tree=tree, labels=label)
-    return CutflowTable(
-        tuple(
+    with function_scope(functions):
+        flows = [
             cutflow_of(
                 s, cuts, weight=weight, lumi=lumi, nonfinite=nonfinite, interval=interval, cl=cl
             )
             for s in samples
-        )
-    )
+        ]
+    return CutflowTable(tuple(flows))

@@ -735,6 +735,9 @@ their statistics are the same as from reading everything at once.
   cores a batch job was given; `ROOTFIG_THREADS=1` decompresses and prepares in
   the calling thread. uproot fetches the file contents in a thread or two of its
   own either way, which do little but wait for the data.
+- [Functions of your own](expressions.md#functions-of-your-own) (`functions=`)
+  are called in these threads, a chunk of events at a time, so they must treat
+  each event on its own.
 - An explicit range (`bins=(50, 0, 200)`, or `range=(low, high)`) skips range
   inference, which takes two medians over all the values of every sample.
 - Many plots of the same files are fastest as a [`PlotBook`](batch.md), which

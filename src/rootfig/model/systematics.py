@@ -9,7 +9,7 @@ from typing import Any, Literal, TypeAlias
 
 from rootfig._mapping import FrozenMapping
 from rootfig.errors import ExpressionError, SystematicError
-from rootfig.expressions import parse
+from rootfig.expressions.parser import validate
 
 __all__ = ["Systematic", "SystematicKind", "SystematicLike", "as_systematics"]
 
@@ -228,7 +228,7 @@ def _check_expression(expression: Any) -> str:
         msg = f"the weight must be an expression string, got {expression!r}"
         raise SystematicError(msg)
     try:
-        parse(expression)
+        validate(expression)
     except ExpressionError as exc:
         msg = f"the weight {expression!r} is not a valid expression: {exc}"
         raise SystematicError(msg) from exc

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import awkward as ak
@@ -11,6 +11,7 @@ from rootfig._typing import Hist
 from rootfig.api._common import single_sample
 from rootfig.errors import SelectionError, SourceError
 from rootfig.expressions import parse
+from rootfig.expressions.custom import function_scope
 from rootfig.histograms import (
     Histogram,
     NormalizeSpec,
@@ -43,6 +44,7 @@ def load(
     selection: CutLike | None = None,
     entry_start: int | None = None,
     entry_stop: int | None = None,
+    functions: Mapping[str, Callable[..., Any]] | None = None,
 ) -> ak.Array:
     """Read branches (or evaluate expressions) into an Awkward record array.
 
@@ -65,6 +67,9 @@ def load(
         would otherwise be taken as an index array; write ``"flag != 0"``).
     entry_start, entry_stop
         Entry range to read (ignored for a ``Sample``, which carries its own).
+    functions
+        Functions of your own the expressions and the selection may call,
+        ``{name: callable}``, as in :func:`plot`.
 
     Returns
     -------
@@ -87,22 +92,24 @@ def load(
         msg = "no expressions to load"
         raise SourceError(msg)
 
-    parsed = {name: parse(text) for name, text in fields.items()}
-    cut = combined_selection(sample, selection)
-    arrays, n_events = read_arrays(sample, [*parsed.values(), *([cut.parsed()] if cut else [])])
-    result = {
-        name: expression.evaluate(arrays, length=n_events) for name, expression in parsed.items()
-    }
-    if cut is not None:
-        mask = boolean_mask(cut.parsed(), arrays, length=n_events)
-        if depth_of(mask) != 1:
-            msg = (
-                f"selection {cut.expression!r} is per-object; load() only supports per-event "
-                "selections. Reduce it with any()/all()/count() or apply it inside the "
-                "expressions, e.g. 'Muon_pt[Muon_pt > 20]'"
-            )
-            raise SelectionError(msg)
-        result = {name: array[mask] for name, array in result.items()}
+    with function_scope(functions):
+        parsed = {name: parse(text) for name, text in fields.items()}
+        cut = combined_selection(sample, selection)
+        arrays, n_events = read_arrays(sample, [*parsed.values(), *([cut.parsed()] if cut else [])])
+        result = {
+            name: expression.evaluate(arrays, length=n_events)
+            for name, expression in parsed.items()
+        }
+        if cut is not None:
+            mask = boolean_mask(cut.parsed(), arrays, length=n_events)
+            if depth_of(mask) != 1:
+                msg = (
+                    f"selection {cut.expression!r} is per-object; load() only supports per-event "
+                    "selections. Reduce it with any()/all()/count() or apply it inside the "
+                    "expressions, e.g. 'Muon_pt[Muon_pt > 20]'"
+                )
+                raise SelectionError(msg)
+            result = {name: array[mask] for name, array in result.items()}
     return ak.Array(result)
 
 
@@ -122,6 +129,7 @@ def histograms(
     nonfinite: NonFinitePolicy = "drop",
     systematics: Mapping[str, SystematicLike] | None = None,
     variances_from_contents: bool = False,
+    functions: Mapping[str, Callable[..., Any]] | None = None,
 ) -> list[Histogram]:
     """Fill one :class:`~rootfig.histograms.Histogram` per sample or group with shared binning.
 
@@ -135,16 +143,17 @@ def histograms(
     """
     items = as_plot_items(data, tree=tree, labels=label)
     var = as_variable(variable, bins=bins, range=range)
-    hists = build_histograms(
-        items,
-        var,
-        selection=selection,
-        weight=weight,
-        lumi=lumi,
-        nonfinite=nonfinite,
-        systematics=systematics,
-        variances_from_contents=variances_from_contents,
-    )
+    with function_scope(functions):
+        hists = build_histograms(
+            items,
+            var,
+            selection=selection,
+            weight=weight,
+            lumi=lumi,
+            nonfinite=nonfinite,
+            systematics=systematics,
+            variances_from_contents=variances_from_contents,
+        )
     if normalize is None or normalize is False:
         if normalize_uncertainty != "scale":
             msg = (
@@ -170,6 +179,7 @@ def histogram(
     normalize_uncertainty: NormalizeUncertainty = "scale",
     nonfinite: NonFinitePolicy = "drop",
     variances_from_contents: bool = False,
+    functions: Mapping[str, Callable[..., Any]] | None = None,
 ) -> Hist:
     """Fill a single histogram and return it as a plain ``hist.Hist``.
 
@@ -203,6 +213,7 @@ def histogram(
         normalize_uncertainty=normalize_uncertainty,
         nonfinite=nonfinite,
         variances_from_contents=variances_from_contents,
+        functions=functions,
     )
     if len(results) != 1:
         msg = (

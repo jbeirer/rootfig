@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from rootfig.expressions import Expression, parse
+from rootfig.expressions.parser import validate
 from rootfig.model.binning import DEFAULT_RANGE, Bins, RangeSpec, validate_bins
 from rootfig.model.filenames import check_file_stem, safe_file_stem
 
@@ -22,7 +23,8 @@ class Variable:
     ----------
     expression
         A rootfig expression (a branch name or a formula, see
-        :mod:`rootfig.expressions`).
+        :mod:`rootfig.expressions`). Its syntax is checked here; the functions it
+        calls are looked up when it is used, among the call's ``functions=``.
     bins
         Binning specification, see :data:`Bins`. ``None`` (the default) means no
         preference: :data:`DEFAULT_BINS` bins over a range inferred from the
@@ -68,7 +70,7 @@ class Variable:
     name: str | None = None
 
     def __post_init__(self) -> None:
-        parse(self.expression)
+        validate(self.expression)
         validate_bins(self.bins, self.range)
         if self.name is not None:
             check_file_stem(self.name, what="Variable name")

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import awkward as ak
 import numpy as np
 import pytest
 
 from rootfig.errors import ExpressionError, MissingBranchError
 from rootfig.expressions import CONSTANTS, FUNCTIONS, Expression, evaluate, parse
+from rootfig.expressions.custom import active_functions, function_scope
+from rootfig.expressions.parser import validate
 
 
 @pytest.fixture
@@ -325,6 +329,7 @@ class TestQuoteName:
             ("True", "`True`"),
             ("with space", "`with space`"),
             ("x ", "`x `"),
+            ("__rootfig_x", "`__rootfig_x`"),  # reserved names are only written quoted
         ],
     )
     def test_addresses_exactly_the_name(self, name: str, expression: str) -> None:
@@ -347,3 +352,179 @@ class TestQuoteName:
         arrays = {"jet1_b-tag": ak.Array([0.1, 0.9]), "pi": ak.Array([1.0, 2.0])}
         assert evaluate(quote_name("jet1_b-tag") or "", arrays).tolist() == [0.1, 0.9]
         assert evaluate(quote_name("pi") or "", arrays).tolist() == [1.0, 2.0]
+
+
+def _delta_phi(phi1: Any, phi2: Any) -> Any:
+    return (phi1 - phi2 + np.pi) % (2 * np.pi) - np.pi
+
+
+def _twice(values: Any) -> Any:
+    return 2 * values
+
+
+class TestCustomFunctions:
+    """Functions given with functions=: bound when parsed, never looked up globally."""
+
+    def test_flat_jagged_and_keywords(self, arrays: dict[str, ak.Array]) -> None:
+        def scaled(values: Any, *, factor: float = 1.0) -> Any:
+            return values * factor
+
+        functions = {"twice": _twice, "scaled": scaled}
+        assert evaluate("twice(x) + 1", arrays, functions=functions).tolist() == [3, 5, 7, 9]
+        assert evaluate("twice(pt[pt > 20])", arrays, functions=functions).tolist() == [
+            [60.0],
+            [],
+            [100.0],
+            [120.0, 140.0],
+        ]
+        assert evaluate("scaled(x, factor=3)", arrays, functions=functions).tolist() == [
+            3,
+            6,
+            9,
+            12,
+        ]
+
+    def test_delta_phi_wraps(self) -> None:
+        arrays = {"phi": ak.Array([[3.0, -3.0], [0.5, 0.25]])}
+        result = evaluate("dphi(phi[:, 0], phi[:, 1])", arrays, functions={"dphi": _delta_phi})
+        np.testing.assert_allclose(ak.to_numpy(result), [6.0 - 2 * np.pi, 0.25])
+
+    def test_function_names_are_not_branches(self) -> None:
+        expr = parse("dphi(phi1, phi2) > x", functions={"dphi": _delta_phi})
+        assert expr.names == ("phi1", "phi2", "x")
+        assert expr.functions == ("dphi",)
+        assert expr.required_branches(["x", "phi2", "phi1", "y"]) == ["phi1", "phi2", "x"]
+
+    def test_unknown_function(self) -> None:
+        with pytest.raises(ExpressionError, match="Did you mean delta_phi") as info:
+            parse("delta_ph(a, b)", functions={"delta_phi": _delta_phi})
+        assert "given with functions=: delta_phi" in str(info.value)
+        with pytest.raises(ExpressionError, match=r"functions=\{'name': callable\}"):
+            parse("delta_phi(a, b)")
+
+    @pytest.mark.parametrize(
+        ("functions", "error", "match"),
+        [
+            ({"sqrt": np.sqrt}, ExpressionError, "built-in function"),
+            ({"pi": np.sqrt}, ExpressionError, "built-in constant"),
+            ({"delta-phi": _delta_phi}, ExpressionError, "use an identifier"),
+            ({"lambda": _delta_phi}, ExpressionError, "use an identifier"),
+            ({"__rootfig_fn_f": _delta_phi}, ExpressionError, "reserved"),
+            ({"f": 3}, TypeError, "must be callable"),
+            ({1: _delta_phi}, TypeError, "names must be strings"),
+            ([("f", _delta_phi)], TypeError, "must map names"),
+        ],
+    )
+    def test_refused(self, functions: Any, error: type[Exception], match: str) -> None:
+        with pytest.raises(error, match=match):
+            parse("x", functions=functions)
+        with pytest.raises(error, match=match), function_scope(functions):
+            pass
+
+    def test_parsed_expression_keeps_its_functions(self, arrays: dict[str, ak.Array]) -> None:
+        expr = parse("twice(x)", functions={"twice": _twice})
+        assert active_functions() == {}
+        assert expr.evaluate(arrays).tolist() == [2, 4, 6, 8]
+        with function_scope({"twice": lambda values: 3 * values}):
+            assert expr.evaluate(arrays).tolist() == [2, 4, 6, 8]
+            assert evaluate(expr, arrays).tolist() == [2, 4, 6, 8]
+
+    def test_functions_decide_equality(self, arrays: dict[str, ak.Array]) -> None:
+        absolute = parse("f(x - 2)", functions={"f": np.abs})
+        squared = parse("f(x - 2)", functions={"f": np.square})
+        assert absolute.evaluate(arrays).tolist() == [1, 0, 1, 2]
+        assert squared.evaluate(arrays).tolist() == [1, 0, 1, 4]
+        assert absolute != squared
+        again = parse("f(x - 2)", functions={"f": np.abs})
+        assert absolute == again
+        assert hash(absolute) == hash(again)
+        assert parse("abs(x)") == parse("abs(x)")
+
+    def test_parsed_expression_refuses_functions(self, arrays: dict[str, ak.Array]) -> None:
+        expr = parse("f(x)", functions={"f": np.abs})
+        assert parse(expr) is expr
+        with pytest.raises(ExpressionError, match="already parsed"):
+            parse(expr, functions={"f": np.square})
+        with pytest.raises(ExpressionError, match="already parsed"):
+            evaluate(expr, arrays, functions={"f": np.abs})
+
+    def test_scope(self, arrays: dict[str, ak.Array]) -> None:
+        with function_scope({"twice": _twice}):
+            assert parse("twice(x)").evaluate(arrays).tolist() == [2, 4, 6, 8]
+            with function_scope(None), pytest.raises(ExpressionError, match="unknown function"):
+                parse("twice(x)")
+            assert set(active_functions()) == {"twice"}
+        assert active_functions() == {}
+        with pytest.raises(RuntimeError), function_scope({"twice": _twice}):
+            raise RuntimeError
+        assert active_functions() == {}
+
+    def test_evaluate_sees_only_its_own_functions(self, arrays: dict[str, ak.Array]) -> None:
+        def inner(values: Any) -> Any:
+            return values + 1
+
+        def outer(values: Any) -> Any:
+            return evaluate("inner(v)", {"v": values})
+
+        def outer_given(values: Any) -> Any:
+            return evaluate("inner(v)", {"v": values}, functions={"inner": inner})
+
+        with pytest.raises(ExpressionError, match="unknown function 'inner'"):
+            evaluate("outer(x)", arrays, functions={"outer": outer, "inner": inner})
+        result = evaluate("outer(x)", arrays, functions={"outer": outer_given})
+        assert result.tolist() == [2, 3, 4, 5]
+
+    def test_validate_checks_syntax_only(self) -> None:
+        validate("delta_phi(a, b) > 0.4")
+        for text, match in [
+            ("a +", "invalid syntax"),
+            ("f(**x)", "unpacking"),
+            ("f('a')", "str literal"),
+            ("__rootfig_x > 0", "reserved"),
+        ]:
+            with pytest.raises(ExpressionError, match=match):
+                validate(text)
+
+    def test_errors_of_a_function(self, arrays: dict[str, ak.Array]) -> None:
+        def broken(values: Any) -> Any:
+            msg = "boom"
+            raise ValueError(msg)
+
+        with pytest.raises(ExpressionError, match=r"failed to evaluate.*ValueError: boom") as info:
+            evaluate("broken(x)", arrays, functions={"broken": broken})
+        assert isinstance(info.value.__cause__, ValueError)
+        with pytest.raises(ExpressionError, match="unsupported result of type list"):
+            evaluate("listed(x)", arrays, functions={"listed": lambda values: values.tolist()})
+
+
+class TestReservedNames:
+    """Names beginning with __rootfig_ are rootfig's own: quoted, they are branches."""
+
+    @pytest.mark.parametrize(
+        "text", ["__rootfig_fn_f + f(x)", "__rootfig_not & ~x", "a.__rootfig_x", "__rootfig_bt_0"]
+    )
+    def test_bare_reserved_name(self, text: str) -> None:
+        with pytest.raises(ExpressionError, match="reserved for rootfig"):
+            parse(text, functions={"f": np.abs})
+
+    def test_quoted_reserved_names_are_branches(self) -> None:
+        arrays = {
+            "__rootfig_fn_f": ak.Array([10.0, 20.0]),
+            "__rootfig_not": ak.Array([True, True]),
+            "__rootfig_bt_0": ak.Array([100.0, 200.0]),
+            "a-b": ak.Array([1.0, 2.0]),
+            "x": ak.Array([-1.0, 2.0]),
+        }
+        expr = parse("`__rootfig_fn_f` + f(x)", functions={"f": np.abs})
+        assert expr.names == ("__rootfig_fn_f", "x")
+        assert expr.evaluate(arrays).tolist() == [11.0, 22.0]
+        assert evaluate("`__rootfig_not` & (not (x > 0))", arrays).tolist() == [True, False]
+        assert evaluate("`a-b` + `__rootfig_bt_0`", arrays).tolist() == [101.0, 202.0]
+
+    def test_names_containing_the_prefix_are_not_reserved(self) -> None:
+        arrays = {"Jet__rootfig_pt": ak.Array([1.0, -2.0]), "x___rootfig_y": ak.Array([3.0, 4.0])}
+        functions = {"my__rootfig_abs": np.abs}
+        expr = parse("my__rootfig_abs(Jet__rootfig_pt) + x___rootfig_y", functions=functions)
+        assert expr.names == ("Jet__rootfig_pt", "x___rootfig_y")
+        assert expr.functions == ("my__rootfig_abs",)
+        assert expr.evaluate(arrays).tolist() == [4.0, 6.0]

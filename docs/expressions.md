@@ -19,8 +19,8 @@ syntax evaluated with NumPy/Awkward semantics over the branches of the tree.
 operations, so they work on arrays. Dotted names such as
 `ReconstructedParticles.momentum.x` are read as one branch name (see below);
 any other attribute access, lambdas, comprehensions, string literals and calls
-to anything but the functions below are rejected at parse time with an
-[`ExpressionError`][rootfig.ExpressionError].
+to anything but the functions below (built in, or [your own](#functions-of-your-own))
+are rejected at parse time with an [`ExpressionError`][rootfig.ExpressionError].
 An unknown branch raises [`MissingBranchError`][rootfig.MissingBranchError]
 with close-match suggestions.
 
@@ -56,6 +56,64 @@ Kinematics from Cartesian components, as stored by EDM4hep (`momentum.x/y/z`,
 | `mass(E, px, py, pz)` | invariant mass (0 for space-like input) |
 
 Reductions applied to a flat (per-event) branch raise an error.
+
+## Functions of your own
+
+Helpers that are not built in are passed with `functions=`, a mapping from the
+name the expressions use to a callable. Every call that evaluates expressions
+takes it (`plot`, `histogram`, `histograms`, `load`, `summarize`, `cutflow`,
+`efficiency`, `profile`, `plot2d`, `correlation`, `evaluate`; a
+[`PlotBook`](batch.md) in `plot_kwargs` or a variant), for the variable, the
+selection and the weights alike:
+
+```python
+import awkward as ak
+import numpy as np
+
+
+def delta_phi(phi1, phi2):
+    return (phi1 - phi2 + np.pi) % (2 * np.pi) - np.pi
+
+
+def delta_r(eta1, phi1, eta2, phi2):
+    return np.hypot(eta1 - eta2, delta_phi(phi1, phi2))
+
+
+def nth(x, n):
+    """The n-th object of each event (from 0); None where an event has fewer."""
+    return ak.pad_none(x, n + 1, axis=1)[:, n]
+
+
+functions = {"delta_phi": delta_phi, "delta_r": delta_r, "nth": nth}
+dr = "delta_r(nth(Muon_eta, 0), nth(Muon_phi, 0), nth(Muon_eta, 1), nth(Muon_phi, 1))"
+
+rf.plot(
+    sample,
+    "delta_phi(nth(Muon_phi, 0), nth(Muon_phi, 1))",
+    selection=f"{dr} > 0.4",
+    functions=functions,
+)
+```
+
+- A function receives the branch arrays (NumPy or Awkward, flat per event or
+  jagged per object) and returns an array or a number. Its result follows the
+  [per-event and per-object rules](#per-event-versus-per-object) like any other,
+  and a `None` in it counts as a [missing value](#missing-and-non-finite-values).
+- rootfig evaluates expressions a chunk of events at a time, in several threads at
+  once (see [Large inputs](plotting.md#large-inputs)). A function must therefore
+  treat each event on its own and change nothing outside it: `x / ak.max(x)`
+  would divide by the largest value of the chunk, not of the sample.
+- The names are looked up when a call uses the expression, so a `Variable` or `Cut`
+  calling `delta_r` can be built before any `functions=` is given. A name that a
+  built-in function or constant already has is refused, and so is a mapping that
+  is not one of names to callables.
+- Only the functions given to a call are reachable from its expressions; a later
+  call without `functions=` cannot call them. The functions themselves are ordinary
+  Python run as you: the expression language limits what an expression can reach,
+  not what the functions handed to it do, so pass only code you trust.
+
+Names beginning with `__rootfig_` are rootfig's own; a branch so named is written
+in backticks: `` `__rootfig_x` ``.
 
 ## Sub-branches of object collections
 
