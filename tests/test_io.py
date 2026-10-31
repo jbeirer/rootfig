@@ -232,6 +232,14 @@ class TestNpzSource:
             assert str(x.type.content) == "float64"
             assert source.num_entries() == len(values)
 
+    def test_names_ending_in_npy(self, tmp_path: Path) -> None:
+        path = tmp_path / "names.npz"
+        np.savez(path, **{"x": np.array([1, 2]), "x.npy": np.array([30, 40])})
+        source = NpzSource(path)
+        assert source.branches() == ["x", "x.npy"]
+        arrays = source.arrays(["x.npy", "x"])
+        assert (arrays["x"].tolist(), arrays["x.npy"].tolist()) == ([1, 2], [30, 40])
+
     def test_explicit_files_keep_their_order(self, tmp_path: Path) -> None:
         np.savez(tmp_path / "a.npz", x=np.array([1.0]))
         np.savez(tmp_path / "b.npz", x=np.array([2.0]))

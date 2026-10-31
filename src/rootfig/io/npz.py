@@ -142,7 +142,11 @@ class NpzSource:
             return {name: ak.from_numpy(_empty(headers[name])) for name in branches}
         try:
             with np.load(path, allow_pickle=False) as archive:
-                return {name: ak.from_numpy(_cut(archive[name], start, stop)) for name in branches}
+                # by member name: NumPy resolves ``archive["x.npy"]`` to the array ``x`` first
+                return {
+                    name: ak.from_numpy(_cut(archive[f"{name}.npy"], start, stop))
+                    for name in branches
+                }
         except (OSError, ValueError, zipfile.BadZipFile) as exc:
             msg = f"could not read {list(branches)} from {path!r}: {exc}"
             raise SourceError(msg) from exc
