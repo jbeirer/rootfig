@@ -184,8 +184,9 @@ def plot(
     Parameters
     ----------
     data
-        What to plot: a file path or glob, ``"path:tree"``, a list of those (one
-        sample each), a ``{label: files}`` mapping, one or more
+        What to plot: a file path or glob, ``"path:tree"``, a NumPy ``.npz`` file
+        (one array per branch), a list of those (one sample each), a
+        ``{label: files}`` mapping, one or more
         :class:`~rootfig.model.Sample` objects, :class:`~rootfig.model.Group`
         objects (several samples drawn as one histogram), in-memory arrays (a
         mapping of arrays or an Awkward record array), or histogram objects.

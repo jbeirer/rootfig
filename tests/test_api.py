@@ -273,6 +273,22 @@ class TestPlot:
         )
         assert p.ax.get_legend() is not None
 
+    def test_npz_file(self, tmp_path: Path, signal_columns: dict[str, Any]) -> None:
+        columns = {name: np.asarray(signal_columns[name]) for name in ("MET", "weight")}
+        columns["Jet_pt"] = np.stack([columns["MET"], 2 * columns["MET"]], axis=1)
+        path = tmp_path / "events.npz"
+        np.savez(path, **columns)
+        p = rf.plot(str(path), "MET", weight="weight", bins=50)
+        (h,) = p.histograms
+        assert h.label == "events"
+        expected = rf.histogram(columns, "MET", weight="weight", bins=50)
+        np.testing.assert_allclose(h.edges, expected.axes[0].edges)
+        np.testing.assert_allclose(h.hist.values(), expected.values())
+        # an (events, n) array is a per-object branch, masked by a per-object cut
+        jets = rf.histogram(path, "Jet_pt", selection="Jet_pt > 50", bins=(10, 0, 500))
+        assert jets.sum().value == np.count_nonzero(columns["Jet_pt"] > 50)
+        assert rf.Sample(path).files == (str(path),)
+
     def test_overlay_normalized_ratio(self, signal_file: Path, background_file: Path) -> None:
         p = rf.plot(
             [signal_file, background_file],
@@ -2672,6 +2688,20 @@ def test_plain_histogram_ignores_sample_systematics() -> None:
     )
     result = rf.histogram(sample, "x", bins=(2, 0, 2))
     np.testing.assert_allclose(result.values(), [1, 1])
+
+
+def test_varied_npz_files_inherit_the_range(tmp_path: Path) -> None:
+    np.savez(tmp_path / "nominal.npz", x=np.array([0.5, 1.5, 2.5, 3.5]))
+    np.savez(tmp_path / "alternate.npz", x=np.array([3.5, 2.5, 1.5, 0.5]))
+    sample = rf.Sample(
+        tmp_path / "nominal.npz",
+        entry_start=1,
+        entry_stop=3,
+        systematics={"alt": rf.Systematic.samples(tmp_path / "alternate.npz")},
+    )
+    (h,) = rf.histograms(sample, "x", bins=(4, 0, 4))
+    np.testing.assert_allclose(h.values(), [0, 1, 1, 0])
+    np.testing.assert_allclose(h.variations["alt"][0].values(), [0, 1, 1, 0])
 
 
 def test_varied_files_inherit_auto_detected_tree_and_range(tmp_path: Path) -> None:

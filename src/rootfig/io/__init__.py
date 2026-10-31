@@ -1,6 +1,7 @@
-"""Reading branch arrays from ROOT files (uproot) or from memory."""
+"""Reading branch arrays from ROOT files (uproot), NumPy ``.npz`` files or memory."""
 
 from rootfig.io.cache import ReadCache
+from rootfig.io.npz import NpzSource
 from rootfig.io.objects import ErrorOption, stored_error_option
 from rootfig.io.sources import (
     CHUNK_BYTES,
@@ -18,6 +19,7 @@ __all__ = [
     "ErrorOption",
     "FileSource",
     "FilesLike",
+    "NpzSource",
     "ReadCache",
     "Source",
     "as_source",
