@@ -1062,6 +1062,55 @@ What a stored histogram supports:
   The files of one sample may mix both kinds and may differ in their axis
   titles; the sum has `Weight` storage and the first file's titles.
 
+### Histograms already binned in `.npz` files
+
+A NumPy `.npz` file can hold histograms that are already binned, saved as their
+counts and bin edges. They are read like a stored `TH1`/`TH2`: name the counts
+array where a branch would go. A counts array `NAME` is a histogram when the
+file holds its edges under the names `np.histogram` and `np.histogram2d`
+suggest:
+
+| Arrays | Histogram |
+| --- | --- |
+| `NAME` (`n`), `NAME_edges` (`n + 1`) | 1D |
+| `NAME` (`nx, ny`), `NAME_xedges` (`nx + 1`), `NAME_yedges` (`ny + 1`) | 2D |
+| `NAME_variances` (shape of `NAME`), optional | sums of squared weights; without it the counts are their own variances |
+
+```python
+counts, xedges, yedges = np.histogram2d(g, b2, bins=500)
+np.savez("hists.npz", h=counts, h_xedges=xedges, h_yedges=yedges)
+rf.plot2d("hists.npz", "h")
+```
+
+Edges saved under other names are given explicitly with
+[`NpzSource`][rootfig.io.NpzSource]`(histograms=...)`, one edge array per axis
+in the order of the counts' dimensions. Their names, without an `_edges`
+suffix, become the axis titles:
+
+```python
+# hist.npy (500 x 500), g_edges.npy (501), B2_edges.npy (501)
+src = rf.io.NpzSource("file.npz", histograms={"hist": ["g_edges", "B2_edges"]})
+rf.plot2d(src, "hist", save="histogram_2d.pdf")  # x axis "g", y axis "B2"
+```
+
+A `NAME_variances` of another shape than `NAME` is refused rather than
+ignored. Arrays named like a histogram whose edges do not fit (`n` edges for
+`n` bins, say) are not taken as one: if every array has the same length they
+remain event branches, since a file may hold a branch `h` beside a branch
+`h_edges`, and reading `h` warns that it is filled as events; otherwise the
+error names the edges that do not fit.
+
+The histogram arrays are not branches, so one file can hold both histograms
+and per-event arrays, which are filled as usual. A
+`Systematic.samples("varied.npz")` given as paths reads the varied files with
+the nominal source's `histograms=` mapping; a `Sample` is read as configured. Everything listed above for
+stored ROOT histograms applies: the files of one sample are summed, `scale`,
+groups, `bins=`/`range=` merging and cropping, normalisation systematics and
+`Systematic.samples` with other `.npz` files work, and options that need event
+data (a selection, a weight, an entry range) are refused or address the
+branches instead. The flow bins of such a histogram are empty.
+`rf.PlotBook("hists.npz", rf.ALL)` discovers its 1D histograms.
+
 ### Histogram objects
 
 `hist.Hist` or [`Histogram`][rootfig.Histogram] objects, one or a list, are

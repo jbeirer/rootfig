@@ -1,8 +1,9 @@
-"""Histograms already stored in ROOT files, read instead of filled.
+"""Histograms already stored in ROOT or ``.npz`` files, read instead of filled.
 
 A variable that is a bare name (``"mz"``, or ``"`sel/mz`"`` for a histogram
 inside a directory) may address a ``TH1``/``TH2`` object stored under that name
-rather than a branch. :func:`stored_mode` decides,
+rather than a branch, or a binned histogram of a ``.npz`` archive (counts saved
+with their edges, see :class:`~rootfig.io.NpzSource`). :func:`stored_mode` decides,
 deterministically, whether a set of samples is read that way, and
 :func:`read_stored` turns the stored histograms into
 :class:`~rootfig.histograms.Histogram` objects with the sample's label, colour,
@@ -23,7 +24,8 @@ from rootfig._typing import Hist
 from rootfig.errors import SelectionError, SourceError, SystematicError, annotate
 from rootfig.histograms.build import Histogram, from_sample
 from rootfig.histograms.sources import shared_source
-from rootfig.io import FileSource, ReadCache, stored_error_option
+from rootfig.io import FileSource, NpzSource, ReadCache, as_source, stored_error_option
+from rootfig.io.npz import with_histogram_edges
 from rootfig.io.objects import is_tree_class
 from rootfig.model.binning import merge_target
 from rootfig.model.cuts import CutLike
@@ -43,6 +45,9 @@ __all__ = [
 _ROOT_DEFAULT_AXIS_TITLES = frozenset({"", "xaxis", "yaxis", "zaxis"})
 _UPROOT_DEFAULT_AXIS_TITLE = re.compile(r"Axis \d+")  # what uproot writes for a label-less axis
 
+HistogramFiles = FileSource | NpzSource
+"""The sources that hold stored histograms: ROOT files and ``.npz`` archives."""
+
 
 def stored_mode(samples: Sequence[Sample], variables: Sequence[Variable]) -> bool:
     """Decide whether ``variables`` name histograms stored in the files of ``samples``.
@@ -50,11 +55,13 @@ def stored_mode(samples: Sequence[Sample], variables: Sequence[Variable]) -> boo
     Stored mode applies when every sample reads files without an explicit tree
     or entry range, the variable is a bare name and the first file of every
     sample holds a 1D/2D histogram of that name, and the file has no tree or its
-    only tree has no branch of that name. A histogram inside a directory is
-    named by its path in backticks (``"`sel/mz`"``), like a branch with odd
-    characters. Explicit intent wins: a ``tree=`` or an entry range always means
-    a branch. For a 2D plot both variables must be stored histograms of the same
-    name.
+    only tree has no branch of that name. A ``.npz`` archive holds a histogram
+    when it saves the counts with their edges (see :class:`~rootfig.io.NpzSource`);
+    those arrays are never branches, so no branch competes for the name. A
+    histogram inside a directory is named by its path in backticks
+    (``"`sel/mz`"``), like a branch with odd characters. Explicit intent wins:
+    a ``tree=`` or an entry range always means a branch. For a 2D plot both
+    variables must be stored histograms of the same name.
 
     Raises
     ------
@@ -102,10 +109,10 @@ def stored_names(sample: Sample, *, variation: bool = False) -> list[str]:
         to read a branch); not for a variation.
     """
     source = sample.source
-    if not isinstance(source, FileSource) or _addresses_a_tree(source) is not None:
+    if not isinstance(source, HistogramFiles) or _addresses_a_tree(source) is not None:
         return []
     names = source.histograms(ndim=1)
-    if variation or not names:
+    if variation or not names or isinstance(source, NpzSource):
         return names
     trees = source.trees()
     if len(trees) > 1:
@@ -130,11 +137,14 @@ def _stored_name(variables: Sequence[Variable]) -> str | None:
 def _why_not_stored(sample: Sample, name: str) -> str | None:
     """Why ``sample`` does not read ``name`` as a stored histogram; ``None`` when it does."""
     source = sample.source
-    if not isinstance(source, FileSource):
+    if not isinstance(source, HistogramFiles):
         return f"{source.describe()} hold no stored histograms"
     explicit = _addresses_a_tree(source)
     if explicit is not None:
         return explicit
+    if isinstance(source, NpzSource):
+        held = name in source.histograms()
+        return None if held else f"{source.files[0]!r} holds no histogram of that name"
     if name not in source.histograms():
         return _no_histogram(source, name)
     trees = source.trees()
@@ -181,9 +191,9 @@ def _no_histogram(source: FileSource, name: str) -> str:
     raise SourceError(msg)
 
 
-def _addresses_a_tree(source: FileSource) -> str | None:
+def _addresses_a_tree(source: HistogramFiles) -> str | None:
     """Why ``source`` addresses a tree rather than stored histograms, else ``None``."""
-    if source.tree is not None:
+    if isinstance(source, FileSource) and source.tree is not None:
         return f"tree={source.tree!r} addresses a branch"
     if source.entry_start is not None or source.entry_stop is not None:
         return "an entry range addresses a tree"
@@ -303,7 +313,7 @@ def _reject_event_options(
         raise SelectionError(msg)
 
 
-def _stored_source(sample: Sample, name: str, *, variation: bool = False) -> FileSource:
+def _stored_source(sample: Sample, name: str, *, variation: bool = False) -> HistogramFiles:
     """Return the files ``sample`` reads the stored ``name`` from.
 
     Refuses everything that would need event data: an in-memory source, an
@@ -316,10 +326,10 @@ def _stored_source(sample: Sample, name: str, *, variation: bool = False) -> Fil
     source_error = SystematicError if variation else SourceError
     option_error = SystematicError if variation else SelectionError
     source = sample.source
-    if not isinstance(source, FileSource):
+    if not isinstance(source, HistogramFiles):
         msg = f"{hint}; it cannot be read from {source.describe()}"
         raise source_error(msg)
-    if source.tree is not None:
+    if isinstance(source, FileSource) and source.tree is not None:
         msg = f"{hint}; tree={source.tree!r} addresses a branch instead. Drop tree= to read it"
         raise source_error(msg)
     if source.entry_start is not None or source.entry_stop is not None:
@@ -336,7 +346,7 @@ def _stored_source(sample: Sample, name: str, *, variation: bool = False) -> Fil
 
 def _read_scaled(
     sample: Sample,
-    source: FileSource,
+    source: HistogramFiles,
     name: str,
     variables: Sequence[Variable],
     *,
@@ -366,7 +376,7 @@ def with_saved_errors(histogram: Histogram, stored: Hist) -> Histogram:
 
 
 def _read_named(
-    source: FileSource,
+    source: HistogramFiles,
     name: str,
     variables: Sequence[Variable],
     *,
@@ -512,7 +522,9 @@ def _variant_sample(
     """Return the sample a ``Systematic.samples`` variation reads: other files, nominal settings.
 
     Its files are read through the instance ``cache`` holds for them
-    (:func:`~rootfig.histograms.sources.shared_source`).
+    (:func:`~rootfig.histograms.sources.shared_source`). Paths to ``.npz`` files
+    take the edge mapping of the nominal :class:`~rootfig.io.NpzSource`
+    (``histograms=``); a ``Sample`` is read as it was configured.
     """
     if isinstance(spec, Sample):
         return shared_source(spec.replace(label=context, systematics={}), cache)
@@ -520,10 +532,14 @@ def _variant_sample(
         isinstance(spec, list | tuple) and all(isinstance(f, str | PathLike) for f in spec)
     ):
         try:
-            source = FileSource(spec)
+            # the edges the nominal .npz files map explicitly apply to the varied ones too
+            source = with_histogram_edges(as_source(spec), sample.source)
         except SourceError as exc:
             msg = f"{context}: cannot use {spec!r} as varied data: {exc}"
             raise SystematicError(msg) from exc
         return shared_source(sample.replace(source=source, systematics={}, label=context), cache)
-    msg = f"{context}: a stored histogram takes its variations from other ROOT files, not {spec!r}"
+    msg = (
+        f"{context}: a stored histogram takes its variations from other ROOT or .npz files, "
+        f"not {spec!r}"
+    )
     raise SystematicError(msg)

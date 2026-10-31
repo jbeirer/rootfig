@@ -26,7 +26,7 @@ from rootfig.histograms.pipeline import _sample_systematics
 from rootfig.histograms.pipeline import _variant_sample as _varied_sample
 from rootfig.histograms.sources import shared_source
 from rootfig.histograms.stored import _variant_sample as _varied_stored_sample
-from rootfig.io import FileSource, ReadCache, Source
+from rootfig.io import FileSource, NpzSource, ReadCache, Source
 from rootfig.io.objects import histogram_dimension, is_tree_class
 from rootfig.io.schema import plottable
 from rootfig.model import (
@@ -323,7 +323,11 @@ class _Discovery:
         source = sample.source
         if not isinstance(source, FileSource):
             branches, left_out = _plottable(_branch_forms(source))
-            return _Inventory(frozenset(branches), frozenset(), tuple(left_out))
+            stored: frozenset[str] = frozenset()
+            if isinstance(source, NpzSource):
+                stored = frozenset(stored_names(sample))
+                left_out.extend(f"{name} (2D histogram)" for name in source.histograms(ndim=2))
+            return _Inventory(frozenset(branches), stored, tuple(left_out))
         if source not in self._inventories:
             self._inventories[source] = _file_inventory(source, sample)
         return self._inventories[source]

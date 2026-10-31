@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import warnings
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -312,6 +313,139 @@ class TestNpzSource:
             as_source([good, signal_file])
         with pytest.raises(SourceError, match="local paths only"):
             as_source("https://example.org/events.npz")
+
+
+class TestNpzHistograms:
+    """Histograms saved already binned: counts with their edges."""
+
+    def test_convention(self, tmp_path: Path) -> None:
+        path = tmp_path / "hists.npz"
+        counts, edges = np.histogram([0.5, 1.5, 1.5, 2.5], bins=[0, 1, 2, 3])
+        counts2d = np.arange(6.0).reshape(2, 3)
+        np.savez(
+            path,
+            m=counts,
+            m_edges=edges,
+            h2=counts2d,
+            h2_xedges=[0.0, 1.0, 2.0],
+            h2_yedges=[0.0, 1.0, 2.0, 4.0],
+            h2_variances=2 * counts2d,
+            pt=np.arange(5.0),
+        )
+        source = as_source(path)
+        assert isinstance(source, NpzSource)
+        assert source.histograms() == ["h2", "m"]
+        assert source.histograms(ndim=1) == ["m"]
+        assert source.branches() == ["pt"]
+        assert source.num_entries() == 5
+        m = source.read_histogram("m")
+        assert m.storage_type is hist.storage.Weight
+        assert m.values().tolist() == [1, 2, 1]
+        assert m.variances().tolist() == [1, 2, 1]  # counts are their own variances
+        assert m.values(flow=True)[[0, -1]].tolist() == [0, 0]
+        h2 = source.read_histogram("h2")
+        assert h2.axes[1].edges.tolist() == [0, 1, 2, 4]
+        assert h2.values().tolist() == counts2d.tolist()
+        assert h2.variances().tolist() == (2 * counts2d).tolist()
+        assert [axis.name for axis in h2.axes] == ["xaxis", "yaxis"]  # placeholder titles
+
+    def test_explicit_edges(self, tmp_path: Path) -> None:
+        path = tmp_path / "user.npz"
+        np.savez(
+            path,
+            hist=np.ones((3, 2)),
+            g_edges=np.linspace(0, 1, 4),
+            B2_edges=np.linspace(0, 2, 3),
+        )
+        with pytest.raises(SourceError, match=r"histograms=\{NAME"):
+            NpzSource(path).branches()
+        source = NpzSource(path, histograms={"hist": ["g_edges", "B2_edges"]})
+        assert source.histograms(ndim=2) == ["hist"]
+        assert source.branches() == []
+        h = source.read_histogram("hist")
+        assert [axis.label for axis in h.axes] == ["g", "B2"]
+        assert h.sum().value == 6
+        # equal sources share cached reads: the mapping is part of the value
+        assert source == NpzSource(path, histograms={"hist": ("g_edges", "B2_edges")})
+        assert source != NpzSource(path, histograms={"hist": ["B2_edges", "g_edges"]})
+
+    def test_files_are_summed(self, tmp_path: Path) -> None:
+        for name, counts in (("a", [1.0, 2.0]), ("b", [3.0, 4.0])):
+            np.savez(tmp_path / f"{name}.npz", m=counts, m_edges=[0.0, 1.0, 2.0])
+        np.savez(tmp_path / "c.npz", m=[1.0, 1.0], m_edges=[0.0, 1.0, 3.0])
+        summed = NpzSource([tmp_path / "a.npz", tmp_path / "b.npz"]).read_histogram("m")
+        assert summed.values().tolist() == [4, 6]
+        with pytest.raises(BinningError, match="different binnings"):
+            NpzSource([tmp_path / "a.npz", tmp_path / "c.npz"]).read_histogram("m")
+
+    def test_problems(self, tmp_path: Path) -> None:
+        path = tmp_path / "h.npz"
+        np.savez(path, h=np.ones((2, 2)), x_edges=[0.0, 1.0, 2.0], y_edges=[0.0, 1.0])
+        with pytest.raises(SourceError, match=r"'y_edges' .* needs 3 edges"):
+            NpzSource(path, histograms={"h": ["x_edges", "y_edges"]}).branches()
+        with pytest.raises(SourceError, match="needs as many edge arrays"):
+            NpzSource(path, histograms={"h": ["x_edges"]}).branches()
+        with pytest.raises(SourceError, match=r"\['z_edges'\] not found"):
+            NpzSource(path, histograms={"h": ["x_edges", "z_edges"]}).branches()
+        with pytest.raises(SourceError, match="one edge array per axis"):
+            NpzSource(path, histograms={"h": []})
+        decreasing = tmp_path / "decreasing.npz"
+        np.savez(decreasing, m=[1.0, 2.0], m_edges=[2.0, 1.0, 0.0])
+        with pytest.raises(SourceError, match="finite and increasing"):
+            NpzSource(decreasing).read_histogram("m")
+        negative = tmp_path / "negative.npz"
+        np.savez(negative, m=[-1.0, 2.0], m_edges=[0.0, 1.0, 2.0])
+        with pytest.raises(SourceError, match="m_variances"):
+            NpzSource(negative).read_histogram("m")
+        with pytest.warns(RootfigWarning, match="absolute bin contents"):
+            h = NpzSource(negative).read_histogram("m", variances_from_contents=True)
+        assert h.variances().tolist() == [1, 2]
+        with pytest.raises(SourceError, match=r"histograms \['x'\] not found"):
+            NpzSource(negative).read_histogram("x")
+
+    @pytest.mark.parametrize("explicit", [False, True])
+    def test_variances_of_another_shape_are_refused(self, tmp_path: Path, explicit: bool) -> None:
+        one = tmp_path / "one.npz"
+        np.savez(one, h=[10.0, 20.0, 30.0], h_edges=[0.0, 1.0, 2.0, 3.0], h_variances=[2.0, 5.0])
+        two = tmp_path / "two.npz"
+        np.savez(
+            two,
+            h=np.ones((2, 3)),
+            h_xedges=[0.0, 1.0, 2.0],
+            h_yedges=[0.0, 1.0, 2.0, 3.0],
+            h_variances=np.ones((3, 2)),
+        )
+        mapping = {"h": ["h_edges"]} if explicit else None
+        with pytest.raises(SourceError, match=r"'h_variances' .* has shape \(2,\)"):
+            NpzSource(one, histograms=mapping).read_histogram("h")
+        mapping = {"h": ["h_xedges", "h_yedges"]} if explicit else None
+        with pytest.raises(SourceError, match=r"'h_variances' .* has shape \(3, 2\)"):
+            NpzSource(two, histograms=mapping).histograms()
+
+    def test_edges_that_do_not_fit(self, tmp_path: Path) -> None:
+        # equal lengths: branches named like a histogram are kept, and reading one warns
+        ambiguous = tmp_path / "ambiguous.npz"
+        np.savez(ambiguous, h=[10.0, 20.0, 30.0], h_edges=[0.0, 1.0, 2.0])
+        source = NpzSource(ambiguous)
+        assert source.histograms() == []
+        assert source.branches() == ["h", "h_edges"]
+        with pytest.warns(RootfigWarning, match=r"'h' .* read as an event branch.*\(4,\)"):
+            values = source.arrays(["h"])["h"]
+        assert values.tolist() == [10, 20, 30]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            source.arrays(["h_edges"])  # an edge array is no histogram of its own
+        # unequal lengths: the error says which edges do not fit
+        broken = tmp_path / "broken.npz"
+        np.savez(
+            broken,
+            h=np.ones((3, 2)),
+            h_xedges=[0.0, 1.0, 2.0, 3.0],
+            h_yedges=[0.0, 1.0],
+            pt=np.zeros(3),
+        )
+        with pytest.raises(SourceError, match=r"'h': .*'h_yedges' has shape \(2,\), not \(3,\)"):
+            NpzSource(broken).branches()
 
 
 class TestAsSource:

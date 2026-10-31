@@ -3950,3 +3950,111 @@ class TestCustomFunctions:
         assert not np.array_equal(expected[1.0], expected[10.0])
         for scale, values in results:
             np.testing.assert_array_equal(values, expected[scale])
+
+
+class TestNpzHistograms:
+    """Histograms saved binned in ``.npz`` files are read like stored ROOT histograms."""
+
+    @staticmethod
+    def write(path: Path, scale: float = 1.0) -> None:
+        np.savez(
+            path,
+            m=scale * np.array([1.0, 4.0, 2.0]),
+            m_edges=np.array([0.0, 1.0, 2.0, 3.0]),
+            h=scale * np.arange(6.0).reshape(3, 2),
+            h_xedges=np.array([0.0, 1.0, 2.0, 3.0]),
+            h_yedges=np.array([0.0, 5.0, 10.0]),
+            pt=np.array([0.5, 1.5, 2.5, 2.5]),
+        )
+
+    def test_plot_and_histogram(self, tmp_path: Path) -> None:
+        path = tmp_path / "hists.npz"
+        self.write(path)
+        p = rf.plot(path, "m")
+        (h,) = p.histograms
+        assert h.hist.values().tolist() == [1, 4, 2]
+        assert h.label == "hists"
+        assert p.ax.get_xlabel() == "m"  # the convention's edges name no quantity
+        merged = rf.histogram(rf.Sample(path, scale=2.0), rf.Variable("m", bins=(1, 0, 2)))
+        assert merged.values().tolist() == [10]
+        # the branches beside the histograms are still filled as usual
+        assert rf.histogram(path, "pt", bins=(3, 0, 3)).values().tolist() == [1, 1, 2]
+        with pytest.raises(SourceError, match="2D histogram; draw it with plot2d"):
+            rf.plot(path, "h")
+        with pytest.raises(rf.SelectionError, match="selection cannot be applied"):
+            rf.plot(path, "m", selection="m > 1")
+        # an entry range addresses the events, as a tree= does for a ROOT file
+        with pytest.raises(rf.RootfigError, match="unknown name 'm'"):
+            rf.plot(rf.Sample(path, entry_stop=2), "m")
+
+    def test_plot2d_with_explicit_edges(self, tmp_path: Path) -> None:
+        path = tmp_path / "user.npz"
+        counts = np.arange(12.0).reshape(4, 3)
+        np.savez(path, hist=counts, g_edges=np.linspace(0, 4, 5), B2_edges=np.linspace(0, 3, 4))
+        with pytest.raises(SourceError, match="histograms="):
+            rf.plot2d(path, "hist")
+        source = rf.io.NpzSource(path, histograms={"hist": ["g_edges", "B2_edges"]})
+        p = rf.plot2d(source, "hist")
+        assert (p.ax.get_xlabel(), p.ax.get_ylabel()) == ("g", "B2")
+        np.testing.assert_array_equal(p.histograms[0].hist.values(), counts)
+
+    def test_samples_groups_and_systematics(self, tmp_path: Path) -> None:
+        self.write(tmp_path / "a.npz")
+        self.write(tmp_path / "b.npz", scale=3.0)
+        nominal = rf.Sample(
+            tmp_path / "a.npz",
+            systematics={"alt": rf.Systematic.samples(tmp_path / "b.npz"), "n": 0.1},
+        )
+        (h,) = rf.histograms(nominal, "m")
+        assert h.variations["alt"][0].values().tolist() == [3, 12, 6]
+        assert h.variations["n"][0].values().sum() == pytest.approx(7.7)
+        group = rf.Group([rf.Sample(tmp_path / "a.npz"), rf.Sample(tmp_path / "b.npz")], label="ab")
+        (summed,) = rf.histograms(group, "m")
+        assert summed.values().tolist() == [4, 16, 8]
+
+    def test_discovery(self, tmp_path: Path) -> None:
+        path = tmp_path / "hists.npz"
+        self.write(path)
+        book = rf.PlotBook(path, rf.ALL)
+        assert [variable.expression for variable in book.variables] == ["m", "pt"]
+
+    def test_variations_keep_the_explicit_edges(self, tmp_path: Path) -> None:
+        for name, scale in (("nominal", 1.0), ("varied", 2.0)):
+            np.savez(
+                tmp_path / f"{name}.npz",
+                hist=scale * np.ones((2, 2)),
+                g_edges=[0.0, 1.0, 2.0],
+                B2_edges=[0.0, 1.0, 2.0],
+                pt=scale * np.array([0.5, 1.5]),
+            )
+        source = rf.io.NpzSource(
+            tmp_path / "nominal.npz", histograms={"hist": ["g_edges", "B2_edges"]}
+        )
+        sample = rf.Sample(
+            source, systematics={"alt": rf.Systematic.samples(tmp_path / "varied.npz")}
+        )
+        # read as a stored histogram ...
+        p = rf.plot2d(sample, "hist")
+        np.testing.assert_array_equal(p.histograms[0].hist.values(), np.ones((2, 2)))
+        # ... and filled from the branches beside it, with its variation read by path both times
+        (h,) = rf.histograms(sample, "pt", bins=(2, 0, 4))
+        assert h.variations["alt"][0].values().tolist() == [1, 1]
+
+    def test_variations_of_stored_histograms_keep_the_explicit_edges(self, tmp_path: Path) -> None:
+        for name, scale in (("nominal", 1.0), ("varied", 3.0)):
+            np.savez(tmp_path / f"{name}.npz", m=scale * np.array([1.0, 2.0]), bounds=[0.0, 1, 2])
+        source = rf.io.NpzSource(tmp_path / "nominal.npz", histograms={"m": ["bounds"]})
+        sample = rf.Sample(
+            source, systematics={"alt": rf.Systematic.samples(tmp_path / "varied.npz")}
+        )
+        (h,) = rf.histograms(sample, "m")
+        assert h.values().tolist() == [1, 2]
+        assert h.variations["alt"][0].values().tolist() == [3, 6]
+        assert h.hist.axes[0].label == "bounds"
+
+    def test_misnamed_edges_warn(self, tmp_path: Path) -> None:
+        path = tmp_path / "data.npz"
+        np.savez(path, h=np.array([10.0, 20.0, 30.0]), h_edges=np.array([0.0, 1.0, 2.0]))
+        with pytest.warns(RootfigWarning, match="read as an event branch"):
+            p = rf.plot(path, "h", bins=(3, 0, 45))
+        assert p.histograms[0].hist.values().tolist() == [1, 1, 1]
