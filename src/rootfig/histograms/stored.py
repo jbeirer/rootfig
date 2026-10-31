@@ -25,6 +25,7 @@ from rootfig.errors import SelectionError, SourceError, SystematicError, annotat
 from rootfig.histograms.build import Histogram, from_sample
 from rootfig.histograms.sources import shared_source
 from rootfig.io import FileSource, NpzSource, ReadCache, as_source, stored_error_option
+from rootfig.io.npz import with_histogram_edges
 from rootfig.io.objects import is_tree_class
 from rootfig.model.binning import merge_target
 from rootfig.model.cuts import CutLike
@@ -521,7 +522,9 @@ def _variant_sample(
     """Return the sample a ``Systematic.samples`` variation reads: other files, nominal settings.
 
     Its files are read through the instance ``cache`` holds for them
-    (:func:`~rootfig.histograms.sources.shared_source`).
+    (:func:`~rootfig.histograms.sources.shared_source`). Paths to ``.npz`` files
+    take the edge mapping of the nominal :class:`~rootfig.io.NpzSource`
+    (``histograms=``); a ``Sample`` is read as it was configured.
     """
     if isinstance(spec, Sample):
         return shared_source(spec.replace(label=context, systematics={}), cache)
@@ -529,7 +532,8 @@ def _variant_sample(
         isinstance(spec, list | tuple) and all(isinstance(f, str | PathLike) for f in spec)
     ):
         try:
-            source = as_source(spec)
+            # the edges the nominal .npz files map explicitly apply to the varied ones too
+            source = with_histogram_edges(as_source(spec), sample.source)
         except SourceError as exc:
             msg = f"{context}: cannot use {spec!r} as varied data: {exc}"
             raise SystematicError(msg) from exc

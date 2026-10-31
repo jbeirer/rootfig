@@ -43,6 +43,7 @@ from rootfig.io import (
     Source,
     as_source,
 )
+from rootfig.io.npz import with_histogram_edges
 from rootfig.io.sources import resolve_files
 from rootfig.model.binning import Axis, resolve_axis
 from rootfig.model.cuts import Cut, CutLike, as_cut
@@ -658,6 +659,8 @@ def _variant_sample(
             source = as_source(
                 spec, tree=tree, entry_start=nominal.entry_start, entry_stop=nominal.entry_stop
             )
+            # varied .npz files hold the histograms the nominal ones map explicitly too
+            source = with_histogram_edges(source, nominal)
         else:
             source = as_source(spec)
     except (SourceError, OSError, TypeError, ValueError) as exc:

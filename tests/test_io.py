@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import warnings
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -401,6 +402,50 @@ class TestNpzHistograms:
         assert h.variances().tolist() == [1, 2]
         with pytest.raises(SourceError, match=r"histograms \['x'\] not found"):
             NpzSource(negative).read_histogram("x")
+
+    @pytest.mark.parametrize("explicit", [False, True])
+    def test_variances_of_another_shape_are_refused(self, tmp_path: Path, explicit: bool) -> None:
+        one = tmp_path / "one.npz"
+        np.savez(one, h=[10.0, 20.0, 30.0], h_edges=[0.0, 1.0, 2.0, 3.0], h_variances=[2.0, 5.0])
+        two = tmp_path / "two.npz"
+        np.savez(
+            two,
+            h=np.ones((2, 3)),
+            h_xedges=[0.0, 1.0, 2.0],
+            h_yedges=[0.0, 1.0, 2.0, 3.0],
+            h_variances=np.ones((3, 2)),
+        )
+        mapping = {"h": ["h_edges"]} if explicit else None
+        with pytest.raises(SourceError, match=r"'h_variances' .* has shape \(2,\)"):
+            NpzSource(one, histograms=mapping).read_histogram("h")
+        mapping = {"h": ["h_xedges", "h_yedges"]} if explicit else None
+        with pytest.raises(SourceError, match=r"'h_variances' .* has shape \(3, 2\)"):
+            NpzSource(two, histograms=mapping).histograms()
+
+    def test_edges_that_do_not_fit(self, tmp_path: Path) -> None:
+        # equal lengths: branches named like a histogram are kept, and reading one warns
+        ambiguous = tmp_path / "ambiguous.npz"
+        np.savez(ambiguous, h=[10.0, 20.0, 30.0], h_edges=[0.0, 1.0, 2.0])
+        source = NpzSource(ambiguous)
+        assert source.histograms() == []
+        assert source.branches() == ["h", "h_edges"]
+        with pytest.warns(RootfigWarning, match=r"'h' .* read as an event branch.*\(4,\)"):
+            values = source.arrays(["h"])["h"]
+        assert values.tolist() == [10, 20, 30]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            source.arrays(["h_edges"])  # an edge array is no histogram of its own
+        # unequal lengths: the error says which edges do not fit
+        broken = tmp_path / "broken.npz"
+        np.savez(
+            broken,
+            h=np.ones((3, 2)),
+            h_xedges=[0.0, 1.0, 2.0, 3.0],
+            h_yedges=[0.0, 1.0],
+            pt=np.zeros(3),
+        )
+        with pytest.raises(SourceError, match=r"'h': .*'h_yedges' has shape \(2,\), not \(3,\)"):
+            NpzSource(broken).branches()
 
 
 class TestAsSource:

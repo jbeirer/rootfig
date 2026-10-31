@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import struct
+import warnings
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -16,10 +17,10 @@ import numpy as np
 
 from rootfig._storage import add_into, as_weight_storage, same_binning
 from rootfig._typing import Hist
-from rootfig.errors import BinningError, SourceError
+from rootfig.errors import BinningError, RootfigWarning, SourceError
 from rootfig.io.sources import FilesLike, _is_remote, resolve_files
 
-__all__ = ["NpzSource"]
+__all__ = ["NpzSource", "with_histogram_edges"]
 
 _Header: TypeAlias = tuple[tuple[int, ...], np.dtype[Any]]
 
@@ -53,6 +54,8 @@ class _Layout:
 
     branches: dict[str, _Header]
     histograms: dict[str, _HistogramSpec]
+    near_misses: dict[str, str] = field(default_factory=dict)
+    """Branches saved beside edge arrays named for them that do not fit, and why."""
 
 
 @dataclass(frozen=True)
@@ -74,9 +77,14 @@ class NpzSource:
     * ``NAME_edges`` (``n + 1`` edges) for a 1D ``NAME`` of ``n`` bins;
     * ``NAME_xedges`` and ``NAME_yedges`` for a 2D ``NAME`` of ``(nx, ny)`` bins;
     * optionally ``NAME_variances``, the sums of squared weights in the shape of
-      ``NAME``; without it the counts are their own variances (Poisson).
+      ``NAME``; without it the counts are their own variances (Poisson). One of
+      another shape is refused rather than ignored.
 
-    Edges named otherwise are given with ``histograms``.
+    Edges named otherwise are given with ``histograms``. Arrays named like a
+    histogram whose edges do not fit (``n`` edges for ``n`` bins, say) are not
+    one: they stay branches when every branch has the same length, with a
+    :class:`~rootfig.errors.RootfigWarning` when such a branch is read, and the
+    error for unequal lengths says which edges do not fit.
 
     Parameters
     ----------
@@ -136,8 +144,21 @@ class NpzSource:
         """Read ``branches`` within the entry range, joined in file order.
 
         Each file's arrays are cut to its part of the range before they are joined,
-        so a short range of many large files holds only that part.
+        so a short range of many large files holds only that part. A branch saved
+        beside edge arrays named for it that do not fit (a histogram saved with
+        the wrong edges, or a branch that merely shares the naming) is read with
+        a :class:`~rootfig.errors.RootfigWarning`.
         """
+        near_misses = self._layout(self.files[0]).near_misses
+        for name in dict.fromkeys(branches):
+            if name in near_misses:
+                warnings.warn(
+                    f"{name!r} in {self.files[0]!r} is read as an event branch, not as a binned "
+                    f"histogram: {near_misses[name]}. If it is a histogram, save n + 1 edges "
+                    "for n bins",
+                    RootfigWarning,
+                    stacklevel=2,
+                )
         pieces = [self._read(path, branches, start, stop) for path, start, stop in self._spans()]
         if len(pieces) == 1:
             return pieces[0]
@@ -352,18 +373,62 @@ def _read_layout(path: str, explicit: Mapping[str, tuple[str, ...]]) -> _Layout:
         if spec is not None and not used.intersection(spec.members()):
             specs[name] = spec
             used.update(spec.members())
+    for spec in specs.values():
+        _check_variances(path, headers, spec.counts)
     branches = {name: header for name, header in headers.items() if name not in used}
+    near_misses = {
+        name: reason
+        for name in branches
+        if (reason := _near_miss(headers, name, branches)) is not None
+    }
     lengths = {name: shape[0] for name, (shape, _dtype) in branches.items()}
     if len(set(lengths.values())) > 1:
+        detail = "".join(f"; {name!r}: {reason}" for name, reason in near_misses.items())
         msg = (
             f"the arrays of {path!r} have different lengths {lengths}; every array of a "
             ".npz file is a branch with one entry per event, so save other arrays apart. "
             "A histogram that is already binned is recognised by its edges: NAME with "
-            "NAME_edges (1D), or NAME_xedges and NAME_yedges (2D); for edges named otherwise "
-            "pass NpzSource(path, histograms={NAME: [edge arrays, one per axis]})"
+            "NAME_edges (1D), or NAME_xedges and NAME_yedges (2D), n + 1 edges for n bins; "
+            "for edges named otherwise pass NpzSource(path, histograms={NAME: [edge arrays, "
+            f"one per axis]}}){detail}"
         )
         raise SourceError(msg)
-    return _Layout(branches, specs)
+    return _Layout(branches, specs, near_misses)
+
+
+def _near_miss(
+    headers: Mapping[str, _Header], name: str, branches: Mapping[str, _Header]
+) -> str | None:
+    """Say why ``name`` with the edge arrays named for it is no histogram; ``None`` if it has none.
+
+    Only edge arrays that are branches themselves count: one taken by another
+    histogram describes that one.
+    """
+    shape = headers[name][0]
+    suffixes = _EDGE_SUFFIXES.get(len(shape))
+    if suffixes is None:
+        return None
+    edges = [f"{name}{suffix}" for suffix in suffixes]
+    if not all(edge in branches for edge in edges):
+        return None
+    wrong = [
+        f"{edge!r} has shape {headers[edge][0]}, not ({bins + 1},)"
+        for edge, bins in zip(edges, shape, strict=True)
+        if not _fits(headers, edge, bins)
+    ]
+    return f"its shape is {shape}, but {', '.join(wrong)}" if wrong else None
+
+
+def _check_variances(path: str, headers: Mapping[str, _Header], name: str) -> None:
+    """Refuse a ``NAME_variances`` array that does not have the shape of the counts ``name``."""
+    candidate = f"{name}{_VARIANCES_SUFFIX}"
+    header = headers.get(candidate)
+    if header is not None and header[0] != headers[name][0]:
+        msg = (
+            f"{candidate!r} in {path!r} has shape {header[0]}, but the histogram {name!r} has "
+            f"{headers[name][0]}; the variances must have the shape of the counts"
+        )
+        raise SourceError(msg)
 
 
 def _explicit_edges(histograms: HistogramEdges | None) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -384,9 +449,9 @@ def _explicit_edges(histograms: HistogramEdges | None) -> tuple[tuple[str, tuple
 
 
 def _variances_name(headers: Mapping[str, _Header], name: str) -> str | None:
+    """Return ``NAME_variances`` if the archive holds it (its shape is checked by the layout)."""
     candidate = f"{name}{_VARIANCES_SUFFIX}"
-    header = headers.get(candidate)
-    return candidate if header is not None and header[0] == headers[name][0] else None
+    return candidate if candidate in headers else None
 
 
 def _fits(headers: Mapping[str, _Header], edges: str, bins: int) -> bool:
@@ -479,3 +544,26 @@ def _histogram(archive: Any, spec: _HistogramSpec, variances_from_contents: bool
     view.value = counts
     view.variance = variances
     return result
+
+
+def with_histogram_edges(source: Any, nominal: Any) -> Any:
+    """Return ``source`` reading the histograms ``nominal`` names explicitly, if both are ``.npz``.
+
+    A ``Systematic.samples`` variation given as paths holds the same arrays as the
+    nominal files, so the edges mapped with ``NpzSource(histograms=...)`` apply
+    to it too. Any other pair of sources, or a ``source`` with a mapping of its
+    own, is returned unchanged.
+    """
+    if (
+        isinstance(source, NpzSource)
+        and isinstance(nominal, NpzSource)
+        and nominal.histogram_edges
+        and not source.histogram_edges
+    ):
+        return NpzSource(
+            source.files,
+            entry_start=source.entry_start,
+            entry_stop=source.entry_stop,
+            histograms=dict(nominal.histogram_edges),
+        )
+    return source

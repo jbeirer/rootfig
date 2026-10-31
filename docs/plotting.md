@@ -1093,8 +1093,17 @@ src = rf.io.NpzSource("file.npz", histograms={"hist": ["g_edges", "B2_edges"]})
 rf.plot2d(src, "hist", save="histogram_2d.pdf")  # x axis "g", y axis "B2"
 ```
 
+A `NAME_variances` of another shape than `NAME` is refused rather than
+ignored. Arrays named like a histogram whose edges do not fit (`n` edges for
+`n` bins, say) are not taken as one: if every array has the same length they
+remain event branches, since a file may hold a branch `h` beside a branch
+`h_edges`, and reading `h` warns that it is filled as events; otherwise the
+error names the edges that do not fit.
+
 The histogram arrays are not branches, so one file can hold both histograms
-and per-event arrays, which are filled as usual. Everything listed above for
+and per-event arrays, which are filled as usual. A
+`Systematic.samples("varied.npz")` given as paths reads the varied files with
+the nominal source's `histograms=` mapping; a `Sample` is read as configured. Everything listed above for
 stored ROOT histograms applies: the files of one sample are summed, `scale`,
 groups, `bins=`/`range=` merging and cropping, normalisation systematics and
 `Systematic.samples` with other `.npz` files work, and options that need event
