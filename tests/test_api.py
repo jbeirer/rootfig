@@ -2690,6 +2690,20 @@ def test_plain_histogram_ignores_sample_systematics() -> None:
     np.testing.assert_allclose(result.values(), [1, 1])
 
 
+def test_varied_npz_files_inherit_the_range(tmp_path: Path) -> None:
+    np.savez(tmp_path / "nominal.npz", x=np.array([0.5, 1.5, 2.5, 3.5]))
+    np.savez(tmp_path / "alternate.npz", x=np.array([3.5, 2.5, 1.5, 0.5]))
+    sample = rf.Sample(
+        tmp_path / "nominal.npz",
+        entry_start=1,
+        entry_stop=3,
+        systematics={"alt": rf.Systematic.samples(tmp_path / "alternate.npz")},
+    )
+    (h,) = rf.histograms(sample, "x", bins=(4, 0, 4))
+    np.testing.assert_allclose(h.values(), [0, 1, 1, 0])
+    np.testing.assert_allclose(h.variations["alt"][0].values(), [0, 1, 1, 0])
+
+
 def test_varied_files_inherit_auto_detected_tree_and_range(tmp_path: Path) -> None:
     nominal = tmp_path / "nominal.root"
     alternate = tmp_path / "alternate.root"

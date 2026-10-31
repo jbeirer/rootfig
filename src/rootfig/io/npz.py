@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import io
+import struct
 import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import IO, Any, TypeAlias
 
 import awkward as ak
 import numpy as np
@@ -33,11 +35,11 @@ class NpzSource:
     ----------
     files
         A local path, glob pattern, or a sequence of them; see :data:`FilesLike`.
-        The files of a sample are joined in sorted order and must hold the same
-        branches.
+        The files are joined in the order given, the matches of a glob sorted,
+        and must hold the same branches.
     entry_start, entry_stop
         Keep only this range of entries, counted across all files (Python slice
-        semantics).
+        semantics). Only the files the range overlaps are read.
     """
 
     files: tuple[str, ...]
@@ -71,26 +73,25 @@ class NpzSource:
     def branch_forms(self) -> dict[str, Any]:
         """Return the Awkward form of every branch, read from the array headers, not the values."""
         return {
-            name: ak.to_layout(np.empty((0, *shape[1:]), dtype)).form
-            for name, (shape, dtype) in self._headers(self.files[0]).items()
-            if not dtype.hasobject
+            name: ak.to_layout(_empty(header)).form
+            for name, header in self._headers(self.files[0]).items()
+            if not header[1].hasobject
         }
 
     def arrays(self, branches: Sequence[str]) -> dict[str, ak.Array]:
-        """Read ``branches`` from every file, joined in file order, within the entry range."""
-        pieces = [self._read(path, branches) for path in self.files]
+        """Read ``branches`` within the entry range, joined in file order.
+
+        Each file's arrays are cut to its part of the range before they are joined,
+        so a short range of many large files holds only that part.
+        """
+        pieces = [self._read(path, branches, start, stop) for path, start, stop in self._spans()]
         if len(pieces) == 1:
-            columns = pieces[0]
-        else:
-            columns = {name: ak.concatenate([p[name] for p in pieces]) for name in branches}
-        if self.entry_start is not None or self.entry_stop is not None:
-            columns = {name: a[self.entry_start : self.entry_stop] for name, a in columns.items()}
-        return columns
+            return pieces[0]
+        return {name: ak.concatenate([p[name] for p in pieces]) for name in branches}
 
     def num_entries(self) -> int:
         """Return the number of events within the entry range, from the array headers."""
-        total = sum(self._length(path) for path in self.files)
-        return len(range(total)[self.entry_start : self.entry_stop])
+        return sum(stop - start for _path, start, stop in self._spans())
 
     def describe(self) -> str:
         """Return e.g. ``'events.npz'`` or ``'3 files (run1.npz, ...)'``."""
@@ -103,7 +104,26 @@ class NpzSource:
         """A legend label derived from the first file's stem."""
         return Path(self.files[0]).stem
 
-    def _read(self, path: str, branches: Sequence[str]) -> dict[str, ak.Array]:
+    def _spans(self) -> list[tuple[str, int, int]]:
+        """Return ``(path, start, stop)`` for each file the entry range overlaps, in file order.
+
+        A range without entries gives the first file with an empty span, so the
+        branches are still checked and typed.
+        """
+        lengths = [self._length(path) for path in self.files]
+        window = range(sum(lengths))[self.entry_start : self.entry_stop]
+        spans: list[tuple[str, int, int]] = []
+        offset = 0
+        for path, length in zip(self.files, lengths, strict=True):
+            start, stop = max(window.start - offset, 0), min(window.stop - offset, length)
+            if start < stop:
+                spans.append((path, start, stop))
+            offset += length
+        return spans or [(self.files[0], 0, 0)]
+
+    def _read(
+        self, path: str, branches: Sequence[str], start: int, stop: int
+    ) -> dict[str, ak.Array]:
         headers = self._headers(path)
         missing = [name for name in branches if name not in headers]
         if missing:
@@ -118,9 +138,11 @@ class NpzSource:
                 "allow_pickle=True)) and pass {name: awkward.from_iter(values)}"
             )
             raise SourceError(msg)
+        if start == stop:
+            return {name: ak.from_numpy(_empty(headers[name])) for name in branches}
         try:
             with np.load(path, allow_pickle=False) as archive:
-                return {name: ak.from_numpy(archive[name]) for name in branches}
+                return {name: ak.from_numpy(_cut(archive[name], start, stop)) for name in branches}
         except (OSError, ValueError, zipfile.BadZipFile) as exc:
             msg = f"could not read {list(branches)} from {path!r}: {exc}"
             raise SourceError(msg) from exc
@@ -136,6 +158,36 @@ class NpzSource:
         return self._headers_by_file[path]
 
 
+def _empty(header: _Header) -> np.ndarray[Any, Any]:
+    """Return an array without entries of the shape and type ``header`` gives."""
+    shape, dtype = header
+    return np.empty((0, *shape[1:]), dtype)
+
+
+def _cut(values: np.ndarray[Any, Any], start: int, stop: int) -> np.ndarray[Any, Any]:
+    """Return entries ``start:stop`` of ``values``, a copy when part, so the rest is released."""
+    return values if (start, stop) == (0, len(values)) else values[start:stop].copy()
+
+
+def _array_header(stream: IO[bytes]) -> _Header:
+    """Read the shape and type from the header of an ``.npy`` member, leaving its data unread."""
+    version = np.lib.format.read_magic(stream)
+    if version == (3, 0):
+        # 3.0 is the 2.0 layout with a UTF-8 header, which NumPy's public readers decode as
+        # latin-1; the header is a Python literal, so ASCII escapes read back as the same text
+        (length,) = struct.unpack("<I", stream.read(4))
+        text = stream.read(length).decode("utf-8").encode("ascii", "backslashreplace")
+        stream, version = io.BytesIO(struct.pack("<I", len(text)) + text), (2, 0)
+    if version == (1, 0):
+        shape, _fortran, dtype = np.lib.format.read_array_header_1_0(stream)
+    elif version == (2, 0):
+        shape, _fortran, dtype = np.lib.format.read_array_header_2_0(stream)
+    else:
+        msg = f".npy format version {version[0]}.{version[1]} is not supported"
+        raise ValueError(msg)
+    return shape, dtype
+
+
 def _read_headers(path: str) -> dict[str, _Header]:
     """Read the ``.npy`` header of every array in an archive, refusing unequal lengths."""
     headers: dict[str, _Header] = {}
@@ -145,17 +197,10 @@ def _read_headers(path: str) -> dict[str, _Header]:
                 if not member.endswith(".npy"):
                     continue
                 with archive.open(member) as stream:
-                    version = np.lib.format.read_magic(stream)
-                    # format 3.0 has the 2.0 layout, its header only being UTF-8
-                    read = (
-                        np.lib.format.read_array_header_1_0
-                        if version == (1, 0)
-                        else np.lib.format.read_array_header_2_0
-                    )
-                    shape, _fortran, dtype = read(stream)
-                if shape:
-                    headers[member.removesuffix(".npy")] = (shape, dtype)
-    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+                    header = _array_header(stream)
+                if header[0]:
+                    headers[member.removesuffix(".npy")] = header
+    except (OSError, ValueError, struct.error, zipfile.BadZipFile) as exc:
         msg = f"could not read {path!r} as a NumPy .npz archive: {exc}"
         raise SourceError(msg) from exc
     lengths = {name: shape[0] for name, (shape, _dtype) in headers.items()}

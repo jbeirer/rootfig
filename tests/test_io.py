@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -206,6 +208,52 @@ class TestNpzSource:
         assert str(source.arrays(["x"])["x"].type.content) == "float64"
         assert source.num_entries() == 3
         assert source.describe() == "2 files (a.npz, ...)"
+
+    def test_range_reads_only_the_files_it_overlaps(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for name, values in (("a", [0.0, 1.0]), ("b", [2.0, 3.0, 4.0]), ("c", [5.0, 6.0])):
+            np.savez(tmp_path / f"{name}.npz", x=np.array(values))
+        loaded: list[str] = []
+        load = np.load
+
+        def recording(path: Any, *args: Any, **kwargs: Any) -> Any:
+            loaded.append(Path(path).stem)
+            return load(path, *args, **kwargs)
+
+        monkeypatch.setattr(np, "load", recording)
+        cases = [(1, 4, [1, 2, 3], ["a", "b"]), (-3, None, [4, 5, 6], ["b", "c"])]
+        cases += [(2, 5, [2, 3, 4], ["b"]), (5, 2, [], [])]
+        for start, stop, values, files in cases:
+            loaded.clear()
+            source = as_source(tmp_path / "*.npz", entry_start=start, entry_stop=stop)
+            x = source.arrays(["x"])["x"]
+            assert (x.tolist(), loaded) == (values, files)
+            assert str(x.type.content) == "float64"
+            assert source.num_entries() == len(values)
+
+    def test_explicit_files_keep_their_order(self, tmp_path: Path) -> None:
+        np.savez(tmp_path / "a.npz", x=np.array([1.0]))
+        np.savez(tmp_path / "b.npz", x=np.array([2.0]))
+        source = as_source([tmp_path / "b.npz", tmp_path / "a.npz"])
+        assert source.arrays(["x"])["x"].tolist() == [2.0, 1.0]
+
+    def test_header_formats(self, tmp_path: Path) -> None:
+        path = tmp_path / "unicode.npz"
+        with pytest.warns(UserWarning, match="format 3.0"):  # a name latin-1 cannot hold
+            np.savez(path, x=np.zeros(2, dtype=[("ΔE", "f8")]), y=np.zeros(2))
+        source = NpzSource(path)
+        assert source.branch_forms()["x"].fields == ["ΔE"]
+        assert source.arrays(["x"])["x"].fields == ["ΔE"]
+        future = tmp_path / "future.npz"
+        member = io.BytesIO()
+        np.save(member, np.zeros(2))
+        raw = bytearray(member.getvalue())
+        raw[6] = 9  # the major format version
+        with zipfile.ZipFile(future, "w") as archive:
+            archive.writestr("x.npy", bytes(raw))
+        with pytest.raises(SourceError, match=r"format version 9\.0 is not supported"):
+            NpzSource(future).branches()
 
     def test_branch_forms_from_headers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -477,6 +477,23 @@ class TestPlots:
         assert plt.get_fignums() == [existing.number]
 
 
+def test_npz_files(tmp_path: Path) -> None:
+    rng = np.random.default_rng(3)
+    for name in ("sig", "bkg"):
+        np.savez(tmp_path / f"{name}.npz", x=rng.normal(size=200), y=rng.normal(size=(200, 2)))
+    data = {"S": tmp_path / "sig.npz", "B": tmp_path / "bkg.npz"}
+    selections = {"all": None, "cut": "x > 0"}
+    book = rf.PlotBook(data, rf.ALL, selections=selections, plot_kwargs={"bins": 10})
+    results = list(book.plots())
+    assert [task.stem for task, _ in results] == ["x__all", "x__cut", "y__all", "y__cut"]
+    for task, plot in results:
+        direct = rf.plot(data, task.variable, selection=task.selection, **task.kwargs)
+        for got, expected in zip(plot.histograms, direct.histograms, strict=True):
+            np.testing.assert_allclose(got.hist.values(), expected.hist.values())
+        plt.close(direct.fig)
+        plt.close(plot.fig)
+
+
 class TestPassthrough:
     def test_group_is_one_histogram(self, samples: list[rf.Sample]) -> None:
         signal = rf.Sample({"x": [0.8, 0.9], "y": [0.5, 0.7]}, label="Signal")
