@@ -7,6 +7,7 @@ from collections.abc import Sequence
 import awkward as ak
 
 from rootfig._typing import Hist
+from rootfig.io.npz import NpzSource
 from rootfig.io.sources import FileSource
 
 __all__ = ["ReadCache"]
@@ -29,7 +30,7 @@ class ReadCache:
     def __init__(self) -> None:
         self._sources: dict[FileSource, FileSource] = {}
         self._arrays: dict[FileSource, dict[str, ak.Array]] = {}
-        self._histograms: dict[tuple[FileSource, str, bool], Hist] = {}
+        self._histograms: dict[tuple[FileSource | NpzSource, str, bool], Hist] = {}
 
     def source(self, source: FileSource) -> FileSource:
         """Return the instance held for ``source``'s value, adopting ``source`` if it is the first.
@@ -58,7 +59,7 @@ class ReadCache:
         return {name: held[name] for name in branches}
 
     def histogram(
-        self, source: FileSource, name: str, *, variances_from_contents: bool = False
+        self, source: FileSource | NpzSource, name: str, *, variances_from_contents: bool = False
     ) -> Hist:
         """Return the stored histogram ``name`` of ``source``, summed over its files, read once."""
         key = (source, name, variances_from_contents)
@@ -69,7 +70,11 @@ class ReadCache:
         return self._histograms[key]
 
     def histograms(
-        self, source: FileSource, names: Sequence[str], *, variances_from_contents: bool = False
+        self,
+        source: FileSource | NpzSource,
+        names: Sequence[str],
+        *,
+        variances_from_contents: bool = False,
     ) -> None:
         """Read the stored histograms ``names`` of ``source`` not held yet, one open per file."""
         missing = [

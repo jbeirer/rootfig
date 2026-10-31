@@ -13,7 +13,7 @@ from rootfig.histograms.pipeline import (
 )
 from rootfig.histograms.pipeline import _variant_sample as _varied_sample
 from rootfig.histograms.sources import shared_source
-from rootfig.histograms.stored import _stored_name, _stored_source, stored_mode
+from rootfig.histograms.stored import HistogramFiles, _stored_name, _stored_source, stored_mode
 from rootfig.histograms.stored import _variant_sample as _varied_stored_sample
 from rootfig.io import FileSource, ReadCache
 from rootfig.model.cuts import CutLike
@@ -39,7 +39,7 @@ class ReadPlan:
     def __init__(self, cache: ReadCache) -> None:
         self.cache = cache
         self._branches: dict[FileSource, list[str]] = {}
-        self._stored: dict[tuple[FileSource, bool], list[str]] = {}
+        self._stored: dict[tuple[HistogramFiles, bool], list[str]] = {}
 
     def add(
         self,
@@ -140,9 +140,9 @@ class ReadPlan:
 
     def _stored_sources(
         self, sample: Sample, systematics: Mapping[str, Systematic], name: str
-    ) -> list[FileSource]:
+    ) -> list[HistogramFiles]:
         """Return the files ``name`` is read from: ``sample``'s own and its variations'."""
-        sources = []
+        sources: list[HistogramFiles] = []
         try:
             sources.append(_stored_source(sample, name))
         except RootfigError:
@@ -171,10 +171,10 @@ class ReadPlan:
         for source, names in self._branches.items():
             with suppress(Exception):
                 self.cache.arrays(source, names)
-        for (source, variances_from_contents), names in self._stored.items():
+        for (stored, variances_from_contents), names in self._stored.items():
             with suppress(Exception):
                 self.cache.histograms(
-                    source, names, variances_from_contents=variances_from_contents
+                    stored, names, variances_from_contents=variances_from_contents
                 )
 
 

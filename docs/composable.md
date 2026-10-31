@@ -31,6 +31,8 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
   A flat array is per-event, an `(events, n)` array per-object; arrays of no
   dimension (a scalar saved beside the events) are not branches, and object
   arrays (ragged lists) are refused, since NumPy loads them only by unpickling.
+  Counts saved with their bin edges are histograms that are already binned, not
+  branches (see [`.npz` histograms](plotting.md#histograms-already-binned-in-npz-files)).
 - `selection` and `weight` belong to the sample and combine with the ones
   given to `plot()` (`&` and `*` respectively).
 - `is_data=True` draws points with error bars (in the style's text colour

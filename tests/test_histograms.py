@@ -1954,7 +1954,7 @@ class TestStoredHistograms:
             build_histograms([self._zh(stored_dir, systematics={"w": "w_up"})], "mz")
         with pytest.raises(SystematicError, match="varies the branches"):
             build_histograms([self._zh(stored_dir, systematics={"r": {"mz": ("a", "b")}})], "mz")
-        with pytest.raises(SystematicError, match="other ROOT files"):
+        with pytest.raises(SystematicError, match=r"other ROOT or \.npz files"):
             build_histograms(
                 [self._zh(stored_dir, systematics={"s": Systematic.samples({"mz": [1.0]})})], "mz"
             )
@@ -1970,7 +1970,7 @@ class TestStoredHistograms:
             (Sample(ww, entry_stop=0), "entry range"),
             (Sample(ww, tree="nope"), "tree='nope' addresses a branch"),
             (f"{ww}:events", "tree='events' addresses a branch"),
-            ({"mz": [1.0]}, "other ROOT files"),
+            ({"mz": [1.0]}, r"other ROOT or \.npz files"),
         ):
             zh = self._zh(stored_dir, systematics={"model": Systematic.samples(bad)})
             with pytest.raises(SystematicError, match=message) as info:
