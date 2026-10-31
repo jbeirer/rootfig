@@ -69,6 +69,7 @@ above.
     options:
       members:
         - FileSource
+        - NpzSource
         - ArraySource
         - Source
         - ReadCache

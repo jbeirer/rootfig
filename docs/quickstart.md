@@ -17,7 +17,9 @@ rf.plot("events.root", "Muon_pt", tree="events", selection="Muon_pt > 20", bins=
 `rf.plot` reads the branches referenced by the variable, the selection and
 the weight (nothing else), evaluates them, fills a `hist.Hist` and draws it.
 If the file contains exactly one tree you can leave `tree` out. The file can
-also be a glob (`"run_*.root"`), a list of files, or `"file.root:tree"`.
+also be a glob (`"run_*.root"`), a list of files, `"file.root:tree"`, or a
+NumPy `.npz` file with one array per branch (`rf.plot("events.npz", "Muon_pt",
+bins=50)`).
 
 A bare `bins=50` infers the range from the data, ignoring far outliers so that
 sentinel values such as `-999` do not set the axis; pass `range=(low, high)` to

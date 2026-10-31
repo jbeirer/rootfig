@@ -273,6 +273,22 @@ class TestPlot:
         )
         assert p.ax.get_legend() is not None
 
+    def test_npz_file(self, tmp_path: Path, signal_columns: dict[str, Any]) -> None:
+        columns = {name: np.asarray(signal_columns[name]) for name in ("MET", "weight")}
+        columns["Jet_pt"] = np.stack([columns["MET"], 2 * columns["MET"]], axis=1)
+        path = tmp_path / "events.npz"
+        np.savez(path, **columns)
+        p = rf.plot(str(path), "MET", weight="weight", bins=50)
+        (h,) = p.histograms
+        assert h.label == "events"
+        expected = rf.histogram(columns, "MET", weight="weight", bins=50)
+        np.testing.assert_allclose(h.edges, expected.axes[0].edges)
+        np.testing.assert_allclose(h.hist.values(), expected.values())
+        # an (events, n) array is a per-object branch, masked by a per-object cut
+        jets = rf.histogram(path, "Jet_pt", selection="Jet_pt > 50", bins=(10, 0, 500))
+        assert jets.sum().value == np.count_nonzero(columns["Jet_pt"] > 50)
+        assert rf.Sample(path).files == (str(path),)
+
     def test_overlay_normalized_ratio(self, signal_file: Path, background_file: Path) -> None:
         p = rf.plot(
             [signal_file, background_file],

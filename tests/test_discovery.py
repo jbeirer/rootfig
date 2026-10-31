@@ -21,7 +21,7 @@ import uproot
 
 import rootfig as rf
 from rootfig.api import batch
-from rootfig.io import ArraySource, FileSource
+from rootfig.io import ArraySource, FileSource, NpzSource
 
 DATA = Path(__file__).parent / "data"
 
@@ -142,6 +142,7 @@ def _forbid_reads(monkeypatch: pytest.MonkeyPatch) -> None:
         (FileSource, "read_histogram"),
         (FileSource, "read_histograms"),
         (ArraySource, "arrays"),
+        (NpzSource, "arrays"),
         # uproot's own readers, so a direct call bypassing rootfig's wrappers fails too
         (uproot, "concatenate"),
         (uproot, "iterate"),
@@ -606,6 +607,21 @@ class TestSamples:
         assert _names(rf.PlotBook(structured, rf.ALL)) == ["n", "x"]
         record = ak.Array([{"pt": 1.0, "tag": "a"}])
         assert _names(rf.PlotBook(record, rf.ALL)) == ["pt"]
+
+    def test_npz_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        path = tmp_path / "events.npz"
+        ragged = np.empty(2, dtype=object)
+        ragged[:] = [np.arange(2), np.arange(1)]
+        np.savez(
+            path,
+            pt=np.array([1.0, 2.0]),
+            fixed=np.zeros((2, 3)),
+            s=np.array(["a", "b"]),
+            ragged=ragged,
+            ngen=np.array(10),
+        )
+        _forbid_reads(monkeypatch)
+        assert _names(rf.PlotBook(path, rf.ALL)) == ["fixed", "pt"]
 
     def test_source_without_types_is_refused(self) -> None:
         class Opaque:

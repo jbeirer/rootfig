@@ -34,7 +34,15 @@ from rootfig.histograms.groups import regroup_histograms
 from rootfig.histograms.sources import shared_source
 from rootfig.histograms.stats import summarize
 from rootfig.histograms.stored import read_stored, stored_mode
-from rootfig.io import CHUNK_BYTES, ArraySource, FileSource, ReadCache, Source, as_source
+from rootfig.io import (
+    CHUNK_BYTES,
+    ArraySource,
+    FileSource,
+    NpzSource,
+    ReadCache,
+    Source,
+    as_source,
+)
 from rootfig.io.sources import resolve_files
 from rootfig.model.binning import Axis, resolve_axis
 from rootfig.model.cuts import Cut, CutLike, as_cut
@@ -636,7 +644,7 @@ def _variant_sample(
         return shared_source(spec.replace(label=context), cache)
     nominal = sample.source
     try:
-        if isinstance(nominal, FileSource | ArraySource) and (
+        if isinstance(nominal, FileSource | NpzSource | ArraySource) and (
             _is_file_spec(spec) or isinstance(spec, Mapping | ak.Array | np.ndarray)
         ):
             # the nominal tree name and entry range apply unless the spec names its own tree

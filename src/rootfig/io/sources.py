@@ -1,11 +1,13 @@
 """Data sources: where branch arrays come from.
 
-Two implementations of the :class:`Source` protocol are provided:
+Three implementations of the :class:`Source` protocol are provided:
 
 * :class:`FileSource` reads ROOT files with uproot. It accepts single paths,
   glob patterns, lists of either, remote URLs, and ``"file.root:tree"``
   shorthand, and works with both ``TTree`` and ``RNTuple`` objects. It also
   reads histograms stored in the files (:meth:`FileSource.read_histograms`).
+* :class:`~rootfig.io.NpzSource` reads NumPy ``.npz`` archives, one array per
+  branch; :func:`as_source` picks it for paths that all end in ``.npz``.
 * :class:`ArraySource` wraps data that is already in memory (a mapping of
   arrays, an Awkward record array, or a NumPy structured array).
 
@@ -783,8 +785,10 @@ def as_source(
 ) -> Source:
     """Turn user input into a :class:`Source`.
 
-    Strings, paths, and sequences of them become a :class:`FileSource`;
-    mappings, Awkward record arrays and NumPy structured arrays become an
+    Strings, paths, and sequences of them become a :class:`FileSource`, or an
+    :class:`~rootfig.io.NpzSource` when every file they resolve to ends in
+    ``.npz`` (``tree`` does not apply to those, as to in-memory arrays); mappings,
+    Awkward record arrays and NumPy structured arrays become an
     :class:`ArraySource`; existing sources are returned unchanged. An entry
     range (or, for a :class:`FileSource`, a different ``tree``) cannot be
     applied to an existing source afterwards and raises :class:`SourceError`;
@@ -794,11 +798,11 @@ def as_source(
         _reject_overrides(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
         return data
     if isinstance(data, str | PathLike):
-        return FileSource(data, tree, entry_start=entry_start, entry_stop=entry_stop)
+        return _file_source(data, tree, entry_start=entry_start, entry_stop=entry_stop)
     if isinstance(data, Mapping | ak.Array | np.ndarray):
         return ArraySource(data, entry_start=entry_start, entry_stop=entry_stop)
     if isinstance(data, Sequence) and all(isinstance(f, str | PathLike) for f in data):
-        return FileSource(data, tree, entry_start=entry_start, entry_stop=entry_stop)
+        return _file_source(data, tree, entry_start=entry_start, entry_stop=entry_stop)
     if isinstance(data, Source):
         _reject_overrides(data, tree=tree, entry_start=entry_start, entry_stop=entry_stop)
         return data
@@ -807,6 +811,25 @@ def as_source(
         "a mapping of arrays, an Awkward record array, or a rootfig Source"
     )
     raise SourceError(msg)
+
+
+def _file_source(
+    files: FilesLike, tree: str | None, *, entry_start: int | None, entry_stop: int | None
+) -> Source:
+    """Return a :class:`FileSource`, or an ``NpzSource`` when every file is a ``.npz`` archive."""
+    from rootfig.io.npz import NpzSource  # noqa: PLC0415 (it imports this module)
+
+    paths, _tree = resolve_files(files)
+    npz = [Path(path).suffix.lower() == ".npz" for path in paths]
+    if not any(npz):
+        return FileSource(files, tree, entry_start=entry_start, entry_stop=entry_stop)
+    if not all(npz):
+        msg = (
+            f"one source cannot mix .npz archives with ROOT files ({list(paths)}); "
+            "make a sample of each"
+        )
+        raise SourceError(msg)
+    return NpzSource(paths, entry_start=entry_start, entry_stop=entry_stop)
 
 
 def _reject_overrides(

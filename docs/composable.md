@@ -26,6 +26,11 @@ mem = rf.Sample({"x": awkward_array, "w": weights}, label="in memory")
 - `data` may be a path, glob, `"path:tree"`, a list of those, a mapping of
   arrays, an Awkward record array, a NumPy structured array, or any object
   implementing the [`Source`][rootfig.io.Source] protocol.
+- A NumPy `.npz` file (`np.savez`) is read as one branch per array
+  ([`NpzSource`][rootfig.io.NpzSource]): `rf.plot("events.npz", "Muon_pt", bins=50)`.
+  A flat array is per-event, an `(events, n)` array per-object; arrays of no
+  dimension (a scalar saved beside the events) are not branches, and object
+  arrays (ragged lists) are refused, since NumPy loads them only by unpickling.
 - `selection` and `weight` belong to the sample and combine with the ones
   given to `plot()` (`&` and `*` respectively).
 - `is_data=True` draws points with error bars (in the style's text colour

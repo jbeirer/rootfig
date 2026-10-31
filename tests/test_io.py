@@ -15,6 +15,7 @@ from rootfig.errors import BinningError, RootfigWarning, SourceError
 from rootfig.io import (
     ArraySource,
     FileSource,
+    NpzSource,
     ReadCache,
     Source,
     as_source,
@@ -180,6 +181,81 @@ class TestArraySource:
     def test_unconvertible_value(self) -> None:
         with pytest.raises(SourceError, match="cannot convert"):
             ArraySource({"x": object()})
+
+
+class TestNpzSource:
+    def test_branches_and_arrays(self, tmp_path: Path) -> None:
+        path = tmp_path / "events.npz"
+        np.savez(path, x=np.arange(3.0), jets=np.arange(6.0).reshape(3, 2), ngen=np.array(7))
+        source = as_source(str(path))
+        assert isinstance(source, NpzSource)
+        assert source.branches() == ["x", "jets"]  # a scalar has no entry per event
+        arrays = source.arrays(["jets", "x"])
+        assert arrays["jets"].tolist() == [[0, 1], [2, 3], [4, 5]]
+        assert arrays["x"].tolist() == [0, 1, 2]
+        assert source.num_entries() == 3
+        assert source.describe() == "events.npz"
+        assert source.default_label == "events"
+
+    def test_files_joined_within_the_entry_range(self, tmp_path: Path) -> None:
+        np.savez(tmp_path / "a.npz", x=np.array([1.0, 2.0]))
+        np.savez_compressed(tmp_path / "b.npz", x=np.array([3, 4, 5]))
+        source = as_source(tmp_path / "*.npz", entry_start=1, entry_stop=-1)
+        assert isinstance(source, NpzSource)
+        assert source.arrays(["x"])["x"].tolist() == [2.0, 3.0, 4.0]
+        assert str(source.arrays(["x"])["x"].type.content) == "float64"
+        assert source.num_entries() == 3
+        assert source.describe() == "2 files (a.npz, ...)"
+
+    def test_branch_forms_from_headers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "types.npz"
+        ragged = np.empty(2, dtype=object)
+        ragged[:] = [np.arange(2), np.arange(1)]
+        np.savez(
+            path,
+            f=np.zeros(2, dtype=np.float32),
+            fixed=np.zeros((2, 3), dtype=np.int16),
+            ragged=ragged,
+        )
+
+        def forbidden(*args: Any, **kwargs: Any) -> Any:
+            msg = "branch forms must not read the arrays"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(np, "load", forbidden)
+        forms = NpzSource(path).branch_forms()
+        assert {name: str(form.type) for name, form in forms.items()} == {
+            "f": "float32",
+            "fixed": "3 * int16",
+        }
+
+    def test_object_arrays_are_not_unpickled(self, tmp_path: Path) -> None:
+        path = tmp_path / "ragged.npz"
+        ragged = np.empty(2, dtype=object)
+        ragged[:] = [np.arange(2), np.arange(1)]
+        np.savez(path, x=ragged)
+        with pytest.raises(SourceError, match="loads only by unpickling"):
+            NpzSource(path).arrays(["x"])
+
+    def test_problems(self, tmp_path: Path, signal_file: Path) -> None:
+        uneven = tmp_path / "uneven.npz"
+        np.savez(uneven, x=np.zeros(3), edges=np.zeros(5))
+        with pytest.raises(SourceError, match="different lengths"):
+            NpzSource(uneven).branches()
+        good = tmp_path / "good.npz"
+        np.savez(good, x=np.zeros(3))
+        with pytest.raises(SourceError, match=r"\['y'\] not found"):
+            NpzSource(good).arrays(["y"])
+        broken = tmp_path / "broken.npz"
+        broken.write_bytes(b"not a zip archive")
+        with pytest.raises(SourceError, match=r"as a NumPy \.npz archive"):
+            NpzSource(broken).branches()
+        with pytest.raises(SourceError, match=r"cannot mix \.npz archives with ROOT files"):
+            as_source([good, signal_file])
+        with pytest.raises(SourceError, match="local paths only"):
+            as_source("https://example.org/events.npz")
 
 
 class TestAsSource:

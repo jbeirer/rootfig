@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeAlias
 
 from rootfig._mapping import FrozenMapping
 from rootfig.errors import LuminosityError, SourceError, SystematicError
-from rootfig.io import FileSource, Source, as_source
+from rootfig.io import FileSource, NpzSource, Source, as_source
 from rootfig.model.cuts import Cut, CutLike, as_cut
 from rootfig.model.systematics import Systematic, SystematicLike, as_systematics
 from rootfig.model.units import cross_section_pb, luminosity_fb
@@ -28,8 +28,8 @@ class Sample:
     Parameters
     ----------
     data
-        File path(s), glob pattern(s), ``"path:tree"`` strings, a mapping of
-        arrays, an Awkward record array, or an existing
+        File path(s), glob pattern(s), ``"path:tree"`` strings, NumPy ``.npz``
+        file(s) (one array per branch), a mapping of arrays, an Awkward record array, or an existing
         :class:`~rootfig.io.Source`.
     tree
         Tree name for file inputs. Auto-detected when the file holds exactly one
@@ -156,7 +156,7 @@ class Sample:
         if isinstance(self.ngen, str):
             reader = getattr(self.source, "read_scalar", None)
             if not callable(reader):
-                msg = f"sample {self.label!r}: ngen={self.ngen!r} needs a file source"
+                msg = f"sample {self.label!r}: ngen={self.ngen!r} needs a ROOT file source"
                 raise LuminosityError(msg)
             return float(reader(self.ngen))
         counter = getattr(self.source, "num_entries", None)
@@ -205,7 +205,7 @@ class Sample:
     @property
     def files(self) -> tuple[str, ...]:
         """The resolved input files, or an empty tuple for in-memory sources."""
-        return self.source.files if isinstance(self.source, FileSource) else ()
+        return self.source.files if isinstance(self.source, FileSource | NpzSource) else ()
 
     def replace(self, **changes: Any) -> Sample:
         """Return a copy with the given fields changed, e.g. ``sample.replace(label="B")``.
